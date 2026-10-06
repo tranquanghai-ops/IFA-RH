@@ -1,0 +1,637 @@
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  query,
+  where,
+  orderBy,
+  serverTimestamp,
+  addDoc,
+  limit,
+} from "firebase/firestore";
+import { firestore } from "./config";
+import type {
+  UserProfile,
+  UserRole,
+  Opportunity,
+  OpportunityCandidate,
+  ResearchWork,
+  ResearchProgress,
+  Publication,
+  AuditLog,
+  ImportBatch,
+} from "../types";
+import { normalizeText } from "../utils/dedupe";
+
+// ======================== AUDIT LOGS ========================
+export async function logAudit(
+  actor: { uid: string; email: string; role: UserRole },
+  action: string,
+  entityType: AuditLog["entityType"],
+  entityId: string,
+  summary: string
+) {
+  try {
+    await addDoc(collection(firestore, "auditLogs"), {
+      timestamp: new Date().toISOString(),
+      createdAt: serverTimestamp(),
+      actorUid: actor.uid,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      action,
+      entityType,
+      entityId,
+      summary,
+    });
+  } catch (err) {
+    console.warn("Failed to write audit log:", err);
+  }
+}
+
+export async function fetchAuditLogs(limitCount = 100): Promise<AuditLog[]> {
+  const q = query(
+    collection(firestore, "auditLogs"),
+    orderBy("timestamp", "desc"),
+    limit(limitCount)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as AuditLog));
+}
+
+// ======================== USERS & ROLES ========================
+export async function fetchAllUsers(): Promise<UserProfile[]> {
+  const snap = await getDocs(collection(firestore, "users"));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as UserProfile));
+}
+
+export async function getUserProfile(uid: string): Promise<UserProfile | null> {
+  const docRef = doc(firestore, "users", uid);
+  const snap = await getDoc(docRef);
+  if (snap.exists()) {
+    return { id: snap.id, ...snap.data() } as UserProfile;
+  }
+  return null;
+}
+
+export async function updateUserProfile(
+  uid: string,
+  data: Partial<UserProfile>,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  const docRef = doc(firestore, "users", uid);
+  await updateDoc(docRef, {
+    ...data,
+    updatedAt: new Date().toISOString(),
+  });
+  await logAudit(
+    actor,
+    "UPDATE_USER_PROFILE",
+    "user",
+    uid,
+    `Cập nhật thông tin giảng viên: ${data.name || uid}`
+  );
+}
+
+export async function setUserRole(
+  targetUid: string,
+  targetEmail: string,
+  newRole: UserRole,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  if (actor.role !== "owner") {
+    throw new Error("Chỉ Owner mới có quyền thay đổi role!");
+  }
+  const docRef = doc(firestore, "users", targetUid);
+  await updateDoc(docRef, {
+    role: newRole,
+    updatedAt: new Date().toISOString(),
+  });
+  await logAudit(
+    actor,
+    "SET_USER_ROLE",
+    "user",
+    targetUid,
+    `Đổi quyền tài khoản ${targetEmail} thành: ${newRole}`
+  );
+}
+
+export async function createOrProvisionUser(
+  userData: {
+    email: string;
+    name: string;
+    role: UserRole;
+    department?: string;
+    academicDegree?: string;
+    active: boolean;
+  },
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  const normalizedEmail = userData.email.trim().toLowerCase();
+  // Check if exists
+  const q = query(
+    collection(firestore, "users"),
+    where("email", "==", normalizedEmail)
+  );
+  const existing = await getDocs(q);
+  if (!existing.empty) {
+    throw new Error(`Email ${normalizedEmail} đã tồn tại trong hệ thống!`);
+  }
+
+  const id = `prov_${normalizedEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  const now = new Date().toISOString();
+  await setDoc(doc(firestore, "users", id), {
+    id,
+    uid: id,
+    email: normalizedEmail,
+    name: userData.name,
+    role: userData.role,
+    department: userData.department || "",
+    academicDegree: userData.academicDegree || "",
+    active: userData.active,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await logAudit(
+    actor,
+    "PROVISION_USER",
+    "user",
+    id,
+    `Thêm mới nhân sự: ${userData.name} (${normalizedEmail}) với quyền ${userData.role}`
+  );
+}
+
+// ======================== OPPORTUNITIES ========================
+export async function fetchPublishedOpportunities(): Promise<Opportunity[]> {
+  const q = query(
+    collection(firestore, "opportunities"),
+    where("status", "==", "published")
+  );
+  const snap = await getDocs(q);
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Opportunity));
+  // Sort descending by deadline or createdAt
+  return list.sort((a, b) => (b.deadline || b.createdAt).localeCompare(a.deadline || a.createdAt));
+}
+
+export async function fetchAllOpportunities(): Promise<Opportunity[]> {
+  const snap = await getDocs(collection(firestore, "opportunities"));
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Opportunity));
+  return list.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+}
+
+export async function createOpportunity(
+  data: Omit<Opportunity, "id" | "createdAt" | "updatedAt">,
+  actor: { uid: string; email: string; role: UserRole }
+): Promise<string> {
+  const now = new Date().toISOString();
+  const ref = await addDoc(collection(firestore, "opportunities"), {
+    ...data,
+    createdAt: now,
+    updatedAt: now,
+    createdBy: actor.email,
+  });
+
+  await logAudit(
+    actor,
+    "CREATE_OPPORTUNITY",
+    "opportunity",
+    ref.id,
+    `Đăng mới cơ hội NCKH: "${data.title}"`
+  );
+  return ref.id;
+}
+
+export async function updateOpportunity(
+  id: string,
+  data: Partial<Opportunity>,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  const docRef = doc(firestore, "opportunities", id);
+  await updateDoc(docRef, {
+    ...data,
+    updatedAt: new Date().toISOString(),
+    updatedBy: actor.email,
+  });
+
+  await logAudit(
+    actor,
+    "UPDATE_OPPORTUNITY",
+    "opportunity",
+    id,
+    `Cập nhật cơ hội NCKH: "${data.title || id}"`
+  );
+}
+
+export async function deleteOpportunity(
+  id: string,
+  title: string,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  await deleteDoc(doc(firestore, "opportunities", id));
+  await logAudit(
+    actor,
+    "DELETE_OPPORTUNITY",
+    "opportunity",
+    id,
+    `Xóa cơ hội NCKH: "${title}"`
+  );
+}
+
+// ======================== OPPORTUNITY CANDIDATES (SPARK) ========================
+export async function fetchOpportunityCandidates(): Promise<OpportunityCandidate[]> {
+  const snap = await getDocs(collection(firestore, "opportunityCandidates"));
+  const list = snap.docs.map(
+    (d) => ({ id: d.id, ...d.data() } as OpportunityCandidate)
+  );
+  return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function addCandidate(
+  data: Omit<OpportunityCandidate, "id" | "createdAt" | "updatedAt" | "normalizedTitle">,
+  actor?: { uid: string; email: string; role: UserRole }
+): Promise<string> {
+  const now = new Date().toISOString();
+  const ref = await addDoc(collection(firestore, "opportunityCandidates"), {
+    ...data,
+    normalizedTitle: normalizeText(data.title),
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  if (actor) {
+    await logAudit(
+      actor,
+      "ADD_CANDIDATE",
+      "candidate",
+      ref.id,
+      `Thêm ứng viên cơ hội Spark: "${data.title}"`
+    );
+  }
+  return ref.id;
+}
+
+export async function approveCandidate(
+  candidate: OpportunityCandidate,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  const now = new Date().toISOString();
+
+  // 1. Create published opportunity
+  const oppData: Omit<Opportunity, "id" | "createdAt" | "updatedAt"> = {
+    title: candidate.title,
+    organizer: candidate.organizer,
+    country: candidate.country,
+    type: candidate.type,
+    level: candidate.level,
+    topic: candidate.topic,
+    field: candidate.field,
+    tags: candidate.tags || [],
+    deadline: candidate.deadline,
+    abstractDeadline: candidate.abstractDeadline,
+    fullPaperDeadline: candidate.fullPaperDeadline,
+    registrationDeadline: candidate.registrationDeadline,
+    eventDate: candidate.eventDate,
+    location: candidate.location,
+    fee: candidate.fee,
+    publicationFormat: candidate.publicationFormat,
+    indexing: candidate.indexing,
+    content: candidate.content,
+    submissionUrl: candidate.submissionUrl,
+    sourceUrl: candidate.sourceUrl,
+    directions: candidate.directions,
+    sourceType: "SPARK",
+    status: "published",
+    candidateId: candidate.id,
+    createdBy: actor.email,
+  };
+
+  const oppRef = await addDoc(collection(firestore, "opportunities"), {
+    ...oppData,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  // 2. Mark candidate as approved
+  const candRef = doc(firestore, "opportunityCandidates", candidate.id);
+  await updateDoc(candRef, {
+    status: "approved",
+    reviewedBy: actor.email,
+    reviewedAt: now,
+    updatedAt: now,
+  });
+
+  await logAudit(
+    actor,
+    "APPROVE_CANDIDATE",
+    "candidate",
+    candidate.id,
+    `Duyệt cơ hội Spark: "${candidate.title}" -> công bố sang Opportunities (${oppRef.id})`
+  );
+}
+
+export async function rejectCandidate(
+  candidateId: string,
+  candidateTitle: string,
+  reason: string,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  const now = new Date().toISOString();
+  const candRef = doc(firestore, "opportunityCandidates", candidateId);
+  await updateDoc(candRef, {
+    status: "rejected",
+    rejectionReason: reason,
+    reviewedBy: actor.email,
+    reviewedAt: now,
+    updatedAt: now,
+  });
+
+  await logAudit(
+    actor,
+    "REJECT_CANDIDATE",
+    "candidate",
+    candidateId,
+    `Từ chối ứng viên cơ hội Spark: "${candidateTitle}" (Lý do: ${reason})`
+  );
+}
+
+export async function deleteCandidate(
+  candidateId: string,
+  candidateTitle: string,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  await deleteDoc(doc(firestore, "opportunityCandidates", candidateId));
+  await logAudit(
+    actor,
+    "DELETE_CANDIDATE",
+    "candidate",
+    candidateId,
+    `Xóa ứng viên cơ hội: "${candidateTitle}"`
+  );
+}
+
+// ======================== RESEARCH WORKS (TIẾN ĐỘ NCKH) ========================
+export async function fetchResearchWorks(userId?: string): Promise<ResearchWork[]> {
+  let q = query(collection(firestore, "researchWorks"));
+  if (userId) {
+    q = query(collection(firestore, "researchWorks"), where("userId", "==", userId));
+  }
+  const snap = await getDocs(q);
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ResearchWork));
+  return list.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+}
+
+export async function createResearchWork(
+  data: Omit<ResearchWork, "id" | "createdAt" | "updatedAt">,
+  actor: { uid: string; email: string; role: UserRole }
+): Promise<string> {
+  const now = new Date().toISOString();
+  const ref = await addDoc(collection(firestore, "researchWorks"), {
+    ...data,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  // Initial progress entry
+  await addDoc(collection(firestore, "researchProgress"), {
+    researchId: ref.id,
+    userId: data.userId,
+    userEmail: data.userEmail,
+    status: data.status,
+    date: new Date().toLocaleDateString("vi-VN"),
+    notes: "Khởi tạo công trình NCKH",
+    createdAt: now,
+  });
+
+  await logAudit(
+    actor,
+    "CREATE_RESEARCH_WORK",
+    "research",
+    ref.id,
+    `Tạo mới công trình NCKH: "${data.title}"`
+  );
+  return ref.id;
+}
+
+export async function updateResearchWork(
+  id: string,
+  data: Partial<ResearchWork>,
+  progressNote?: string,
+  actor?: { uid: string; email: string; role: UserRole }
+) {
+  const now = new Date().toISOString();
+  const docRef = doc(firestore, "researchWorks", id);
+  await updateDoc(docRef, {
+    ...data,
+    updatedAt: now,
+  });
+
+  // If status changed or progress note provided, append to history
+  if (data.status || progressNote) {
+    const workSnap = await getDoc(docRef);
+    const work = workSnap.data() as ResearchWork;
+    await addDoc(collection(firestore, "researchProgress"), {
+      researchId: id,
+      userId: work.userId,
+      userEmail: work.userEmail,
+      status: data.status || work.status,
+      date: new Date().toLocaleDateString("vi-VN"),
+      notes: progressNote || `Cập nhật trạng thái thành: ${data.status}`,
+      createdAt: now,
+    });
+  }
+
+  if (actor) {
+    await logAudit(
+      actor,
+      "UPDATE_RESEARCH_WORK",
+      "research",
+      id,
+      `Cập nhật công trình: "${data.title || id}" (Trạng thái: ${data.status || "không đổi"})`
+    );
+  }
+}
+
+export async function deleteResearchWork(
+  id: string,
+  title: string,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  await deleteDoc(doc(firestore, "researchWorks", id));
+  await logAudit(
+    actor,
+    "DELETE_RESEARCH_WORK",
+    "research",
+    id,
+    `Xóa công trình NCKH: "${title}"`
+  );
+}
+
+// ======================== RESEARCH PROGRESS HISTORY ========================
+export async function fetchResearchProgressHistory(
+  researchId: string
+): Promise<ResearchProgress[]> {
+  const q = query(
+    collection(firestore, "researchProgress"),
+    where("researchId", "==", researchId)
+  );
+  const snap = await getDocs(q);
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ResearchProgress));
+  return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+// ======================== PUBLICATIONS (HỒ SƠ NGHIÊN CỨU) ========================
+export async function fetchPublications(userId?: string): Promise<Publication[]> {
+  let q = query(collection(firestore, "publications"));
+  if (userId) {
+    q = query(collection(firestore, "publications"), where("userId", "==", userId));
+  }
+  const snap = await getDocs(q);
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Publication));
+  return list.sort((a, b) => (b.year || 0) - (a.year || 0));
+}
+
+export async function createPublication(
+  data: Omit<Publication, "id" | "createdAt" | "updatedAt">,
+  actor: { uid: string; email: string; role: UserRole }
+): Promise<string> {
+  const now = new Date().toISOString();
+  const ref = await addDoc(collection(firestore, "publications"), {
+    ...data,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await logAudit(
+    actor,
+    "CREATE_PUBLICATION",
+    "publication",
+    ref.id,
+    `Thêm công trình vào Hồ sơ nghiên cứu: "${data.title}" (${data.year})`
+  );
+  return ref.id;
+}
+
+export async function updatePublication(
+  id: string,
+  data: Partial<Publication>,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  const now = new Date().toISOString();
+  const docRef = doc(firestore, "publications", id);
+  await updateDoc(docRef, {
+    ...data,
+    updatedAt: now,
+  });
+
+  await logAudit(
+    actor,
+    "UPDATE_PUBLICATION",
+    "publication",
+    id,
+    `Cập nhật công trình nghiên cứu: "${data.title || id}"`
+  );
+}
+
+export async function deletePublication(
+  id: string,
+  title: string,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  await deleteDoc(doc(firestore, "publications", id));
+  await logAudit(
+    actor,
+    "DELETE_PUBLICATION",
+    "publication",
+    id,
+    `Xóa công trình khỏi hồ sơ: "${title}"`
+  );
+}
+
+// ======================== CONVERT RESEARCH WORK TO PUBLICATION ========================
+export async function convertResearchWorkToPublication(
+  research: ResearchWork,
+  publicationDetails: {
+    year: number;
+    publisher?: string;
+    journalOrConference?: string;
+    volume?: string;
+    issue?: string;
+    pages?: string;
+    isbn?: string;
+    issn?: string;
+    doi?: string;
+    indexing?: string;
+    link?: string;
+  },
+  actor: { uid: string; email: string; role: UserRole }
+): Promise<string> {
+  const now = new Date().toISOString();
+
+  // 1. Create publication
+  const pubRef = await addDoc(collection(firestore, "publications"), {
+    userId: research.userId,
+    userEmail: research.userEmail,
+    userName: research.userName,
+    year: publicationDetails.year,
+    title: research.title,
+    type: research.category,
+    role: research.role,
+    coAuthors: research.coAuthors || "",
+    publisher: publicationDetails.publisher || "",
+    journalOrConference: publicationDetails.journalOrConference || research.venue || "",
+    volume: publicationDetails.volume || "",
+    issue: publicationDetails.issue || "",
+    pages: publicationDetails.pages || "",
+    isbn: publicationDetails.isbn || "",
+    issn: publicationDetails.issn || "",
+    doi: publicationDetails.doi || "",
+    indexing: publicationDetails.indexing || "",
+    link: publicationDetails.link || "",
+    notes: research.notes || "",
+    sourceResearchId: research.id,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  // 2. Mark research work as completed & converted
+  const researchDocRef = doc(firestore, "researchWorks", research.id);
+  await updateDoc(researchDocRef, {
+    isCompleted: true,
+    status: "Đã xuất bản",
+    convertedToPublicationId: pubRef.id,
+    updatedAt: now,
+  });
+
+  // 3. Append progress record
+  await addDoc(collection(firestore, "researchProgress"), {
+    researchId: research.id,
+    userId: research.userId,
+    userEmail: research.userEmail,
+    status: "Đã xuất bản",
+    date: new Date().toLocaleDateString("vi-VN"),
+    notes: `Chuyển vào Hồ sơ nghiên cứu (Mã hồ sơ: ${pubRef.id})`,
+    createdAt: now,
+  });
+
+  await logAudit(
+    actor,
+    "CONVERT_RESEARCH_TO_PUBLICATION",
+    "research",
+    research.id,
+    `Chuyển công trình "${research.title}" vào Hồ sơ nghiên cứu (${pubRef.id})`
+  );
+
+  return pubRef.id;
+}
+
+// ======================== RECORD IMPORT BATCH ========================
+export async function recordImportBatch(batch: ImportBatch) {
+  await addDoc(collection(firestore, "imports"), {
+    ...batch,
+    createdAt: serverTimestamp(),
+  });
+}

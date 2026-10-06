@@ -1,0 +1,670 @@
+rules_version = '2';
+
+// ===============================================================
+// Cloud Firestore Security Rules - IFA Research Hub (IFA-RH)
+// Project ID: ifa-rh
+// Location: asia-southeast1
+// ===============================================================
+//
+// ===============================================================
+// Assumed Data Model Documentation
+// ===============================================================
+//
+// Collection: users
+// Document ID: userId (Firebase Auth UID or prov_[normalized_email])
+// Fields:
+//   - id: string (required, 1-128 chars) - Document identifier
+//   - uid: string (required, 1-128 chars) - Firebase Auth UID or provisioned ID
+//   - email: string (required, valid email pattern, max 100 chars) - Institutional email
+//   - name: string (required, 1-100 chars) - Full name of faculty member
+//   - role: string (required, 'owner' | 'admin' | 'lecturer') - System authorization role
+//   - department: string (optional, 0-100 chars) - Department / Division name
+//   - academicDegree: string (optional, 0-50 chars) - Academic degree (TS, ThS, PGS, etc.)
+//   - orcid: string (optional, 0-100 chars) - ORCID scientific identifier
+//   - googleScholar: string (optional, 0-500 chars) - Google Scholar profile URL
+//   - researchGate: string (optional, 0-500 chars) - ResearchGate profile URL
+//   - website: string (optional, 0-500 chars) - Personal or academic website URL
+//   - active: bool (required) - Account activation status
+//   - photoURL: string (optional, 0-1000 chars) - Profile avatar URL
+//   - createdAt: string | timestamp (optional, max 50 chars) - Profile creation time
+//   - updatedAt: string | timestamp (optional, max 50 chars) - Last update time
+//   - linkedAt: string | timestamp (optional, max 50 chars) - Authentication link time
+//
+// Collection: opportunities
+// Document ID: opportunityId (auto-generated)
+// Fields:
+//   - id: string (optional, max 100 chars)
+//   - title: string (required, 1-300 chars) - Title of CFPs, conference, grant
+//   - organizer: string (required, 1-200 chars) - Organizing institution
+//   - country: string (required, 1-100 chars) - Country of event/journal
+//   - type: string (required) - Event type ('Hội thảo', 'Hội nghị', 'Call for Papers', etc.)
+//   - level: string (required) - Scope level ('Quốc tế', 'Quốc gia', 'Cấp Trường', etc.)
+//   - topic: string (required, 1-300 chars) - Main topic
+//   - field: string (required, 1-200 chars) - Applicable design/academic field
+//   - tags: list (required, max 30 items) - Search tags
+//   - deadline: string (required, 1-50 chars) - Main submission deadline
+//   - abstractDeadline: string (optional, max 50 chars)
+//   - fullPaperDeadline: string (optional, max 50 chars)
+//   - registrationDeadline: string (optional, max 50 chars)
+//   - eventDate: string (optional, max 50 chars)
+//   - location: string (optional, max 200 chars)
+//   - fee: string (optional, max 100 chars)
+//   - publicationFormat: string (optional, max 100 chars)
+//   - indexing: string (optional, max 100 chars) - Scopus, WoS, etc.
+//   - content: string (required, 1-50000 chars) - Full markdown/html description
+//   - submissionUrl: string (optional, max 500 chars)
+//   - sourceUrl: string (optional, max 500 chars)
+//   - directions: string (optional, max 2000 chars) - Faculty writing guidance
+//   - sourceType: string (required, 'SPARK' | 'ADMIN')
+//   - status: string (required, 'published' | 'archived')
+//   - candidateId: string (optional, max 100 chars) - Reference to spark candidate
+//   - createdAt: string | timestamp (required, max 50 chars)
+//   - updatedAt: string | timestamp (required, max 50 chars)
+//   - createdBy: string (required, 1-100 chars)
+//   - updatedBy: string (optional, max 100 chars)
+//
+// Collection: opportunityCandidates
+// Document ID: candidateId (auto-generated)
+// Fields:
+//   - Similar to opportunities, with status in ['pending', 'approved', 'rejected'],
+//     sourceType == 'SPARK', normalizedTitle: string (required, 1-500 chars),
+//     rejectionReason: string (optional, max 1000 chars), reviewedBy: string (optional).
+//
+// Collection: researchWorks
+// Document ID: workId (auto-generated)
+// Fields:
+//   - id: string (optional, max 100 chars)
+//   - userId: string (required, 1-128 chars) - Faculty author UID
+//   - userEmail: string (required, 1-100 chars)
+//   - userName: string (required, 1-100 chars)
+//   - title: string (required, 1-300 chars)
+//   - category: string (required, 1-100 chars)
+//   - topic: string (required, 1-300 chars)
+//   - venue: string (optional, max 200 chars)
+//   - deadline: string (optional, max 50 chars)
+//   - plannedSubmissionDate: string (optional, max 50 chars)
+//   - actualSubmissionDate: string (optional, max 50 chars)
+//   - eventDate: string (optional, max 50 chars)
+//   - plannedPublishDate: string (optional, max 50 chars)
+//   - role: string (required, 1-100 chars)
+//   - coAuthors: string (optional, max 500 chars)
+//   - status: string (required) - Progress status
+//   - notes: string (optional, max 2000 chars)
+//   - reminderMilestone: string (optional, max 200 chars)
+//   - isCompleted: bool (required)
+//   - convertedToPublicationId: string (optional, max 100 chars)
+//   - createdAt: string | timestamp (required, max 50 chars)
+//   - updatedAt: string | timestamp (required, max 50 chars)
+//
+// Collection: researchProgress
+// Document ID: progressId (auto-generated)
+// Fields:
+//   - id: string (optional, max 100 chars)
+//   - researchId: string (required, 1-100 chars)
+//   - userId: string (required, 1-128 chars)
+//   - userEmail: string (required, 1-100 chars)
+//   - status: string (required)
+//   - date: string (required, 1-50 chars)
+//   - notes: string (required, 1-2000 chars)
+//   - createdAt: string | timestamp (required, max 50 chars)
+//
+// Collection: publications
+// Document ID: pubId (auto-generated)
+// Fields:
+//   - id: string (optional, max 100 chars)
+//   - userId: string (required, 1-128 chars)
+//   - userEmail: string (required, 1-100 chars)
+//   - userName: string (required, 1-100 chars)
+//   - year: int (required, 1900 - 2100)
+//   - title: string (required, 1-300 chars)
+//   - type: string (required, 1-100 chars)
+//   - role: string (required, 1-100 chars)
+//   - coAuthors: string (optional, max 500 chars)
+//   - publisher: string (optional, max 200 chars)
+//   - journalOrConference: string (optional, max 200 chars)
+//   - volume: string (optional, max 50 chars)
+//   - issue: string (optional, max 50 chars)
+//   - pages: string (optional, max 50 chars)
+//   - isbn: string (optional, max 50 chars)
+//   - issn: string (optional, max 50 chars)
+//   - doi: string (optional, max 100 chars)
+//   - indexing: string (optional, max 100 chars)
+//   - link: string (optional, max 500 chars)
+//   - notes: string (optional, max 2000 chars)
+//   - sourceResearchId: string (optional, max 100 chars)
+//   - createdAt: string | timestamp (required, max 50 chars)
+//   - updatedAt: string | timestamp (required, max 50 chars)
+//
+// Collection: auditLogs
+// Document ID: logId (auto-generated)
+// Fields:
+//   - id: string (optional, max 100 chars)
+//   - timestamp: string (required, 1-50 chars)
+//   - actorUid: string (required, 1-128 chars)
+//   - actorEmail: string (required, 1-100 chars)
+//   - actorRole: string (required, 'owner' | 'admin' | 'lecturer')
+//   - action: string (required, 1-100 chars)
+//   - entityType: string (required)
+//   - entityId: string (required, 1-128 chars)
+//   - summary: string (required, 1-1000 chars)
+//   - createdAt: timestamp | string (optional, max 50 chars)
+//
+// Collection: systemConfig
+// Document ID: configId (e.g. 'public', 'bootstrap', 'system')
+// Fields:
+//   - isPublic: bool (optional)
+//   - updatedAt: string | timestamp (optional, max 50 chars)
+//
+// Collection: imports
+// Document ID: importId (auto-generated)
+// Fields:
+//   - id: string (optional, max 100 chars)
+//   - timestamp: string (required, 1-50 chars)
+//   - importedBy: string (required, 1-100 chars)
+//   - fileName: string (required, 1-200 chars)
+//   - type: string (required, 'opportunities' | 'research_works' | 'publications' | 'lecturers')
+//   - totalRows: int (required, >= 0)
+//   - successCount: int (required, >= 0)
+//   - errorCount: int (required, >= 0)
+//   - errors: list (optional, max 100 items)
+//   - createdAt: timestamp | string (optional, max 50 chars)
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // General Helper Functions
+    // ===============================================================
+
+    // Check if the caller is an authenticated user
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Check if user document exists in users collection
+    function hasUserDoc(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid));
+    }
+
+    // Retrieve user document data
+    function getUserData(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+
+    // Retrieve current authenticated caller's user document data
+    function currentUserData() {
+      return getUserData(request.auth.uid);
+    }
+
+    // Verify if caller is the pre-designated bootstrap system owner
+    function isBootstrapOwner() {
+      return isAuthenticated() &&
+        request.auth.token.email != null &&
+        request.auth.token.email == 'tranquanghai@tdtu.edu.vn';
+    }
+
+    // Verify if caller has owner privileges
+    function isOwner() {
+      return isAuthenticated() && (
+        isBootstrapOwner() ||
+        (hasUserDoc(request.auth.uid) && currentUserData().role == 'owner')
+      );
+    }
+
+    // Verify if caller has active admin or owner privileges
+    function isAdmin() {
+      return isOwner() || (
+        isAuthenticated() &&
+        hasUserDoc(request.auth.uid) &&
+        currentUserData().role == 'admin' &&
+        currentUserData().active == true
+      );
+    }
+
+    // Verify specified keys have not been modified during an update
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // Validate string constraints
+    function validString(val, minLen, maxLen) {
+      return val is string &&
+        val.size() >= minLen &&
+        val.size() <= maxLen;
+    }
+
+    // Validate list constraints
+    function validList(val, maxLen) {
+      return val is list && val.size() <= maxLen;
+    }
+
+    // Validate standard email format
+    function validEmail(email) {
+      return email is string &&
+        email.size() <= 100 &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Domain Validator Functions (Validator Function Pattern)
+    // ===============================================================
+
+    // Validates users/{userId} schema and constraints
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'uid', 'email', 'name', 'role', 'active']) &&
+        data.keys().hasOnly([
+          'id', 'uid', 'email', 'name', 'role',
+          'department', 'academicDegree', 'orcid', 'googleScholar',
+          'researchGate', 'website', 'active', 'photoURL',
+          'createdAt', 'updatedAt', 'linkedAt'
+        ]) &&
+        validString(data.id, 1, 128) &&
+        validString(data.uid, 1, 128) &&
+        validEmail(data.email) &&
+        validString(data.name, 1, 100) &&
+        data.role in ['owner', 'admin', 'lecturer'] &&
+        data.active is bool &&
+        (!('department' in data) || validString(data.department, 0, 100)) &&
+        (!('academicDegree' in data) || validString(data.academicDegree, 0, 50)) &&
+        (!('orcid' in data) || validString(data.orcid, 0, 100)) &&
+        (!('googleScholar' in data) || validString(data.googleScholar, 0, 500)) &&
+        (!('researchGate' in data) || validString(data.researchGate, 0, 500)) &&
+        (!('website' in data) || validString(data.website, 0, 500)) &&
+        (!('photoURL' in data) || validString(data.photoURL, 0, 1000)) &&
+        (!('createdAt' in data) || validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
+        (!('updatedAt' in data) || validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
+        (!('linkedAt' in data) || validString(data.linkedAt, 1, 50) || data.linkedAt is timestamp);
+    }
+
+    // Validates opportunities/{opportunityId} schema and constraints
+    function isValidOpportunity(data) {
+      return data.keys().hasAll([
+          'title', 'organizer', 'country', 'type', 'level', 'topic',
+          'field', 'tags', 'deadline', 'content', 'sourceType',
+          'status', 'createdAt', 'updatedAt', 'createdBy'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'title', 'organizer', 'country', 'type', 'level', 'topic',
+          'field', 'tags', 'deadline', 'abstractDeadline', 'fullPaperDeadline',
+          'registrationDeadline', 'eventDate', 'location', 'fee', 'publicationFormat',
+          'indexing', 'content', 'submissionUrl', 'sourceUrl', 'directions',
+          'sourceType', 'status', 'candidateId', 'createdAt', 'updatedAt',
+          'createdBy', 'updatedBy'
+        ]) &&
+        validString(data.title, 1, 300) &&
+        validString(data.organizer, 1, 200) &&
+        validString(data.country, 1, 100) &&
+        data.type in [
+          'Hội thảo', 'Hội nghị', 'Call for Papers', 'Special Issue',
+          'Book Chapter', 'Seminar', 'Hợp tác nghiên cứu', 'Đổi mới sáng tạo', 'Khác'
+        ] &&
+        data.level in ['Quốc tế', 'Quốc gia', 'Cấp Trường', 'Cấp Khoa', 'Khác'] &&
+        validString(data.topic, 1, 300) &&
+        validString(data.field, 1, 200) &&
+        validList(data.tags, 30) &&
+        validString(data.deadline, 1, 50) &&
+        validString(data.content, 1, 50000) &&
+        data.sourceType in ['SPARK', 'ADMIN'] &&
+        data.status in ['published', 'archived'] &&
+        validString(data.createdBy, 1, 100) &&
+        (validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
+        (validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
+        (!('abstractDeadline' in data) || validString(data.abstractDeadline, 0, 50)) &&
+        (!('fullPaperDeadline' in data) || validString(data.fullPaperDeadline, 0, 50)) &&
+        (!('registrationDeadline' in data) || validString(data.registrationDeadline, 0, 50)) &&
+        (!('eventDate' in data) || validString(data.eventDate, 0, 50)) &&
+        (!('location' in data) || validString(data.location, 0, 200)) &&
+        (!('fee' in data) || validString(data.fee, 0, 100)) &&
+        (!('publicationFormat' in data) || validString(data.publicationFormat, 0, 100)) &&
+        (!('indexing' in data) || validString(data.indexing, 0, 100)) &&
+        (!('submissionUrl' in data) || validString(data.submissionUrl, 0, 500)) &&
+        (!('sourceUrl' in data) || validString(data.sourceUrl, 0, 500)) &&
+        (!('directions' in data) || validString(data.directions, 0, 2000)) &&
+        (!('candidateId' in data) || validString(data.candidateId, 0, 100)) &&
+        (!('updatedBy' in data) || validString(data.updatedBy, 0, 100)) &&
+        (!('id' in data) || validString(data.id, 0, 100));
+    }
+
+    // Validates opportunityCandidates/{candidateId} schema and constraints
+    function isValidOpportunityCandidate(data) {
+      return data.keys().hasAll([
+          'title', 'organizer', 'country', 'type', 'level', 'topic',
+          'field', 'tags', 'deadline', 'content', 'sourceType',
+          'status', 'normalizedTitle', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'title', 'organizer', 'country', 'type', 'level', 'topic',
+          'field', 'tags', 'deadline', 'abstractDeadline', 'fullPaperDeadline',
+          'registrationDeadline', 'eventDate', 'location', 'fee', 'publicationFormat',
+          'indexing', 'content', 'submissionUrl', 'sourceUrl', 'directions',
+          'sourceType', 'status', 'rejectionReason', 'reviewedBy', 'reviewedAt',
+          'normalizedTitle', 'createdAt', 'updatedAt'
+        ]) &&
+        validString(data.title, 1, 300) &&
+        validString(data.organizer, 1, 200) &&
+        validString(data.country, 1, 100) &&
+        data.type in [
+          'Hội thảo', 'Hội nghị', 'Call for Papers', 'Special Issue',
+          'Book Chapter', 'Seminar', 'Hợp tác nghiên cứu', 'Đổi mới sáng tạo', 'Khác'
+        ] &&
+        data.level in ['Quốc tế', 'Quốc gia', 'Cấp Trường', 'Cấp Khoa', 'Khác'] &&
+        validString(data.topic, 1, 300) &&
+        validString(data.field, 1, 200) &&
+        validList(data.tags, 30) &&
+        validString(data.deadline, 1, 50) &&
+        validString(data.content, 1, 50000) &&
+        data.sourceType == 'SPARK' &&
+        data.status in ['pending', 'approved', 'rejected'] &&
+        validString(data.normalizedTitle, 1, 500) &&
+        (validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
+        (validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
+        (!('abstractDeadline' in data) || validString(data.abstractDeadline, 0, 50)) &&
+        (!('fullPaperDeadline' in data) || validString(data.fullPaperDeadline, 0, 50)) &&
+        (!('registrationDeadline' in data) || validString(data.registrationDeadline, 0, 50)) &&
+        (!('eventDate' in data) || validString(data.eventDate, 0, 50)) &&
+        (!('location' in data) || validString(data.location, 0, 200)) &&
+        (!('fee' in data) || validString(data.fee, 0, 100)) &&
+        (!('publicationFormat' in data) || validString(data.publicationFormat, 0, 100)) &&
+        (!('indexing' in data) || validString(data.indexing, 0, 100)) &&
+        (!('submissionUrl' in data) || validString(data.submissionUrl, 0, 500)) &&
+        (!('sourceUrl' in data) || validString(data.sourceUrl, 0, 500)) &&
+        (!('directions' in data) || validString(data.directions, 0, 2000)) &&
+        (!('rejectionReason' in data) || validString(data.rejectionReason, 0, 1000)) &&
+        (!('reviewedBy' in data) || validString(data.reviewedBy, 0, 100)) &&
+        (!('reviewedAt' in data) || validString(data.reviewedAt, 0, 50)) &&
+        (!('id' in data) || validString(data.id, 0, 100));
+    }
+
+    // Validates researchWorks/{workId} schema and constraints
+    function isValidResearchWork(data) {
+      return data.keys().hasAll([
+          'userId', 'userEmail', 'userName', 'title', 'category',
+          'topic', 'role', 'status', 'isCompleted', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'userEmail', 'userName', 'title', 'category',
+          'topic', 'venue', 'deadline', 'plannedSubmissionDate',
+          'actualSubmissionDate', 'eventDate', 'plannedPublishDate',
+          'role', 'coAuthors', 'status', 'notes', 'reminderMilestone',
+          'isCompleted', 'convertedToPublicationId', 'createdAt', 'updatedAt'
+        ]) &&
+        validString(data.userId, 1, 128) &&
+        validString(data.userEmail, 1, 100) &&
+        validString(data.userName, 1, 100) &&
+        validString(data.title, 1, 300) &&
+        validString(data.category, 1, 100) &&
+        validString(data.topic, 1, 300) &&
+        validString(data.role, 1, 100) &&
+        data.status in [
+          'Ý tưởng', 'Đang chuẩn bị', 'Đang viết', 'Đã gửi', 'Chờ phản biện',
+          'Sửa theo phản biện', 'Được chấp nhận', 'Đã xuất bản', 'Nghiệm thu / Hoàn tất'
+        ] &&
+        data.isCompleted is bool &&
+        (validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
+        (validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
+        (!('venue' in data) || validString(data.venue, 0, 200)) &&
+        (!('deadline' in data) || validString(data.deadline, 0, 50)) &&
+        (!('plannedSubmissionDate' in data) || validString(data.plannedSubmissionDate, 0, 50)) &&
+        (!('actualSubmissionDate' in data) || validString(data.actualSubmissionDate, 0, 50)) &&
+        (!('eventDate' in data) || validString(data.eventDate, 0, 50)) &&
+        (!('plannedPublishDate' in data) || validString(data.plannedPublishDate, 0, 50)) &&
+        (!('coAuthors' in data) || validString(data.coAuthors, 0, 500)) &&
+        (!('notes' in data) || validString(data.notes, 0, 2000)) &&
+        (!('reminderMilestone' in data) || validString(data.reminderMilestone, 0, 200)) &&
+        (!('convertedToPublicationId' in data) || validString(data.convertedToPublicationId, 0, 100)) &&
+        (!('id' in data) || validString(data.id, 0, 100));
+    }
+
+    // Validates researchProgress/{progressId} schema and constraints
+    function isValidResearchProgress(data) {
+      return data.keys().hasAll([
+          'researchId', 'userId', 'userEmail', 'status', 'date', 'notes', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'researchId', 'userId', 'userEmail', 'status', 'date', 'notes', 'createdAt'
+        ]) &&
+        validString(data.researchId, 1, 100) &&
+        validString(data.userId, 1, 128) &&
+        validString(data.userEmail, 1, 100) &&
+        data.status in [
+          'Ý tưởng', 'Đang chuẩn bị', 'Đang viết', 'Đã gửi', 'Chờ phản biện',
+          'Sửa theo phản biện', 'Được chấp nhận', 'Đã xuất bản', 'Nghiệm thu / Hoàn tất'
+        ] &&
+        validString(data.date, 1, 50) &&
+        validString(data.notes, 1, 2000) &&
+        (validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
+        (!('id' in data) || validString(data.id, 0, 100));
+    }
+
+    // Validates publications/{pubId} schema and constraints
+    function isValidPublication(data) {
+      return data.keys().hasAll([
+          'userId', 'userEmail', 'userName', 'year', 'title',
+          'type', 'role', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'userId', 'userEmail', 'userName', 'year', 'title',
+          'type', 'role', 'coAuthors', 'publisher', 'journalOrConference',
+          'volume', 'issue', 'pages', 'isbn', 'issn', 'doi', 'indexing',
+          'link', 'notes', 'sourceResearchId', 'createdAt', 'updatedAt'
+        ]) &&
+        validString(data.userId, 1, 128) &&
+        validString(data.userEmail, 1, 100) &&
+        validString(data.userName, 1, 100) &&
+        data.year is int && data.year >= 1900 && data.year <= 2100 &&
+        validString(data.title, 1, 300) &&
+        validString(data.type, 1, 100) &&
+        validString(data.role, 1, 100) &&
+        (validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
+        (validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
+        (!('coAuthors' in data) || validString(data.coAuthors, 0, 500)) &&
+        (!('publisher' in data) || validString(data.publisher, 0, 200)) &&
+        (!('journalOrConference' in data) || validString(data.journalOrConference, 0, 200)) &&
+        (!('volume' in data) || validString(data.volume, 0, 50)) &&
+        (!('issue' in data) || validString(data.issue, 0, 50)) &&
+        (!('pages' in data) || validString(data.pages, 0, 50)) &&
+        (!('isbn' in data) || validString(data.isbn, 0, 50)) &&
+        (!('issn' in data) || validString(data.issn, 0, 50)) &&
+        (!('doi' in data) || validString(data.doi, 0, 100)) &&
+        (!('indexing' in data) || validString(data.indexing, 0, 100)) &&
+        (!('link' in data) || validString(data.link, 0, 500)) &&
+        (!('notes' in data) || validString(data.notes, 0, 2000)) &&
+        (!('sourceResearchId' in data) || validString(data.sourceResearchId, 0, 100)) &&
+        (!('id' in data) || validString(data.id, 0, 100));
+    }
+
+    // Validates auditLogs/{logId} schema and constraints
+    function isValidAuditLog(data) {
+      return data.keys().hasAll([
+          'timestamp', 'actorUid', 'actorEmail', 'actorRole',
+          'action', 'entityType', 'entityId', 'summary'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'timestamp', 'createdAt', 'actorUid', 'actorEmail',
+          'actorRole', 'action', 'entityType', 'entityId', 'summary'
+        ]) &&
+        validString(data.timestamp, 1, 50) &&
+        validString(data.actorUid, 1, 128) &&
+        validString(data.actorEmail, 1, 100) &&
+        data.actorRole in ['owner', 'admin', 'lecturer'] &&
+        validString(data.action, 1, 100) &&
+        data.entityType in ['opportunity', 'candidate', 'user', 'research', 'publication', 'system', 'import'] &&
+        validString(data.entityId, 1, 128) &&
+        validString(data.summary, 1, 1000) &&
+        (!('createdAt' in data) || validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
+        (!('id' in data) || validString(data.id, 0, 100));
+    }
+
+    // Validates systemConfig/{configId} schema and constraints
+    function isValidSystemConfig(data) {
+      return data.keys().size() <= 30 &&
+        (!('isPublic' in data) || data.isPublic is bool) &&
+        (!('updatedAt' in data) || validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp);
+    }
+
+    // Validates imports/{importId} schema and constraints
+    function isValidImportBatch(data) {
+      return data.keys().hasAll([
+          'timestamp', 'importedBy', 'fileName', 'type',
+          'totalRows', 'successCount', 'errorCount'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'timestamp', 'importedBy', 'fileName', 'type',
+          'totalRows', 'successCount', 'errorCount', 'errors', 'createdAt'
+        ]) &&
+        validString(data.timestamp, 1, 50) &&
+        validString(data.importedBy, 1, 100) &&
+        validString(data.fileName, 1, 200) &&
+        data.type in ['opportunities', 'research_works', 'publications', 'lecturers'] &&
+        data.totalRows is int && data.totalRows >= 0 &&
+        data.successCount is int && data.successCount >= 0 &&
+        data.errorCount is int && data.errorCount >= 0 &&
+        (!('errors' in data) || validList(data.errors, 100)) &&
+        (!('createdAt' in data) || validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
+        (!('id' in data) || validString(data.id, 0, 100));
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // 1. Users collection
+    // - Owner: Full read/write, role assignment
+    // - Admin: Read all, provision lecturer profiles, update profiles (cannot escalate or modify owner)
+    // - Lecturer: Read active colleagues and own profile, update non-privileged personal fields
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() ||
+        request.auth.uid == userId ||
+        resource.data.email == request.auth.token.email ||
+        resource.data.active == true
+      );
+
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (
+        // Case A: Bootstrap Owner creation
+        (isBootstrapOwner() && request.auth.uid == userId && request.resource.data.role == 'owner') ||
+        // Case B: Existing Owner creating any user
+        (isOwner()) ||
+        // Case C: Admin provisioning a lecturer
+        (isAdmin() && request.resource.data.role == 'lecturer') ||
+        // Case D: Authenticated lecturer linking their provisioned account
+        (request.auth.uid == userId && request.resource.data.email == request.auth.token.email && request.resource.data.role == 'lecturer')
+      );
+
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (
+        // Case A: Owner has full update permission (document id immutable)
+        (isOwner() && request.resource.data.id == resource.data.id) ||
+        // Case B: Admin updating lecturer profile (cannot touch owner, cannot assign owner role, role immutable)
+        (
+          isAdmin() &&
+          resource.data.role != 'owner' &&
+          request.resource.data.role != 'owner' &&
+          request.resource.data.role == resource.data.role &&
+          areImmutableFieldsUnchanged(['id', 'uid', 'email', 'createdAt'])
+        ) ||
+        // Case C: Lecturer updating own profile fields (cannot change role, active status, email, uid, id)
+        (
+          request.auth.uid == userId &&
+          request.resource.data.role == resource.data.role &&
+          request.resource.data.active == resource.data.active &&
+          areImmutableFieldsUnchanged(['id', 'uid', 'email', 'role', 'active', 'createdAt', 'linkedAt'])
+        )
+      );
+
+      allow delete: if isOwner();
+    }
+
+    // 2. Opportunities collection
+    // - Public / Lecturer: Read published opportunities
+    // - Admin & Owner: Full CRUD
+    match /opportunities/{opportunityId} {
+      allow read: if resource.data.status == 'published' || isAdmin();
+      allow create: if isAdmin() && isValidOpportunity(request.resource.data);
+      allow update: if isAdmin() && isValidOpportunity(request.resource.data) && areImmutableFieldsUnchanged(['createdAt', 'createdBy']);
+      allow delete: if isAdmin();
+    }
+
+    // 3. Opportunity Candidates (Spark automated scraper candidates)
+    // - Admin & Owner: Full CRUD (review, approve, reject, edit, delete)
+    // - Public & Lecturer: Denied access
+    match /opportunityCandidates/{candidateId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isValidOpportunityCandidate(request.resource.data);
+      allow update: if isAdmin() && isValidOpportunityCandidate(request.resource.data) && areImmutableFieldsUnchanged(['createdAt']);
+      allow delete: if isAdmin();
+    }
+
+    // 4. Research Works collection (Tiến độ NCKH)
+    // - Lecturer: CRUD on own research works
+    // - Admin & Owner: Full read and collaborative update
+    match /researchWorks/{workId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if (isAdmin() || (isAuthenticated() && request.resource.data.userId == request.auth.uid)) && isValidResearchWork(request.resource.data);
+      allow update: if (isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid)) && isValidResearchWork(request.resource.data) && areImmutableFieldsUnchanged(['userId', 'createdAt']);
+      allow delete: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+    }
+
+    // 5. Research Progress history (Lịch sử tiến độ NCKH)
+    // - Lecturer: Read and append entries for own research works
+    // - Admin & Owner: Read and append all
+    // - Updates & Deletions: Strictly restricted (immutable audit timeline), owner maintenance only
+    match /researchProgress/{progressId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if (isAdmin() || (isAuthenticated() && request.resource.data.userId == request.auth.uid)) && isValidResearchProgress(request.resource.data);
+      allow update: if isOwner() && isValidResearchProgress(request.resource.data) && areImmutableFieldsUnchanged(['researchId', 'userId', 'createdAt']);
+      allow delete: if isOwner();
+    }
+
+    // 6. Publications collection (Hồ sơ nghiên cứu khoa học)
+    // - Public & Authenticated: Read all faculty publications
+    // - Lecturer: CRUD on own publications
+    // - Admin & Owner: Full CRUD
+    match /publications/{pubId} {
+      allow read: if true;
+      allow create: if (isAdmin() || (isAuthenticated() && request.resource.data.userId == request.auth.uid)) && isValidPublication(request.resource.data);
+      allow update: if (isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid)) && isValidPublication(request.resource.data) && areImmutableFieldsUnchanged(['userId', 'createdAt']);
+      allow delete: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+    }
+
+    // 7. Audit Logs collection (Nhật ký kiểm toán)
+    // - Authenticated users/admins: Append-only log entries (actorUid matches caller)
+    // - Admin & Owner: Read audit logs
+    // - Updates & Deletes: Denied (immutable compliance trail)
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated() && request.resource.data.actorUid == request.auth.uid && isValidAuditLog(request.resource.data);
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // 8. System Configuration collection
+    // - Owner: Read and write system parameters
+    // - Admin: Read only
+    // - Public / Lecturer: Read only if marked public or bootstrap config
+    match /systemConfig/{configId} {
+      allow read: if isOwner() || isAdmin() || configId in ['public', 'bootstrap'] || (resource != null && resource.data.isPublic == true);
+      allow create: if isOwner() && isValidSystemConfig(request.resource.data);
+      allow update: if isOwner() && isValidSystemConfig(request.resource.data);
+      allow delete: if isOwner();
+    }
+
+    // 9. Imports collection (Lịch sử nạp dữ liệu Excel/Batch)
+    // - Admin & Owner: Read and write import records
+    // - Others: Denied
+    match /imports/{importId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isValidImportBatch(request.resource.data);
+      allow update: if isAdmin() && isValidImportBatch(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // ===============================================================
+    // Root Default Deny
+    // ===============================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
