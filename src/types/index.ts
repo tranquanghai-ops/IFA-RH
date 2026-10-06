@@ -152,6 +152,11 @@ export interface ResearchWork {
   reminderMilestone?: string;
   isCompleted: boolean;
   convertedToPublicationId?: string;
+  convertedBy?: string;
+  convertedAt?: string;
+  lastUpdatedBy?: string;
+  lastUpdatedByRole?: string;
+  onBehalfOfUserId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -161,6 +166,9 @@ export interface ResearchProgress {
   researchId: string;
   userId: string;
   userEmail: string;
+  actorUid?: string;
+  actorEmail?: string;
+  actorRole?: string;
   status: ResearchStatus;
   date: string; // dd/mm/yyyy
   notes: string;
@@ -214,5 +222,7 @@ export interface ImportBatch {
   totalRows: number;
   successCount: number;
   errorCount: number;
+  skippedCount?: number;
   errors?: { row: number; reason: string }[];
 }
+

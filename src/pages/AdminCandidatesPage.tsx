@@ -23,6 +23,7 @@ import {
   AlertTriangle,
   Search,
   Filter,
+  Upload,
 } from "lucide-react";
 
 export const AdminCandidatesPage: React.FC = () => {
@@ -96,24 +97,34 @@ export const AdminCandidatesPage: React.FC = () => {
           </p>
         </div>
 
-        {/* View Switcher */}
-        <div style={{ display: "flex", gap: 6, background: "#e2e8f0", padding: 4, borderRadius: 6 }}>
-          <button
-            type="button"
-            className={`btn btn-sm ${viewMode === "table" ? "btn-primary" : "btn-secondary"}`}
-            onClick={() => setViewMode("table")}
-            style={{ padding: "4px 10px", minHeight: 32 }}
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <a
+            href="#admin_import"
+            className="btn btn-secondary btn-sm"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
           >
-            <List size={16} /> Bảng
-          </button>
-          <button
-            type="button"
-            className={`btn btn-sm ${viewMode === "grid" ? "btn-primary" : "btn-secondary"}`}
-            onClick={() => setViewMode("grid")}
-            style={{ padding: "4px 10px", minHeight: 32 }}
-          >
-            <LayoutGrid size={16} /> Lưới
-          </button>
+            <Upload size={14} /> Import file Spark
+          </a>
+
+          {/* View Switcher */}
+          <div style={{ display: "flex", gap: 6, background: "#e2e8f0", padding: 4, borderRadius: 6 }}>
+            <button
+              type="button"
+              className={`btn btn-sm ${viewMode === "table" ? "btn-primary" : "btn-secondary"}`}
+              onClick={() => setViewMode("table")}
+              style={{ padding: "4px 10px", minHeight: 32 }}
+            >
+              <List size={16} /> Bảng
+            </button>
+            <button
+              type="button"
+              className={`btn btn-sm ${viewMode === "grid" ? "btn-primary" : "btn-secondary"}`}
+              onClick={() => setViewMode("grid")}
+              style={{ padding: "4px 10px", minHeight: 32 }}
+            >
+              <LayoutGrid size={16} /> Lưới
+            </button>
+          </div>
         </div>
       </div>
 
