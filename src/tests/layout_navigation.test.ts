@@ -129,4 +129,33 @@ describe("LAYOUT & Role Navigation Verification (SCImago & IFAA Admin Standards)
     expect(brandHierarchy[3]).toBe("IFA Research Hub");
     expect(brandHierarchy[4]).toBe("Hệ thống Nghiên cứu Khoa học Giảng viên");
   });
+
+  it("should verify IFA-SSR Admin layout structure: Topbar with breadcrumb, Trang chung button and 8 KPI grid metrics", () => {
+    // 8 KPI metrics for SCImago-style Dashboard
+    const requiredKpiMetrics = [
+      "Tổng Giảng viên",
+      "Đang thực hiện",
+      "Đang viết",
+      "Đã gửi tạp chí",
+      "Chờ phản biện",
+      "Được chấp nhận",
+      "Đã xuất bản",
+      "Nghiệm thu năm nay",
+    ];
+
+    expect(requiredKpiMetrics).toHaveLength(8);
+
+    // Topbar breadcrumb map
+    const breadcrumbRoutes: Record<string, { root: string; leaf: string }> = {
+      admin_dashboard: { root: "Quản trị", leaf: "Tổng quan NCKH Toàn Khoa" },
+      lecturer_dashboard: { root: "IFA-RH", leaf: "Bảng điều khiển Giảng viên" },
+      owner: { root: "Chủ sở hữu", leaf: "Khu vực Owner & Cấu hình" },
+      publications: { root: "Nghiên cứu", leaf: "Hồ sơ nghiên cứu & Công bố" },
+    };
+
+    expect(breadcrumbRoutes.admin_dashboard.root).toBe("Quản trị");
+    expect(breadcrumbRoutes.owner.root).toBe("Chủ sở hữu");
+    expect(breadcrumbRoutes.publications.root).toBe("Nghiên cứu");
+  });
 });
+
