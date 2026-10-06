@@ -77,6 +77,77 @@ export const LoginPage: React.FC = () => {
     );
   }
 
+  // Handle disabled account
+  if (authStatus === "disabled" && user) {
+    return (
+      <div className="app-container" style={{ maxWidth: 540, margin: "60px auto" }}>
+        <div className="card" style={{ padding: "40px 32px", textAlign: "center", borderTop: "4px solid #ef4444" }}>
+          <div
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: "50%",
+              backgroundColor: "#fee2e2",
+              color: "#dc2626",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              margin: "0 auto 16px",
+            }}
+          >
+            <AlertTriangle size={32} />
+          </div>
+
+          <h2 style={{ fontSize: "1.35rem", color: "#991b1b", marginBottom: 12 }}>
+            Tài khoản đã bị vô hiệu hóa
+          </h2>
+
+          <div
+            style={{
+              background: "#fef2f2",
+              border: "1px solid #fecaca",
+              borderRadius: 8,
+              padding: "12px 16px",
+              marginBottom: 20,
+              fontSize: "0.9rem",
+              color: "#991b1b",
+            }}
+          >
+            Đang đăng nhập bằng: <strong>{user.email}</strong>
+          </div>
+
+          <p style={{ color: "var(--muted)", fontSize: "0.875rem", lineHeight: 1.6, marginBottom: 24, textAlign: "left" }}>
+            {error || "Tài khoản của bạn đã bị vô hiệu hóa hoặc ngừng hoạt động. Vui lòng liên hệ Ban Chủ nhiệm Khoa Mỹ thuật Công nghiệp để được hỗ trợ."}
+          </p>
+
+          <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={logout}
+              style={{ flex: 1 }}
+            >
+              <LogOut size={18} />
+              Đăng xuất
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={async () => {
+                await logout();
+                await login();
+              }}
+              style={{ flex: 1 }}
+            >
+              <RefreshCw size={18} />
+              Đổi tài khoản khác
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Handle external non-TDTU email
   if (authStatus === "invalid_domain" && user) {
     return (

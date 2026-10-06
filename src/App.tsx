@@ -156,7 +156,13 @@ export const App: React.FC = () => {
       <div className="public-portal-layout">
         <PublicHeader onSelectTab={handleSelectTab} />
         <main className="public-main-content">
-          {currentTab === "public" ? <PublicHome /> : <LoginPage />}
+          {user && !profile ? (
+            <LoginPage />
+          ) : currentTab === "public" ? (
+            <PublicHome />
+          ) : (
+            <LoginPage />
+          )}
         </main>
         <Footer />
         <UserGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
