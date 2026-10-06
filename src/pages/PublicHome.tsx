@@ -3,7 +3,18 @@ import type { Opportunity } from "../types";
 import { fetchPublishedOpportunities } from "../firebase/firestore";
 import { OpportunityCard } from "../components/OpportunityCard";
 import { OpportunityDetailModal } from "../components/OpportunityDetailModal";
-import { Search, Filter, Sparkles, AlertCircle } from "lucide-react";
+import { formatDateVN, getDeadlineBadge } from "../utils/date";
+import {
+  Search,
+  Filter,
+  Sparkles,
+  AlertCircle,
+  LayoutGrid,
+  List,
+  Calendar,
+  ExternalLink,
+  Clock,
+} from "lucide-react";
 
 const FILTER_TAGS = [
   "Tất cả",
@@ -26,6 +37,7 @@ export const PublicHome: React.FC = () => {
   const [selectedTag, setSelectedTag] = useState("Tất cả");
   const [selectedType, setSelectedType] = useState("Tất cả");
   const [selectedOpp, setSelectedOpp] = useState<Opportunity | null>(null);
+  const [viewMode, setViewMode] = useState<"table" | "cards">("table");
 
   const loadData = async () => {
     setLoading(true);
@@ -69,15 +81,15 @@ export const PublicHome: React.FC = () => {
 
   return (
     <div className="app-container">
-      {/* Hero Banner */}
+      {/* Hero Banner (SCImago Academic Portal Header) */}
       <div
         style={{
-          background: "linear-gradient(135deg, #10394c 0%, #005696 100%)",
+          background: "linear-gradient(135deg, #0f3557 0%, #005696 100%)",
           color: "#ffffff",
-          borderRadius: 12,
-          padding: "36px 32px",
-          marginBottom: 32,
-          boxShadow: "var(--shadow-md)",
+          borderRadius: 8,
+          padding: "32px 28px",
+          marginBottom: 24,
+          boxShadow: "var(--shadow-sm)",
         }}
       >
         <div style={{ maxWidth: 860 }}>
@@ -86,30 +98,32 @@ export const PublicHome: React.FC = () => {
               display: "inline-flex",
               alignItems: "center",
               gap: 6,
-              background: "rgba(255,255,255,0.15)",
+              background: "rgba(255,255,255,0.14)",
               padding: "4px 12px",
               borderRadius: 9999,
-              fontSize: "0.8125rem",
-              fontWeight: 600,
-              marginBottom: 14,
+              fontSize: "0.78rem",
+              fontWeight: 700,
+              letterSpacing: "0.04em",
+              marginBottom: 12,
             }}
           >
             <Sparkles size={14} />
-            CỔNG THÔNG TIN NCKH KHOA MỸ THUẬT CÔNG NGHIỆP
+            CỔNG CƠ HỘI NCKH KHOA MỸ THUẬT CÔNG NGHIỆP
           </div>
-          <h1 style={{ color: "#ffffff", fontSize: "2rem", marginBottom: 12 }}>
+          <h1 style={{ color: "#ffffff", fontSize: "1.75rem", marginBottom: 10, letterSpacing: "-0.01em" }}>
             Cơ hội Nghiên cứu Khoa học & Công bố Học thuật
           </h1>
-          <p style={{ color: "#e0f2fe", fontSize: "1rem", lineHeight: 1.6 }}>
-            Tổng hợp các hội thảo quốc gia và quốc tế, tạp chí Scopus/WoS, Special Issues, Call for Papers phù hợp định hướng nghiên cứu và đào tạo của giảng viên Khoa MTCN.
+          <p style={{ color: "#e0f2fe", fontSize: "0.95rem", lineHeight: 1.6, margin: 0 }}>
+            Hệ thống dữ liệu học thuật tổng hợp các hội thảo quốc tế & quốc gia, chuyên san Scopus/WoS, Special Issues, Call for Papers phù hợp định hướng nghiên cứu và đào tạo giảng viên Khoa MTCN.
           </p>
         </div>
       </div>
 
       {/* Search and Filters Bar */}
-      <div className="card" style={{ marginBottom: 24, padding: "20px 24px" }}>
-        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", marginBottom: 16 }}>
-          <div style={{ position: "relative", flex: "1 1 320px" }}>
+      <div className="card" style={{ marginBottom: 20, padding: "18px 20px" }}>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+          {/* Search box */}
+          <div style={{ position: "relative", flex: "1 1 300px" }}>
             <Search
               size={18}
               color="var(--muted)"
@@ -119,19 +133,20 @@ export const PublicHome: React.FC = () => {
               type="text"
               className="form-control"
               style={{ paddingLeft: 38 }}
-              placeholder="Tìm kiếm hội thảo, đơn vị tổ chức, chủ đề, ngành..."
+              placeholder="Tìm kiếm hội thảo, đơn vị tổ chức, chủ đề, chuyên ngành..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
 
+          {/* Type filter */}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Filter size={18} color="var(--primary)" />
+            <Filter size={16} color="var(--primary)" />
             <select
               className="form-control"
               value={selectedType}
               onChange={(e) => setSelectedType(e.target.value)}
-              style={{ width: "auto" }}
+              style={{ width: "auto", minWidth: 160 }}
             >
               <option value="Tất cả">Tất cả hình thức</option>
               <option value="Hội thảo">Hội thảo</option>
@@ -142,6 +157,42 @@ export const PublicHome: React.FC = () => {
               <option value="Seminar">Seminar</option>
               <option value="Hợp tác nghiên cứu">Hợp tác nghiên cứu</option>
             </select>
+          </div>
+
+          {/* View mode toggle */}
+          <div style={{ display: "flex", border: "1px solid var(--line-strong)", borderRadius: 6, overflow: "hidden" }}>
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{
+                backgroundColor: viewMode === "table" ? "var(--primary)" : "#ffffff",
+                color: viewMode === "table" ? "#ffffff" : "var(--text-sub)",
+                borderRadius: 0,
+                border: "none",
+                padding: "6px 12px",
+              }}
+              onClick={() => setViewMode("table")}
+              title="Chế độ bảng dữ liệu SCImago"
+            >
+              <List size={16} style={{ marginRight: 4 }} />
+              Bảng dữ liệu
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{
+                backgroundColor: viewMode === "cards" ? "var(--primary)" : "#ffffff",
+                color: viewMode === "cards" ? "#ffffff" : "var(--text-sub)",
+                borderRadius: 0,
+                border: "none",
+                padding: "6px 12px",
+              }}
+              onClick={() => setViewMode("cards")}
+              title="Chế độ ô vuông"
+            >
+              <LayoutGrid size={16} style={{ marginRight: 4 }} />
+              Ô vuông
+            </button>
           </div>
         </div>
 
@@ -167,12 +218,12 @@ export const PublicHome: React.FC = () => {
             background: "#fee2e2",
             border: "1px solid #fecaca",
             color: "#991b1b",
-            padding: 16,
+            padding: 14,
             borderRadius: 8,
-            marginBottom: 24,
+            marginBottom: 20,
             display: "flex",
             alignItems: "center",
-            gap: 12,
+            gap: 10,
           }}
         >
           <AlertCircle size={20} />
@@ -180,48 +231,146 @@ export const PublicHome: React.FC = () => {
         </div>
       )}
 
-      {/* Grid of Opportunities */}
+      {/* Opportunities Presentation */}
       {loading ? (
         <div style={{ textAlign: "center", padding: "60px 20px", color: "var(--muted)" }}>
-          <div style={{ fontSize: "1.1rem", fontWeight: 600 }}>Đang tải danh sách cơ hội NCKH...</div>
+          <div style={{ fontSize: "1.05rem", fontWeight: 600 }}>Đang tải danh mục cơ hội NCKH...</div>
         </div>
       ) : filteredOpportunities.length === 0 ? (
         <div
           className="card"
           style={{
             textAlign: "center",
-            padding: "60px 20px",
+            padding: "50px 20px",
             color: "var(--muted)",
           }}
         >
-          <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--primary)", marginBottom: 8 }}>
-            Chưa có cơ hội phù hợp với bộ lọc hiện tại
+          <div style={{ fontSize: "1.15rem", fontWeight: 700, color: "var(--primary)", marginBottom: 8 }}>
+            Không tìm thấy cơ hội phù hợp với tiêu chí lọc
           </div>
-          <p style={{ maxWidth: 500, margin: "0 auto", fontSize: "0.9rem" }}>
-            Hãy thử tìm kiếm với từ khóa khác hoặc chọn "Tất cả" để xem toàn bộ danh mục hội thảo đã được công bố.
+          <p style={{ maxWidth: 480, margin: "0 auto", fontSize: "0.875rem" }}>
+            Hãy thử tìm kiếm với từ khóa khác hoặc bấm "Tất cả" để xem danh mục hội thảo và tạp chí đã công bố.
           </p>
         </div>
       ) : (
         <>
-          <div style={{ marginBottom: 16, fontSize: "0.9rem", color: "var(--muted)", fontWeight: 600 }}>
-            Hiển thị {filteredOpportunities.length} cơ hội học thuật
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, fontSize: "0.85rem", color: "var(--muted)" }}>
+            <div>
+              Hiển thị <strong>{filteredOpportunities.length}</strong> cơ hội học thuật phù hợp
+            </div>
           </div>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))",
-              gap: 20,
-            }}
-          >
-            {filteredOpportunities.map((opp) => (
-              <OpportunityCard
-                key={opp.id}
-                opportunity={opp}
-                onViewDetail={(item) => setSelectedOpp(item)}
-              />
-            ))}
-          </div>
+          {viewMode === "table" ? (
+            /* SCImago-style Academic Data Table */
+            <div className="table-container" style={{ marginBottom: 32 }}>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th style={{ width: 140 }}>Loại & Cấp độ</th>
+                    <th>Cơ hội NCKH / Đơn vị tổ chức</th>
+                    <th>Chuyên ngành phù hợp</th>
+                    <th style={{ width: 160 }}>Hạn nộp & Tổ chức</th>
+                    <th style={{ width: 120, textAlign: "right" }}>Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredOpportunities.map((opp) => {
+                    const badgeInfo = getDeadlineBadge(opp.deadline, opp.createdAt);
+                    return (
+                      <tr key={opp.id}>
+                        <td>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
+                            <span className="badge badge-neutral" style={{ fontWeight: 700 }}>
+                              {opp.type}
+                            </span>
+                            <span className="badge badge-neutral">
+                              {opp.level}
+                            </span>
+                            {opp.sourceType === "SPARK" && (
+                              <span
+                                className="badge"
+                                style={{ backgroundColor: "#f3e8ff", color: "#6b21a8", border: "1px solid #e9d5ff", fontSize: "0.7rem" }}
+                                title="Thu thập bởi AI / Spark"
+                              >
+                                SPARK AI
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 700, color: "var(--primary)", fontSize: "0.95rem", marginBottom: 4 }}>
+                            {opp.title}
+                          </div>
+                          <div style={{ fontSize: "0.82rem", color: "var(--text-sub)", display: "flex", alignItems: "center", gap: 8 }}>
+                            <span>{opp.organizer}</span>
+                            <span>·</span>
+                            <span>{opp.country}</span>
+                            {opp.indexing && (
+                              <>
+                                <span>·</span>
+                                <strong style={{ color: "var(--teal)" }}>{opp.indexing}</strong>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                        <td>
+                          <div style={{ fontSize: "0.85rem", color: "var(--text-main)", marginBottom: 3 }}>
+                            {opp.field}
+                          </div>
+                          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                            {opp.tags?.slice(0, 3).map((tag) => (
+                              <span key={tag} className="badge badge-neutral" style={{ fontSize: "0.7rem" }}>
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                        <td>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
+                            <span className={`badge badge-${badgeInfo.variant}`}>
+                              <Clock size={11} style={{ marginRight: 2 }} />
+                              {badgeInfo.text}
+                            </span>
+                            <div style={{ fontSize: "0.8rem", color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
+                              <Calendar size={12} />
+                              Hạn: {formatDateVN(opp.deadline)}
+                            </div>
+                          </div>
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => setSelectedOpp(opp)}
+                          >
+                            Chi tiết
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            /* Card Grid View */
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))",
+                gap: 20,
+                marginBottom: 32,
+              }}
+            >
+              {filteredOpportunities.map((opp) => (
+                <OpportunityCard
+                  key={opp.id}
+                  opportunity={opp}
+                  onViewDetail={(item) => setSelectedOpp(item)}
+                />
+              ))}
+            </div>
+          )}
         </>
       )}
 
