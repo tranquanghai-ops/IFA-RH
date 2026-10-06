@@ -228,3 +228,41 @@ export interface ImportBatch {
   errors?: { row: number; reason: string }[];
 }
 
+export interface SharedPersonnelRecord {
+  emailNormalized: string;
+  displayName: string;
+  departmentId: string;
+  departmentName: string;
+  lecturerType: string;
+  academicDegree: string;
+  employeeId?: string;
+  active: boolean;
+  inactiveAt?: string | null;
+  sourceUpdatedAt: string;
+  sharedUpdatedAt: string;
+}
+
+export interface SharedPersonnelExportPayload {
+  schemaVersion: 1;
+  source: 'IFA-WORK';
+  generatedAt: string;
+  totalRecords: number;
+  personnel: SharedPersonnelRecord[];
+}
+
+export interface PersonnelSyncLog {
+  id: string;
+  timestamp: string;
+  method: 'manual_json' | 'github_action';
+  triggeredBy: string;
+  sourceFile?: string;
+  schemaVersion: number;
+  totalRecords: number;
+  createdCount: number;
+  updatedCount: number;
+  unchangedCount: number;
+  deactivatedCount: number;
+  reactivatedCount: number;
+  durationMs?: number;
+}
+

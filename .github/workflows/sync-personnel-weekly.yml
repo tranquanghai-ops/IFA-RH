@@ -1,0 +1,40 @@
+name: Weekly Personnel Sync (IFA-WORK -> IFA-RH)
+
+on:
+  schedule:
+    # 03:00 AM VN Time (UTC+7) every Monday = 20:00 UTC Sunday
+    - cron: '0 20 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Chỉ chạy kiểm tra thử nghiệm (Dry run), không ghi vào Firestore'
+        type: boolean
+        default: false
+
+jobs:
+  sync:
+    name: Sync Personnel Mirror
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Personnel Sync
+        env:
+          IFA_WORK_SA_KEY: ${{ secrets.IFA_WORK_SA_KEY }}
+          IFA_RH_SA_KEY: ${{ secrets.IFA_RH_SA_KEY }}
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            node scripts/sync-personnel.mjs --dry-run
+          else
+            node scripts/sync-personnel.mjs
+          fi

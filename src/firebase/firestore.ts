@@ -12,6 +12,7 @@ import {
   serverTimestamp,
   addDoc,
   limit,
+  writeBatch,
 } from "firebase/firestore";
 import { firestore } from "./config";
 import type {
@@ -24,6 +25,8 @@ import type {
   Publication,
   AuditLog,
   ImportBatch,
+  SharedPersonnelRecord,
+  PersonnelSyncLog,
 } from "../types";
 import { normalizeText } from "../utils/dedupe";
 
@@ -806,5 +809,158 @@ export async function fetchImports(limitCount = 50): Promise<ImportBatch[]> {
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() } as ImportBatch));
+}
+
+// ======================== SHARED PERSONNEL MIRROR ========================
+export async function fetchSharedPersonnel(): Promise<SharedPersonnelRecord[]> {
+  const snap = await getDocs(collection(firestore, "sharedPersonnel"));
+  return snap.docs
+    .map((d) => d.data() as SharedPersonnelRecord)
+    .sort((a, b) => a.displayName.localeCompare(b.displayName, "vi"));
+}
+
+export async function fetchLatestPersonnelSyncLog(): Promise<PersonnelSyncLog | null> {
+  try {
+    const q = query(
+      collection(firestore, "personnelSyncLogs"),
+      orderBy("timestamp", "desc"),
+      limit(1)
+    );
+    const snap = await getDocs(q);
+    if (snap.empty) return null;
+    return snap.docs[0].data() as PersonnelSyncLog;
+  } catch (err) {
+    console.warn("No personnel sync logs found or error reading logs:", err);
+    return null;
+  }
+}
+
+export async function syncSharedPersonnelBatch(
+  records: SharedPersonnelRecord[],
+  sourceFile: string,
+  actor: { uid: string; email: string; role: UserRole }
+): Promise<PersonnelSyncLog> {
+  const startTime = Date.now();
+  const existingRecords = await fetchSharedPersonnel();
+  const existingMap = new Map<string, SharedPersonnelRecord>();
+  existingRecords.forEach((r) => existingMap.set(r.emailNormalized, r));
+
+  let createdCount = 0;
+  let updatedCount = 0;
+  let unchangedCount = 0;
+  let deactivatedCount = 0;
+  let reactivatedCount = 0;
+
+  const now = new Date().toISOString();
+  const toWrite: SharedPersonnelRecord[] = [];
+
+  for (const record of records) {
+    const emailNorm = record.emailNormalized.trim().toLowerCase();
+    const existing = existingMap.get(emailNorm);
+
+    if (!existing) {
+      createdCount++;
+      toWrite.push({
+        ...record,
+        sharedUpdatedAt: now,
+      });
+    } else {
+      let isChanged = false;
+      if (existing.active === true && record.active === false) {
+        deactivatedCount++;
+        isChanged = true;
+      } else if (existing.active === false && record.active === true) {
+        reactivatedCount++;
+        isChanged = true;
+      }
+
+      if (
+        existing.displayName !== record.displayName ||
+        existing.departmentId !== record.departmentId ||
+        existing.departmentName !== record.departmentName ||
+        existing.lecturerType !== record.lecturerType ||
+        existing.academicDegree !== record.academicDegree ||
+        (existing.employeeId || "") !== (record.employeeId || "")
+      ) {
+        isChanged = true;
+      }
+
+      if (isChanged) {
+        updatedCount++;
+        toWrite.push({
+          ...record,
+          sharedUpdatedAt: now,
+        });
+      } else {
+        unchangedCount++;
+        toWrite.push({
+          ...record,
+          sharedUpdatedAt: now,
+        });
+      }
+    }
+  }
+
+  // NOTE: SAFETY RULE: Records in existingMap that are MISSING from records array
+  // are NOT touched and NOT inactivated!
+
+  // Write sharedPersonnel docs in chunks of 400
+  const chunkSize = 400;
+  for (let i = 0; i < toWrite.length; i += chunkSize) {
+    const chunk = toWrite.slice(i, i + chunkSize);
+    const batch = writeBatch(firestore);
+    for (const rec of chunk) {
+      const docRef = doc(firestore, "sharedPersonnel", rec.emailNormalized);
+      batch.set(docRef, rec, { merge: true });
+
+      // If user profile doc exists with provisioned/matching email, keep profile synced while preserving role
+      const userRef = doc(firestore, "users", `prov_${rec.emailNormalized}`);
+      batch.set(
+        userRef,
+        {
+          id: `prov_${rec.emailNormalized}`,
+          uid: `prov_${rec.emailNormalized}`,
+          email: rec.emailNormalized,
+          name: rec.displayName,
+          department: rec.departmentName,
+          academicDegree: rec.academicDegree,
+          active: rec.active,
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+    }
+    await batch.commit();
+  }
+
+  const durationMs = Date.now() - startTime;
+  const logId = `sync_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const logData: PersonnelSyncLog = {
+    id: logId,
+    timestamp: now,
+    method: "manual_json",
+    triggeredBy: actor.email,
+    sourceFile,
+    schemaVersion: 1,
+    totalRecords: records.length,
+    createdCount,
+    updatedCount,
+    unchangedCount,
+    deactivatedCount,
+    reactivatedCount,
+    durationMs,
+  };
+
+  await setDoc(doc(firestore, "personnelSyncLogs", logId), logData);
+
+  await logAudit(
+    actor,
+    "SYNC_SHARED_PERSONNEL",
+    "import",
+    logId,
+    `Đồng bộ danh bạ dùng chung từ IFA-WORK: ${records.length} bản ghi (+${createdCount} mới, ~${updatedCount} cập nhật, -${deactivatedCount} ngừng CT) trong ${durationMs}ms.`
+  );
+
+  return logData;
 }
 

@@ -171,6 +171,40 @@ rules_version = '2';
 //   - errors: list (optional, max 100 items)
 //   - createdAt: timestamp | string (optional, max 50 chars)
 //
+// Collection: sharedPersonnel
+// Document ID: id (normalized institutional email, e.g. nguyenvana@tdtu.edu.vn)
+// Fields:
+//   - id: string (optional, 1-100 chars, matches emailNormalized if present)
+//   - emailNormalized: string (required, 1-100 chars, valid email pattern, matches document id)
+//   - displayName: string (required, 1-160 chars) - Full name of faculty member
+//   - departmentId: string (required, 0-100 chars) - Faculty/department code
+//   - departmentName: string (required, 1-150 chars) - Full department name
+//   - lecturerType: string (required, 1-50 chars) - Employment type (Cơ hữu, Thỉnh giảng, etc.)
+//   - academicDegree: string (optional, 0-50 chars) - Degree (TS, ThS, PGS, GS, etc.)
+//   - employeeId: string (optional, 0-50 chars) - Institutional employee code
+//   - active: bool (required) - Employment active status in shared directory
+//   - inactiveAt: string | timestamp | null (optional, 0-50 chars if string) - Deactivation time
+//   - sourceUpdatedAt: string | timestamp (required, max 50 chars if string) - Source update time
+//   - sharedUpdatedAt: string | timestamp (required, max 50 chars if string) - Hub mirror sync time
+//
+// Collection: personnelSyncLogs
+// Document ID: id (auto-generated or sync timestamp key, 1-128 chars)
+// Fields:
+//   - id: string (required, 1-128 chars) - Sync log identifier
+//   - timestamp: string | timestamp (required, max 50 chars if string) - Sync execution time
+//   - method: string (required, 'manual_json' | 'github_action') - Ingestion channel
+//   - triggeredBy: string (required, 1-100 chars) - User email or workflow actor
+//   - sourceFile: string (optional, 0-200 chars) - Uploaded JSON file name
+//   - schemaVersion: int (required, equals 1) - Data schema specification version
+//   - totalRecords: int (required, >= 0) - Total personnel records parsed
+//   - createdCount: int (required, >= 0) - Count of newly provisioned records
+//   - updatedCount: int (required, >= 0) - Count of updated records
+//   - unchangedCount: int (required, >= 0) - Count of unchanged records
+//   - deactivatedCount: int (required, >= 0) - Count of deactivated records
+//   - reactivatedCount: int (required, >= 0) - Count of reactivated records
+//   - durationMs: int (optional, >= 0) - Sync processing duration in milliseconds
+//   - createdAt: string | timestamp (optional, max 50 chars if string)
+//
 // ===============================================================
 
 service cloud.firestore {
@@ -530,6 +564,65 @@ service cloud.firestore {
         (!('id' in data) || validString(data.id, 0, 100));
     }
 
+    // Validates sharedPersonnel/{id} schema and constraints
+    function isValidSharedPersonnel(data) {
+      return data.keys().hasAll([
+          'emailNormalized', 'displayName', 'departmentId',
+          'departmentName', 'lecturerType', 'active',
+          'sourceUpdatedAt', 'sharedUpdatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'emailNormalized', 'displayName', 'departmentId',
+          'departmentName', 'lecturerType', 'academicDegree',
+          'employeeId', 'active', 'inactiveAt',
+          'sourceUpdatedAt', 'sharedUpdatedAt'
+        ]) &&
+        validString(data.emailNormalized, 1, 100) &&
+        validEmail(data.emailNormalized) &&
+        validString(data.displayName, 1, 160) &&
+        validString(data.departmentId, 0, 100) &&
+        validString(data.departmentName, 1, 150) &&
+        validString(data.lecturerType, 1, 50) &&
+        data.active is bool &&
+        (!('academicDegree' in data) || validString(data.academicDegree, 0, 50)) &&
+        (!('employeeId' in data) || validString(data.employeeId, 0, 50)) &&
+        (!('inactiveAt' in data) || data.inactiveAt == null || validString(data.inactiveAt, 0, 50) || data.inactiveAt is timestamp) &&
+        (validString(data.sourceUpdatedAt, 1, 50) || data.sourceUpdatedAt is timestamp) &&
+        (validString(data.sharedUpdatedAt, 1, 50) || data.sharedUpdatedAt is timestamp) &&
+        (!('id' in data) || (data.id is string && data.id == data.emailNormalized));
+    }
+
+    // Validates personnelSyncLogs/{id} schema and constraints
+    function isValidPersonnelSyncLog(data) {
+      return data.keys().hasAll([
+          'id', 'timestamp', 'method', 'triggeredBy',
+          'schemaVersion', 'totalRecords', 'createdCount',
+          'updatedCount', 'unchangedCount', 'deactivatedCount',
+          'reactivatedCount'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'timestamp', 'method', 'triggeredBy',
+          'sourceFile', 'schemaVersion', 'totalRecords',
+          'createdCount', 'updatedCount', 'unchangedCount',
+          'deactivatedCount', 'reactivatedCount', 'durationMs',
+          'createdAt'
+        ]) &&
+        validString(data.id, 1, 128) &&
+        (validString(data.timestamp, 1, 50) || data.timestamp is timestamp) &&
+        data.method in ['manual_json', 'github_action'] &&
+        validString(data.triggeredBy, 1, 100) &&
+        data.schemaVersion is int && data.schemaVersion == 1 &&
+        data.totalRecords is int && data.totalRecords >= 0 &&
+        data.createdCount is int && data.createdCount >= 0 &&
+        data.updatedCount is int && data.updatedCount >= 0 &&
+        data.unchangedCount is int && data.unchangedCount >= 0 &&
+        data.deactivatedCount is int && data.deactivatedCount >= 0 &&
+        data.reactivatedCount is int && data.reactivatedCount >= 0 &&
+        (!('sourceFile' in data) || validString(data.sourceFile, 0, 200)) &&
+        (!('durationMs' in data) || (data.durationMs is int && data.durationMs >= 0)) &&
+        (!('createdAt' in data) || validString(data.createdAt, 1, 50) || data.createdAt is timestamp);
+    }
+
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -671,6 +764,30 @@ service cloud.firestore {
       allow create: if isAdmin() && isValidImportBatch(request.resource.data);
       allow update: if isAdmin() && isValidImportBatch(request.resource.data);
       allow delete: if isAdmin();
+    }
+
+    // 10. Shared Personnel Directory Mirror collection (Danh bạ nhân sự dùng chung)
+    // - Authenticated: Read all shared personnel directory records
+    // - Admin & Owner: Create and update synchronized records (emailNormalized matches doc id)
+    // - Deletions: Strictly denied
+    match /sharedPersonnel/{id} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() &&
+        isValidSharedPersonnel(request.resource.data) &&
+        request.resource.data.emailNormalized == id;
+      allow delete: if false;
+    }
+
+    // 11. Personnel Sync Logs collection (Nhật ký đồng bộ danh bạ nhân sự)
+    // - Admin & Owner: Read sync history and append new sync log entries
+    // - Non-admins: Denied
+    // - Updates & Deletions: Strictly denied (immutable audit log)
+    match /personnelSyncLogs/{id} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+        isValidPersonnelSyncLog(request.resource.data) &&
+        request.resource.data.id == id;
+      allow update, delete: if false;
     }
 
     // ===============================================================

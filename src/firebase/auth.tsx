@@ -19,7 +19,7 @@ import {
 } from "firebase/firestore";
 import { auth, firestore } from "./config";
 import { isAllowedTDTUEmail, NOMINATED_OWNER_EMAIL } from "./policy";
-import type { UserProfile } from "../types";
+import type { UserProfile, SharedPersonnelRecord } from "../types";
 
 export type AuthStatus =
   | "initializing"
@@ -185,6 +185,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           setUser(firebaseUser);
           setProfile(updatedProfile);
+          setAuthStatus("authenticated");
+          setError("");
+          setLoading(false);
+          return;
+        }
+
+        // Check 4b: Check sharedPersonnel directory mirror from IFA-WORK
+        const sharedDocRef = doc(firestore, "sharedPersonnel", email);
+        const sharedSnap = await getDoc(sharedDocRef);
+        if (sharedSnap.exists()) {
+          const sharedData = sharedSnap.data() as SharedPersonnelRecord;
+          if (!sharedData.active) {
+            setUser(firebaseUser);
+            setProfile(null);
+            setAuthStatus("disabled");
+            setError("Tài khoản của bạn đã ngừng hoạt động trong danh bạ IFA-WORK.");
+            setLoading(false);
+            return;
+          }
+
+          const now = new Date().toISOString();
+          const newProfile: UserProfile = {
+            id: firebaseUser.uid,
+            uid: firebaseUser.uid,
+            email,
+            name: sharedData.displayName || firebaseUser.displayName || email,
+            role: "lecturer",
+            department: sharedData.departmentName || "Khoa Mỹ thuật Công nghiệp",
+            academicDegree: sharedData.academicDegree || "ThS",
+            active: true,
+            photoURL: firebaseUser.photoURL || "",
+            createdAt: now,
+            updatedAt: now,
+            linkedAt: now,
+          };
+
+          await setDoc(userDocRef, newProfile);
+
+          setUser(firebaseUser);
+          setProfile(newProfile);
           setAuthStatus("authenticated");
           setError("");
           setLoading(false);

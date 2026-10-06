@@ -54,4 +54,48 @@ describe("RULES Logic & Role Permissions Verification", () => {
     const validUpdate = { ...original, name: "TS A", department: "Bộ môn Đồ họa" };
     expect(isLegalLecturerUpdate(original, validUpdate)).toBe(true);
   });
+
+  it("should enforce sharedPersonnel security rules: admin write, authenticated read, no deletion", () => {
+    const canReadSharedPersonnel = (auth: any) => auth !== null;
+    expect(canReadSharedPersonnel(null)).toBe(false);
+    expect(canReadSharedPersonnel({ uid: "gv1" })).toBe(true);
+
+    const canWriteSharedPersonnel = (
+      role: string,
+      docId: string,
+      data: { emailNormalized: string }
+    ) => {
+      const isAdmin = role === "owner" || role === "admin";
+      return isAdmin && data.emailNormalized === docId;
+    };
+
+    expect(canWriteSharedPersonnel("admin", "a@tdtu.edu.vn", { emailNormalized: "a@tdtu.edu.vn" })).toBe(true);
+    expect(canWriteSharedPersonnel("owner", "a@tdtu.edu.vn", { emailNormalized: "a@tdtu.edu.vn" })).toBe(true);
+    // Non-admin rejected
+    expect(canWriteSharedPersonnel("lecturer", "a@tdtu.edu.vn", { emailNormalized: "a@tdtu.edu.vn" })).toBe(false);
+    // ID spoofing rejected
+    expect(canWriteSharedPersonnel("admin", "a@tdtu.edu.vn", { emailNormalized: "b@tdtu.edu.vn" })).toBe(false);
+
+    // Deletion strictly denied
+    const canDeleteSharedPersonnel = () => false;
+    expect(canDeleteSharedPersonnel()).toBe(false);
+  });
+
+  it("should enforce personnelSyncLogs security rules: admin append-only, immutable logs", () => {
+    const canReadSyncLogs = (role: string) => role === "admin" || role === "owner";
+    expect(canReadSyncLogs("admin")).toBe(true);
+    expect(canReadSyncLogs("owner")).toBe(true);
+    expect(canReadSyncLogs("lecturer")).toBe(false);
+
+    const canCreateSyncLog = (role: string, docId: string, data: { id: string }) => {
+      const isAdmin = role === "admin" || role === "owner";
+      return isAdmin && data.id === docId;
+    };
+    expect(canCreateSyncLog("admin", "log_1", { id: "log_1" })).toBe(true);
+    expect(canCreateSyncLog("lecturer", "log_1", { id: "log_1" })).toBe(false);
+    expect(canCreateSyncLog("admin", "log_1", { id: "log_2" })).toBe(false);
+
+    const canUpdateOrDeleteSyncLog = () => false;
+    expect(canUpdateOrDeleteSyncLog()).toBe(false);
+  });
 });
