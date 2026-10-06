@@ -47,7 +47,7 @@ export const PublicHeader: React.FC<PublicHeaderProps> = ({ onSelectTab }) => {
           <div className="public-header-actions">
             <button
               type="button"
-              className="btn btn-secondary btn-sm"
+              className="btn btn-secondary btn-sm public-btn-portal"
               onClick={() => onSelectTab("public")}
             >
               <Compass size={16} />
@@ -55,11 +55,12 @@ export const PublicHeader: React.FC<PublicHeaderProps> = ({ onSelectTab }) => {
             </button>
             <button
               type="button"
-              className="btn btn-primary btn-sm"
+              className="btn btn-primary btn-sm public-btn-login"
               onClick={login}
             >
               <LogIn size={16} />
-              <span>Đăng nhập TDTU</span>
+              <span className="public-login-full">Đăng nhập TDTU</span>
+              <span className="public-login-short">Đăng nhập</span>
             </button>
           </div>
         </div>

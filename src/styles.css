@@ -49,13 +49,14 @@
   padding: 0;
 }
 
-body {
+html, body {
   background-color: var(--bg-page);
   color: var(--text-main);
   min-height: 100vh;
   display: flex;
   flex-direction: column;
   overflow-x: hidden;
+  max-width: 100vw;
 }
 
 #root {
@@ -182,10 +183,20 @@ a:hover {
   gap: 12px;
 }
 
+.public-login-short {
+  display: none;
+}
+
+.public-login-full {
+  display: inline;
+}
+
 .public-main-content {
   flex: 1 0 auto;
   padding-top: 24px;
   padding-bottom: 48px;
+  width: 100%;
+  max-width: 100%;
 }
 
 /* =========================================================
@@ -979,17 +990,49 @@ a:hover {
 
 /* Mobile Screen (< 640px) */
 @media (max-width: 639px) {
+  .app-container {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .public-header-inner {
+    height: auto;
+    min-height: 54px;
+    padding: 8px 0;
+    gap: 8px;
+  }
+  .public-logos-group {
+    gap: 6px;
+  }
   .public-logo-tdtu {
-    height: 30px;
+    height: 26px;
+  }
+  .public-logo-divider {
+    height: 18px;
   }
   .public-logo-ifa {
-    height: 30px;
+    height: 26px;
   }
   .public-brand-title {
-    font-size: 1.05rem;
+    font-size: 0.95rem;
   }
   .public-brand-badge {
     display: none;
+  }
+  .public-btn-portal {
+    display: none !important;
+  }
+  .public-login-full {
+    display: none !important;
+  }
+  .public-login-short {
+    display: inline !important;
+  }
+  .public-header-actions {
+    gap: 6px;
+  }
+  .public-header-actions .btn-sm {
+    padding: 5px 10px;
+    font-size: 0.8rem;
   }
   .page-header-block {
     flex-direction: column;
