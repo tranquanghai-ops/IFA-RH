@@ -243,9 +243,9 @@ export async function createOrProvisionUser(
     throw new Error(`Email ${normalizedEmail} đã tồn tại trong hệ thống!`);
   }
 
-  const id = `prov_${normalizedEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  const id = `prov_${normalizedEmail}`;
   const now = new Date().toISOString();
-  await setDoc(doc(firestore, "users", id), {
+  const provPayload = {
     id,
     uid: id,
     email: normalizedEmail,
@@ -256,7 +256,18 @@ export async function createOrProvisionUser(
     active: userData.active,
     createdAt: now,
     updatedAt: now,
-  });
+  };
+  await setDoc(doc(firestore, "users", id), provPayload);
+
+  // Also write legacy sanitized doc ID if different for backward compatibility
+  const legacyId = `prov_${normalizedEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
+  if (legacyId !== id) {
+    await setDoc(doc(firestore, "users", legacyId), {
+      ...provPayload,
+      id: legacyId,
+      uid: legacyId,
+    }).catch(() => {});
+  }
 
   await logAudit(
     actor,

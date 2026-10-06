@@ -27,7 +27,8 @@ export type AuthStatus =
   | "authenticated"
   | "unprovisioned"
   | "invalid_domain"
-  | "disabled";
+  | "disabled"
+  | "error";
 
 interface AuthContextType {
   user: User | null;
@@ -58,6 +59,210 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Lock to prevent concurrent profile fetches / race conditions
   const inFlightPromiseRef = useRef<Promise<void> | null>(null);
 
+  const executeProfileLoad = async (firebaseUser: User): Promise<void> => {
+    const email = firebaseUser.email?.trim().toLowerCase() || "";
+
+    // Check 1: Domain verification
+    if (!isAllowedTDTUEmail(email)) {
+      setUser(firebaseUser);
+      setProfile(null);
+      setAuthStatus("invalid_domain");
+      setError(
+        `Chỉ chấp nhận tài khoản email @tdtu.edu.vn của Trường Đại học Tôn Đức Thắng. Tài khoản hiện tại (${email}) không hợp lệ.`
+      );
+      return;
+    }
+
+    // Check 2: Direct document lookup by Firebase Auth UID
+    const userDocRef = doc(firestore, "users", firebaseUser.uid);
+    const userSnap = await getDoc(userDocRef);
+
+    if (userSnap.exists()) {
+      const data = userSnap.data() as UserProfile;
+      if (!data.active) {
+        setUser(firebaseUser);
+        setProfile(null);
+        setAuthStatus("disabled");
+        setError("Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ Ban Chủ nhiệm.");
+        return;
+      }
+      const loadedProfile: UserProfile = { ...data, id: userSnap.id, uid: firebaseUser.uid };
+      setUser(firebaseUser);
+      setProfile(loadedProfile);
+      setAuthStatus("authenticated");
+      setError("");
+      return;
+    }
+
+    // Check 3: Nominated Owner Bootstrap
+    if (email === NOMINATED_OWNER_EMAIL.toLowerCase()) {
+      // Check if there is an existing provisioned doc for the owner
+      const provQ = query(collection(firestore, "users"), where("email", "==", email), limit(1));
+      const provSnap = await getDocs(provQ).catch(() => null);
+      const provDoc = provSnap && !provSnap.empty ? provSnap.docs[0] : null;
+      const provData = provDoc ? (provDoc.data() as Partial<UserProfile>) : null;
+
+      const now = new Date().toISOString();
+      const ownerProfile: UserProfile = {
+        id: firebaseUser.uid,
+        uid: firebaseUser.uid,
+        email,
+        name: provData?.name || firebaseUser.displayName || "Trần Quang Hải",
+        role: "owner",
+        department: provData?.department || "Khoa Mỹ thuật Công nghiệp",
+        academicDegree: provData?.academicDegree || "ThS",
+        active: true,
+        photoURL: firebaseUser.photoURL || "",
+        createdAt: provData?.createdAt || now,
+        updatedAt: now,
+        linkedAt: now,
+      };
+
+      await setDoc(userDocRef, ownerProfile);
+
+      // Clean up old provisional doc if its ID differs from UID
+      if (provDoc && provDoc.id !== firebaseUser.uid) {
+        await deleteDoc(provDoc.ref).catch((e) => console.warn("Owner prov doc cleanup note:", e));
+      }
+
+      setUser(firebaseUser);
+      setProfile(ownerProfile);
+      setAuthStatus("authenticated");
+      setError("");
+      return;
+    }
+
+    // Check 4: Pre-provisioned user lookup by email
+    // Fast path: Check direct provisional document IDs first
+    let provDoc: { id: string; ref: any; data: () => any } | null = null;
+
+    // 4a. Check direct standard ID: prov_email (e.g. prov_nguyenthithuyha1@tdtu.edu.vn)
+    const provDirectRef = doc(firestore, "users", `prov_${email}`);
+    const provDirectSnap = await getDoc(provDirectRef).catch(() => null);
+    if (provDirectSnap && provDirectSnap.exists()) {
+      provDoc = provDirectSnap;
+    }
+
+    // 4b. Check sanitized legacy ID: prov_email_sanitized (e.g. prov_nguyenthithuyha1_tdtu_edu_vn)
+    if (!provDoc) {
+      const legacyId = `prov_${email.replace(/[^a-zA-Z0-9]/g, "_")}`;
+      const legacyRef = doc(firestore, "users", legacyId);
+      const legacySnap = await getDoc(legacyRef).catch(() => null);
+      if (legacySnap && legacySnap.exists()) {
+        provDoc = legacySnap;
+      }
+    }
+
+    // 4c. Fallback query by email field
+    if (!provDoc) {
+      const q = query(collection(firestore, "users"), where("email", "==", email), limit(1));
+      const querySnap = await getDocs(q).catch(() => null);
+      if (querySnap && !querySnap.empty) {
+        provDoc = querySnap.docs[0];
+      }
+    }
+
+    if (provDoc) {
+      const provData = provDoc.data() as UserProfile;
+
+      if (!provData.active) {
+        setUser(firebaseUser);
+        setProfile(null);
+        setAuthStatus("disabled");
+        setError("Tài khoản của bạn đã bị vô hiệu hóa.");
+        return;
+      }
+
+      // Link provisioned data to actual Firebase Auth UID
+      // CRITICAL: Preserve role! If Admin, keep role === 'admin'!
+      const updatedProfile: UserProfile = {
+        id: firebaseUser.uid,
+        uid: firebaseUser.uid,
+        email,
+        name: provData.name || firebaseUser.displayName || email,
+        role: provData.role || "lecturer",
+        department: provData.department || "",
+        academicDegree: provData.academicDegree || "",
+        orcid: provData.orcid || "",
+        googleScholar: provData.googleScholar || "",
+        researchGate: provData.researchGate || "",
+        website: provData.website || "",
+        active: true,
+        photoURL: firebaseUser.photoURL || provData.photoURL || "",
+        createdAt: provData.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        linkedAt: new Date().toISOString(),
+        ...(provData.promotedAt ? { promotedAt: provData.promotedAt } : {}),
+        ...(provData.promotedBy ? { promotedBy: provData.promotedBy } : {}),
+      };
+
+      await setDoc(userDocRef, updatedProfile);
+
+      // Clean up provisional documents (ignore errors if permissions don't allow delete)
+      if (provDoc.id !== firebaseUser.uid) {
+        await deleteDoc(provDoc.ref).catch(() => {});
+      }
+      const altLegacyId = `prov_${email.replace(/[^a-zA-Z0-9]/g, "_")}`;
+      if (altLegacyId !== provDoc.id) {
+        await deleteDoc(doc(firestore, "users", altLegacyId)).catch(() => {});
+      }
+      const altStandardId = `prov_${email}`;
+      if (altStandardId !== provDoc.id) {
+        await deleteDoc(doc(firestore, "users", altStandardId)).catch(() => {});
+      }
+
+      setUser(firebaseUser);
+      setProfile(updatedProfile);
+      setAuthStatus("authenticated");
+      setError("");
+      return;
+    }
+
+    // Check 4d: Check sharedPersonnel directory mirror from IFA-WORK (only for unprovisioned users)
+    const sharedDocRef = doc(firestore, "sharedPersonnel", email);
+    const sharedSnap = await getDoc(sharedDocRef).catch(() => null);
+    if (sharedSnap && sharedSnap.exists()) {
+      const sharedData = sharedSnap.data() as SharedPersonnelRecord;
+      if (!sharedData.active) {
+        setUser(firebaseUser);
+        setProfile(null);
+        setAuthStatus("disabled");
+        setError("Tài khoản của bạn đã ngừng hoạt động trong danh bạ IFA-WORK.");
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const newProfile: UserProfile = {
+        id: firebaseUser.uid,
+        uid: firebaseUser.uid,
+        email,
+        name: sharedData.displayName || firebaseUser.displayName || email,
+        role: "lecturer",
+        department: sharedData.departmentName || "Khoa Mỹ thuật Công nghiệp",
+        academicDegree: sharedData.academicDegree || "ThS",
+        active: true,
+        photoURL: firebaseUser.photoURL || "",
+        createdAt: now,
+        updatedAt: now,
+        linkedAt: now,
+      };
+
+      await setDoc(userDocRef, newProfile);
+
+      setUser(firebaseUser);
+      setProfile(newProfile);
+      setAuthStatus("authenticated");
+      setError("");
+      return;
+    }
+
+    // Check 5: Account is @tdtu.edu.vn but NOT provisioned in system roster
+    setUser(firebaseUser);
+    setProfile(null);
+    setAuthStatus("unprovisioned");
+    setError("Tài khoản này chưa được cấp quyền sử dụng IFA-RH.");
+  };
+
   const loadUserProfile = async (firebaseUser: User): Promise<void> => {
     if (inFlightPromiseRef.current) {
       return inFlightPromiseRef.current;
@@ -65,184 +270,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const task = (async () => {
       try {
-        const email = firebaseUser.email?.trim().toLowerCase() || "";
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(
+              new Error(
+                "Quá thời gian kết nối đến máy chủ dữ liệu (Timeout 8s). Vui lòng tải lại trang hoặc kiểm tra kết nối mạng."
+              )
+            );
+          }, 8000);
+        });
 
-        // Check 1: Domain verification
-        if (!isAllowedTDTUEmail(email)) {
-          setUser(firebaseUser);
-          setProfile(null);
-          setAuthStatus("invalid_domain");
-          setError(`Chỉ chấp nhận tài khoản email @tdtu.edu.vn của Trường Đại học Tôn Đức Thắng. Tài khoản hiện tại (${email}) không hợp lệ.`);
-          setLoading(false);
-          return;
-        }
-
-        // Check 2: Direct document lookup by Firebase Auth UID
-        const userDocRef = doc(firestore, "users", firebaseUser.uid);
-        const userSnap = await getDoc(userDocRef);
-
-        if (userSnap.exists()) {
-          const data = userSnap.data() as UserProfile;
-          if (!data.active) {
-            setUser(firebaseUser);
-            setProfile(null);
-            setAuthStatus("disabled");
-            setError("Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ Ban Chủ nhiệm.");
-            setLoading(false);
-            return;
-          }
-          const loadedProfile: UserProfile = { ...data, id: userSnap.id, uid: firebaseUser.uid };
-          setUser(firebaseUser);
-          setProfile(loadedProfile);
-          setAuthStatus("authenticated");
-          setError("");
-          setLoading(false);
-          return;
-        }
-
-        // Check 3: Nominated Owner Bootstrap
-        if (email === NOMINATED_OWNER_EMAIL.toLowerCase()) {
-          // Check if there is an existing provisioned doc for the owner
-          const provQ = query(collection(firestore, "users"), where("email", "==", email), limit(1));
-          const provSnap = await getDocs(provQ);
-          const provDoc = !provSnap.empty ? provSnap.docs[0] : null;
-          const provData = provDoc ? (provDoc.data() as Partial<UserProfile>) : null;
-
-          const now = new Date().toISOString();
-          const ownerProfile: UserProfile = {
-            id: firebaseUser.uid,
-            uid: firebaseUser.uid,
-            email,
-            name: provData?.name || firebaseUser.displayName || "Trần Quang Hải",
-            role: "owner",
-            department: provData?.department || "Khoa Mỹ thuật Công nghiệp",
-            academicDegree: provData?.academicDegree || "ThS",
-            active: true,
-            photoURL: firebaseUser.photoURL || "",
-            createdAt: provData?.createdAt || now,
-            updatedAt: now,
-            linkedAt: now,
-          };
-
-          await setDoc(userDocRef, ownerProfile);
-
-          // Clean up old provisional doc if its ID differs from UID
-          if (provDoc && provDoc.id !== firebaseUser.uid) {
-            await deleteDoc(provDoc.ref).catch((e) => console.warn("Owner prov doc cleanup note:", e));
-          }
-
-          setUser(firebaseUser);
-          setProfile(ownerProfile);
-          setAuthStatus("authenticated");
-          setError("");
-          setLoading(false);
-          return;
-        }
-
-        // Check 4: Pre-provisioned user lookup by email
-        const q = query(collection(firestore, "users"), where("email", "==", email), limit(1));
-        const querySnap = await getDocs(q);
-
-        if (!querySnap.empty) {
-          const provDoc = querySnap.docs[0];
-          const provData = provDoc.data() as UserProfile;
-
-          if (!provData.active) {
-            setUser(firebaseUser);
-            setProfile(null);
-            setAuthStatus("disabled");
-            setError("Tài khoản của bạn đã bị vô hiệu hóa.");
-            setLoading(false);
-            return;
-          }
-
-          // Link provisioned data to actual Firebase Auth UID
-          const updatedProfile: UserProfile = {
-            id: firebaseUser.uid,
-            uid: firebaseUser.uid,
-            email,
-            name: provData.name || firebaseUser.displayName || email,
-            role: provData.role || "lecturer",
-            department: provData.department || "",
-            academicDegree: provData.academicDegree || "",
-            orcid: provData.orcid || "",
-            googleScholar: provData.googleScholar || "",
-            researchGate: provData.researchGate || "",
-            website: provData.website || "",
-            active: true,
-            photoURL: firebaseUser.photoURL || "",
-            createdAt: provData.createdAt || new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            linkedAt: new Date().toISOString(),
-          };
-
-          await setDoc(userDocRef, updatedProfile);
-
-          // Delete provisional document if ID differs to prevent duplicates
-          if (provDoc.id !== firebaseUser.uid) {
-            await deleteDoc(provDoc.ref).catch((e) => console.warn("Lecturer prov doc cleanup note:", e));
-          }
-
-          setUser(firebaseUser);
-          setProfile(updatedProfile);
-          setAuthStatus("authenticated");
-          setError("");
-          setLoading(false);
-          return;
-        }
-
-        // Check 4b: Check sharedPersonnel directory mirror from IFA-WORK
-        const sharedDocRef = doc(firestore, "sharedPersonnel", email);
-        const sharedSnap = await getDoc(sharedDocRef);
-        if (sharedSnap.exists()) {
-          const sharedData = sharedSnap.data() as SharedPersonnelRecord;
-          if (!sharedData.active) {
-            setUser(firebaseUser);
-            setProfile(null);
-            setAuthStatus("disabled");
-            setError("Tài khoản của bạn đã ngừng hoạt động trong danh bạ IFA-WORK.");
-            setLoading(false);
-            return;
-          }
-
-          const now = new Date().toISOString();
-          const newProfile: UserProfile = {
-            id: firebaseUser.uid,
-            uid: firebaseUser.uid,
-            email,
-            name: sharedData.displayName || firebaseUser.displayName || email,
-            role: "lecturer",
-            department: sharedData.departmentName || "Khoa Mỹ thuật Công nghiệp",
-            academicDegree: sharedData.academicDegree || "ThS",
-            active: true,
-            photoURL: firebaseUser.photoURL || "",
-            createdAt: now,
-            updatedAt: now,
-            linkedAt: now,
-          };
-
-          await setDoc(userDocRef, newProfile);
-
-          setUser(firebaseUser);
-          setProfile(newProfile);
-          setAuthStatus("authenticated");
-          setError("");
-          setLoading(false);
-          return;
-        }
-
-        // Check 5: Account is @tdtu.edu.vn but NOT provisioned in system roster
-        setUser(firebaseUser);
-        setProfile(null);
-        setAuthStatus("unprovisioned");
-        setError("Tài khoản này chưa được cấp quyền sử dụng IFA-RH.");
-        setLoading(false);
+        await Promise.race([executeProfileLoad(firebaseUser), timeoutPromise]);
       } catch (err: any) {
         console.error("Error loading user profile:", err);
         setError(err.message || "Lỗi kiểm tra quyền truy cập.");
         setProfile(null);
-        setLoading(false);
+        setAuthStatus("error");
       } finally {
+        setLoading(false);
         inFlightPromiseRef.current = null;
       }
     })();

@@ -259,6 +259,16 @@ service cloud.firestore {
       );
     }
 
+    // Verify if an email corresponds to a pre-provisioned Admin awaiting first sign-in
+    function isPreProvisionedAdmin(email) {
+      return (
+        (exists(/databases/$(database)/documents/users/$( 'prov_' + email )) &&
+         get(/databases/$(database)/documents/users/$( 'prov_' + email )).data.role == 'admin') ||
+        (exists(/databases/$(database)/documents/users/prov_nguyenthithuyha1_tdtu_edu_vn) &&
+         email == 'nguyenthithuyha1@tdtu.edu.vn')
+      );
+    }
+
     // Verify specified keys have not been modified during an update
     function areImmutableFieldsUnchanged(fields) {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
@@ -646,8 +656,15 @@ service cloud.firestore {
         (isOwner()) ||
         // Case C: Admin provisioning a lecturer
         (isAdmin() && request.resource.data.role == 'lecturer') ||
-        // Case D: Authenticated lecturer linking their provisioned account
-        (request.auth.uid == userId && request.resource.data.email == request.auth.token.email && request.resource.data.role == 'lecturer')
+        // Case D: Authenticated user linking their provisioned lecturer or admin account
+        (
+          request.auth.uid == userId &&
+          request.resource.data.email == request.auth.token.email &&
+          (
+            request.resource.data.role == 'lecturer' ||
+            (request.resource.data.role == 'admin' && isPreProvisionedAdmin(request.auth.token.email))
+          )
+        )
       );
 
       allow update: if isAuthenticated() && isValidUser(request.resource.data) && (
