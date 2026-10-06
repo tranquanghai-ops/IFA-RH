@@ -147,7 +147,7 @@ export const OwnerPage: React.FC = () => {
       )}
 
       {/* Grid: Admin Management & System Health */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: 24, marginBottom: 32 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: 24, marginBottom: 32 }}>
         {/* Manage Admins */}
         <div className="card">
           <h3 style={{ fontSize: "1.15rem", color: "var(--primary)", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>

@@ -249,7 +249,7 @@ export const AdminDashboard: React.FC = () => {
       )}
 
       {/* Charts Grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: 24 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: 24 }}>
         {/* By Type */}
         <div className="card">
           <h3 style={{ fontSize: "1.1rem", color: "var(--primary)", marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>

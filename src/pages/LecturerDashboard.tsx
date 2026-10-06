@@ -199,7 +199,7 @@ export const LecturerDashboard: React.FC<LecturerDashboardProps> = ({ onNavigate
       </div>
 
       {/* Main Grid: Active Works & Annual Chart */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: 24, marginBottom: 32 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: 24, marginBottom: 32 }}>
         {/* Recent In-Progress Works */}
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>

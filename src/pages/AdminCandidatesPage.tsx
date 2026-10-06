@@ -264,7 +264,7 @@ export const AdminCandidatesPage: React.FC = () => {
           </table>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 300px), 1fr))", gap: 20 }}>
           {filteredCandidates.map((cand) => {
             const dedupe = isDuplicateOpportunity(
               {

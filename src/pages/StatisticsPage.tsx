@@ -301,7 +301,7 @@ export const StatisticsPage: React.FC = () => {
       </div>
 
       {/* Visual Distribution Charts */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: 24, marginBottom: 32 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))", gap: 24, marginBottom: 32 }}>
         <div className="card">
           <h3 style={{ fontSize: "1.1rem", color: "var(--primary)", marginBottom: 14 }}>
             Cơ cấu công trình đã hoàn thành ({selectedYear})
