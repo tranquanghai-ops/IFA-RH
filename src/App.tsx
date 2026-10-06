@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Sidebar } from "./components/Sidebar";
-import { MobileHeader } from "./components/MobileHeader";
+import { Topbar } from "./components/Topbar";
 import { PublicHeader } from "./components/PublicHeader";
 import { Footer } from "./components/Footer";
 import { UserGuideModal } from "./components/UserGuideModal";
@@ -150,8 +150,8 @@ export const App: React.FC = () => {
     );
   }
 
-  // A. PUBLIC / UNINITIALIZED VIEW (Visitor or unauthenticated)
-  if (!profile) {
+  // A. PUBLIC PORTAL VIEW (Homepage / Opportunities Portal)
+  if (currentTab === "public" || !profile) {
     return (
       <div className="public-portal-layout">
         <PublicHeader onSelectTab={handleSelectTab} />
@@ -167,7 +167,7 @@ export const App: React.FC = () => {
   // B. PRIVATE / ADMIN WORKSPACE (Authenticated with role profile)
   return (
     <div className="workspace-layout">
-      {/* IFAA-Style Left Sidebar */}
+      {/* Left Sidebar */}
       <Sidebar
         currentTab={currentTab}
         onSelectTab={handleSelectTab}
@@ -176,11 +176,12 @@ export const App: React.FC = () => {
         onOpenUserGuide={() => setIsGuideOpen(true)}
       />
 
-      {/* Main Workspace Area (Offset on Desktop) */}
+      {/* Main Workspace Area */}
       <div className="workspace-main">
-        {/* Mobile Header (< 1024px) */}
-        <MobileHeader
+        {/* IFA-SSR Style Admin Topbar */}
+        <Topbar
           currentTab={currentTab}
+          onSelectTab={handleSelectTab}
           onOpenMobile={() => setIsMobileOpen(true)}
         />
 

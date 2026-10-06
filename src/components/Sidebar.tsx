@@ -11,8 +11,7 @@ import {
   BarChart2,
   Shield,
   BookOpen,
-  User,
-  LogOut,
+  Globe,
   X,
 } from "lucide-react";
 
@@ -44,7 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseMobile,
   onOpenUserGuide,
 }) => {
-  const { user, profile, logout } = useAuth();
+  const { profile } = useAuth();
 
   if (!profile) return null;
 
@@ -248,58 +247,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
           ))}
         </nav>
 
-        {/* User Area at Bottom */}
-        <div className="sidebar-user-footer">
-          <div className="sidebar-user-info">
-            {profile.photoURL || user?.photoURL ? (
-              <img
-                src={profile.photoURL || user?.photoURL || ""}
-                alt={profile.name || "User"}
-                className="sidebar-user-avatar"
-              />
-            ) : (
-              <div className="sidebar-user-avatar-fallback">
-                {(profile.name || profile.email || "U").charAt(0).toUpperCase()}
-              </div>
-            )}
-            <div className="sidebar-user-meta">
-              <div className="sidebar-user-name" title={profile.name || profile.email}>
-                {profile.name || profile.email}
-              </div>
-              <div className="sidebar-user-sub">
-                <span className={`role-pill role-${role}`} style={{ fontSize: "0.68rem", padding: "2px 7px" }}>
-                  {getRoleBadgeLabel()}
-                </span>
-                <span className="sidebar-user-email" title={profile.email}>
-                  {profile.email}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="sidebar-user-actions">
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm sidebar-action-btn"
-              onClick={() => {
-                onSelectTab("profile");
-                onCloseMobile();
-              }}
-              title="Hồ sơ cá nhân"
-            >
-              <User size={15} />
-              <span>Hồ sơ</span>
-            </button>
-            <button
-              type="button"
-              className="btn btn-outline-danger btn-sm sidebar-action-btn"
-              onClick={logout}
-              title="Đăng xuất khỏi hệ thống"
-            >
-              <LogOut size={15} />
-              <span>Đăng xuất</span>
-            </button>
-          </div>
+        {/* Sidebar Footer (IFA-SSR style) */}
+        <div className="sidebar-footer">
+          <button
+            type="button"
+            className="sidebar-public-link"
+            onClick={() => {
+              onSelectTab("public");
+              onCloseMobile();
+            }}
+            title="Quay lại Cổng thông tin NCKH công khai"
+          >
+            <Globe size={15} />
+            <span>Xem trang công khai ↗</span>
+          </button>
         </div>
       </aside>
     </>

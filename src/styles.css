@@ -228,10 +228,10 @@ a:hover {
   overflow: hidden;
 }
 
-/* Brand Area inside Sidebar */
+/* Brand Area inside Sidebar (Compact IFA-SSR Style) */
 .sidebar-brand-container {
   flex: 0 0 auto;
-  padding: 18px 18px 14px;
+  padding: 14px 16px 10px;
   border-bottom: 1px solid var(--line);
   background: #ffffff;
 }
@@ -240,29 +240,29 @@ a:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 .sidebar-logos {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .sidebar-logo-tdtu {
-  height: 32px;
+  height: 26px;
   width: auto;
   object-fit: contain;
 }
 
 .sidebar-logo-sep {
   width: 1px;
-  height: 22px;
+  height: 18px;
   background-color: var(--line-strong);
 }
 
 .sidebar-logo-ifa {
-  height: 32px;
+  height: 26px;
   width: auto;
   object-fit: contain;
 }
@@ -398,93 +398,34 @@ a:hover {
   white-space: nowrap;
 }
 
-/* Pinned User Area at Bottom */
-.sidebar-user-footer {
+/* Sidebar Footer (IFA-SSR style) */
+.sidebar-footer {
   flex: 0 0 auto;
-  padding: 14px 16px;
+  padding: 12px 14px;
   border-top: 1px solid var(--line);
   background: #ffffff;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
 }
 
-.sidebar-user-info {
+.sidebar-public-link {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.sidebar-user-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 1px solid var(--line);
-  flex-shrink: 0;
-}
-
-.sidebar-user-avatar-fallback {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--primary-light);
-  color: var(--primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 0.9rem;
-  border: 1px solid #bfdbfe;
-  flex-shrink: 0;
-}
-
-.sidebar-user-meta {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
-
-.sidebar-user-name {
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--text-main);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-user-sub {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-}
-
-.sidebar-user-email {
-  font-size: 0.72rem;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-user-actions {
-  display: flex;
   gap: 8px;
   width: 100%;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--primary);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
 
-.sidebar-action-btn {
-  flex: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 5px 8px;
-  font-size: 0.78rem;
+.sidebar-public-link:hover {
+  background: #f1f5f9;
+  border-color: var(--line-strong);
+  color: var(--teal);
 }
 
 /* Main Workspace Content Area (Offset by 275px on Desktop) */
@@ -497,85 +438,230 @@ a:hover {
   min-height: 100vh;
 }
 
-.workspace-content {
-  flex: 1 0 auto;
-  padding: 24px 32px 48px;
-  width: 100%;
-  max-width: 1440px;
-  margin: 0 auto;
-}
-
-/* Mobile Workspace Header (Hidden on Desktop) */
-.mobile-workspace-header {
-  display: none;
+/* =========================================================
+   IFA-SSR STYLE ADMIN TOPBAR
+   ========================================================= */
+.admin-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 28px;
   background: #ffffff;
   border-bottom: 1px solid var(--line);
-  padding: 10px 16px;
-  align-items: center;
-  justify-content: space-between;
   position: sticky;
   top: 0;
-  z-index: 990;
-  box-shadow: var(--shadow-sm);
+  z-index: 900;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
 }
 
-.mobile-header-left {
+.admin-topbar-left {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  min-width: 0;
 }
 
-.mobile-hamburger-btn {
+.admin-topbar-left .mobile-toggle {
+  display: none;
   background: transparent;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 6px;
   cursor: pointer;
   color: var(--text-main);
+  align-items: center;
+  justify-content: center;
+}
+
+.admin-topbar-left .mobile-toggle:hover {
+  background: #f8fafc;
+}
+
+.admin-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.84rem;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.breadcrumb-root {
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.breadcrumb-slash {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.breadcrumb-leaf {
+  color: var(--text-sub);
+  font-weight: 500;
+}
+
+/* Account Info in Topbar (IFA-SSR Style) */
+.account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.admin-public-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.account-avatar-wrapper {
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.mobile-hamburger-btn:hover {
-  background: #f8fafc;
+
+.account-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1.5px solid var(--line-strong);
 }
 
-.mobile-brand-inline {
+.account-avatar-fallback {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #e0f2fe;
+  color: #0369a1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.85rem;
+  border: 1.5px solid #bfdbfe;
+}
+
+.account-identity {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  font-size: 0.78rem;
+  line-height: 1.25;
+}
+
+.account-name-line {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.mobile-brand-logo {
-  height: 24px;
-  width: auto;
-  object-fit: contain;
+.account-name {
+  font-weight: 700;
+  color: var(--text-main);
 }
 
-.mobile-brand-title {
-  font-size: 1rem;
-  font-weight: 800;
+.account-name:hover {
   color: var(--primary);
 }
 
-.mobile-header-center {
-  display: flex;
-  align-items: center;
+.account-email {
+  color: var(--muted);
+  font-size: 0.72rem;
 }
 
-.mobile-page-badge {
-  font-size: 0.82rem;
-  font-weight: 700;
-  color: var(--text-main);
-  background: #f1f5f9;
-  padding: 3px 10px;
-  border-radius: 9999px;
+.account-mobile-role {
+  display: none;
+}
+
+.account-logout-btn {
+  background: transparent;
   border: 1px solid var(--line);
-}
-
-.mobile-header-right {
+  color: var(--muted);
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
   display: flex;
   align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.account-logout-btn:hover {
+  color: var(--danger);
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+/* Public Header Authenticated User Bar (Requirement 10) */
+.public-auth-user-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.public-user-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--line-strong);
+}
+
+.public-user-avatar-fallback {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #e0f2fe;
+  color: #0369a1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.85rem;
+  border: 1px solid #bfdbfe;
+}
+
+.public-user-identity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.public-user-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-main);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.public-btn-workspace {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.public-btn-logout {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace-content {
+  flex: 1 0 auto;
+  padding: 24px 32px 48px;
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
 }
 
 /* Mobile Backdrop */
@@ -861,15 +947,61 @@ a:hover {
   box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.15);
 }
 
-/* Metric / Stat Boxes */
+/* Metric / Stat Boxes (SCImago Academic KPI Grid) */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+@media (min-width: 1440px) {
+  .stats-grid {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 18px;
+  }
+}
+
+@media (max-width: 1365px) and (min-width: 1024px) {
+  .stats-grid {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+  }
+}
+
+@media (max-width: 1023px) and (min-width: 640px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+  }
+}
+
+@media (max-width: 639px) {
+  .stats-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}
+
+.stat-card,
 .stat-box {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 16px;
+  padding: 16px 18px;
   background: #ffffff;
   border: 1px solid var(--line);
   border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  min-height: 84px;
+  box-sizing: border-box;
+}
+
+.stat-card:hover,
+.stat-box:hover {
+  border-color: #cbd5e1;
+  box-shadow: var(--shadow-md);
 }
 
 .stat-icon {
@@ -975,8 +1107,21 @@ a:hover {
     width: 100% !important;
   }
 
-  .mobile-workspace-header {
-    display: flex;
+  .admin-topbar-left .mobile-toggle {
+    display: inline-flex !important;
+  }
+
+  .admin-topbar {
+    padding: 10px 16px;
+    gap: 10px;
+  }
+
+  .account-identity {
+    display: none !important;
+  }
+
+  .account-mobile-role {
+    display: inline-flex !important;
   }
 
   .workspace-content {
@@ -994,6 +1139,41 @@ a:hover {
     padding-left: 12px;
     padding-right: 12px;
   }
+
+  .admin-topbar {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .admin-breadcrumb {
+    max-width: 125px;
+    font-size: 0.74rem;
+  }
+
+  .admin-public-btn-text {
+    display: none !important;
+  }
+
+  .admin-public-btn {
+    padding: 6px !important;
+    min-height: 32px !important;
+    min-width: 32px !important;
+  }
+
+  .public-user-identity {
+    display: none !important;
+  }
+
+  .public-logout-text {
+    display: none !important;
+  }
+
+  .public-btn-logout {
+    padding: 6px !important;
+    min-height: 32px !important;
+    min-width: 32px !important;
+  }
+
   .public-header-inner {
     height: auto;
     min-height: 54px;
