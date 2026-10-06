@@ -103,26 +103,105 @@ export async function updateUserProfile(
   );
 }
 
+export async function promoteLecturerToAdmin(
+  targetUser: UserProfile,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  if (actor.role !== "owner") {
+    throw new Error("Chỉ Owner mới có quyền cấp quyền Admin!");
+  }
+  const cleanEmail = targetUser.email.trim().toLowerCase();
+  if (!cleanEmail.endsWith("@tdtu.edu.vn")) {
+    throw new Error(`Email ${cleanEmail} không thuộc tên miền @tdtu.edu.vn!`);
+  }
+  if (targetUser.role === "admin" || targetUser.role === "owner") {
+    throw new Error(`Tài khoản ${targetUser.email} đã có vai trò ${targetUser.role.toUpperCase()}!`);
+  }
+
+  const docRef = doc(firestore, "users", targetUser.id);
+  const now = new Date().toISOString();
+  await updateDoc(docRef, {
+    role: "admin",
+    promotedAt: now,
+    promotedBy: actor.email,
+    updatedAt: now,
+  });
+
+  await logAudit(
+    actor,
+    "ROLE_CHANGED",
+    "user",
+    targetUser.id,
+    `Owner cấp quyền Admin cho ${targetUser.name} (${cleanEmail}). Vai trò cũ: lecturer -> Mới: admin`
+  );
+}
+
+export async function revokeAdminRole(
+  targetUser: UserProfile,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  if (actor.role !== "owner") {
+    throw new Error("Chỉ Owner mới có quyền gỡ quyền Admin!");
+  }
+  if (targetUser.email === "tranquanghai@tdtu.edu.vn" || targetUser.role === "owner") {
+    throw new Error("Không thể thay đổi hoặc hạ quyền của tài khoản Owner sáng lập hệ thống!");
+  }
+  if (targetUser.uid === actor.uid) {
+    throw new Error("Bạn không thể tự hạ quyền của chính mình!");
+  }
+
+  const docRef = doc(firestore, "users", targetUser.id);
+  const now = new Date().toISOString();
+  await updateDoc(docRef, {
+    role: "lecturer",
+    updatedAt: now,
+  });
+
+  await logAudit(
+    actor,
+    "ROLE_CHANGED",
+    "user",
+    targetUser.id,
+    `Owner gỡ quyền Admin của ${targetUser.name} (${targetUser.email}), chuyển về Giảng viên`
+  );
+}
+
 export async function setUserRole(
   targetUid: string,
   targetEmail: string,
   newRole: UserRole,
-  actor: { uid: string; email: string; role: UserRole }
+  actor: { uid: string; email: string; role: UserRole },
+  targetName?: string,
+  oldRole?: UserRole
 ) {
   if (actor.role !== "owner") {
     throw new Error("Chỉ Owner mới có quyền thay đổi role!");
   }
+  if ((targetEmail === "tranquanghai@tdtu.edu.vn" || oldRole === "owner") && newRole !== "owner") {
+    throw new Error("Không thể thay đổi hoặc hạ quyền của tài khoản Owner sáng lập hệ thống!");
+  }
+  if (targetUid === actor.uid && newRole !== "owner") {
+    throw new Error("Bạn không thể tự hạ quyền Owner của chính mình!");
+  }
+
   const docRef = doc(firestore, "users", targetUid);
-  await updateDoc(docRef, {
+  const now = new Date().toISOString();
+  const updatePayload: Record<string, any> = {
     role: newRole,
-    updatedAt: new Date().toISOString(),
-  });
+    updatedAt: now,
+  };
+  if (newRole === "admin") {
+    updatePayload.promotedAt = now;
+    updatePayload.promotedBy = actor.email;
+  }
+
+  await updateDoc(docRef, updatePayload);
   await logAudit(
     actor,
-    "SET_USER_ROLE",
+    "ROLE_CHANGED",
     "user",
     targetUid,
-    `Đổi quyền tài khoản ${targetEmail} thành: ${newRole}`
+    `Owner thay đổi vai trò của ${targetName || targetEmail} (${targetEmail}): ${oldRole || "cũ"} -> ${newRole}`
   );
 }
 

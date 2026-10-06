@@ -29,6 +29,8 @@ rules_version = '2';
 //   - createdAt: string | timestamp (optional, max 50 chars) - Profile creation time
 //   - updatedAt: string | timestamp (optional, max 50 chars) - Last update time
 //   - linkedAt: string | timestamp (optional, max 50 chars) - Authentication link time
+//   - promotedAt: string | timestamp (optional, max 50 chars) - Promotion timestamp
+//   - promotedBy: string (optional, max 100 chars) - User UID/email who promoted this user
 //
 // Collection: opportunities
 // Document ID: opportunityId (auto-generated)
@@ -258,7 +260,7 @@ service cloud.firestore {
           'id', 'uid', 'email', 'name', 'role',
           'department', 'academicDegree', 'orcid', 'googleScholar',
           'researchGate', 'website', 'active', 'photoURL',
-          'createdAt', 'updatedAt', 'linkedAt'
+          'createdAt', 'updatedAt', 'linkedAt', 'promotedAt', 'promotedBy'
         ]) &&
         validString(data.id, 1, 128) &&
         validString(data.uid, 1, 128) &&
@@ -275,7 +277,9 @@ service cloud.firestore {
         (!('photoURL' in data) || validString(data.photoURL, 0, 1000)) &&
         (!('createdAt' in data) || validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
         (!('updatedAt' in data) || validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
-        (!('linkedAt' in data) || validString(data.linkedAt, 1, 50) || data.linkedAt is timestamp);
+        (!('linkedAt' in data) || validString(data.linkedAt, 1, 50) || data.linkedAt is timestamp) &&
+        (!('promotedAt' in data) || validString(data.promotedAt, 0, 50) || data.promotedAt is timestamp) &&
+        (!('promotedBy' in data) || validString(data.promotedBy, 0, 100));
     }
 
     // Validates opportunities/{opportunityId} schema and constraints
@@ -554,8 +558,13 @@ service cloud.firestore {
       );
 
       allow update: if isAuthenticated() && isValidUser(request.resource.data) && (
-        // Case A: Owner has full update permission (document id immutable)
-        (isOwner() && request.resource.data.id == resource.data.id) ||
+        // Case A: Owner update permission (document id immutable, founding owner role protected, no self-downgrade)
+        (
+          isOwner() &&
+          request.resource.data.id == resource.data.id &&
+          (resource.data.email != 'tranquanghai@tdtu.edu.vn' || request.resource.data.role == 'owner') &&
+          (request.auth.uid != userId || request.resource.data.role == resource.data.role)
+        ) ||
         // Case B: Admin updating lecturer profile (cannot touch owner, cannot assign owner role, role immutable)
         (
           isAdmin() &&

@@ -17,6 +17,8 @@ export interface UserProfile {
   createdAt?: string;
   updatedAt?: string;
   linkedAt?: string;
+  promotedAt?: string;
+  promotedBy?: string;
 }
 
 export type OpportunityType =
