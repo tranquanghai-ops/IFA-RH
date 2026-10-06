@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
+import { useAuth } from "../firebase/auth";
 import {
   fetchPublications,
   fetchResearchWorks,
   fetchAllUsers,
+  fetchActiveLecturers,
 } from "../firebase/firestore";
 import type { Publication, ResearchWork, UserProfile } from "../types";
 import { exportToExcel, exportToCsv } from "../utils/excel";
@@ -19,6 +21,7 @@ import {
 } from "lucide-react";
 
 export const StatisticsPage: React.FC = () => {
+  const { profile } = useAuth();
   const [publications, setPublications] = useState<Publication[]>([]);
   const [researchWorks, setResearchWorks] = useState<ResearchWork[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
@@ -30,17 +33,31 @@ export const StatisticsPage: React.FC = () => {
   const [selectedType, setSelectedType] = useState<string>("Tất cả");
   const [selectedStatus, setSelectedStatus] = useState<string>("Tất cả");
 
+  const isStaff = profile?.role === "admin" || profile?.role === "owner";
+
   const loadData = async () => {
+    if (!profile) return;
     setLoading(true);
     try {
-      const [pubs, works, u] = await Promise.all([
-        fetchPublications(),
-        fetchResearchWorks(),
-        fetchAllUsers(),
-      ]);
-      setPublications(pubs);
-      setResearchWorks(works);
-      setUsers(u);
+      if (isStaff) {
+        const [pubs, works, u] = await Promise.all([
+          fetchPublications(),
+          fetchResearchWorks(),
+          fetchAllUsers(),
+        ]);
+        setPublications(pubs);
+        setResearchWorks(works);
+        setUsers(u);
+      } else {
+        const [pubs, works, u] = await Promise.all([
+          fetchPublications(),
+          fetchResearchWorks(profile.uid),
+          fetchActiveLecturers(),
+        ]);
+        setPublications(pubs);
+        setResearchWorks(works);
+        setUsers(u);
+      }
     } catch (err: any) {
       console.error(err);
     } finally {
@@ -50,7 +67,7 @@ export const StatisticsPage: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [profile]);
 
   // Distinct filter values
   const years = Array.from(

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import type { Publication } from "../types";
+import type { Publication, UserProfile } from "../types";
 import { Modal } from "./Modal";
 
 interface PublicationModalProps {
@@ -10,6 +10,7 @@ interface PublicationModalProps {
   userId: string;
   userEmail: string;
   userName: string;
+  lecturers?: UserProfile[];
 }
 
 const PUBLICATION_TYPES = [
@@ -39,6 +40,7 @@ export const PublicationModal: React.FC<PublicationModalProps> = ({
   userId,
   userEmail,
   userName,
+  lecturers,
 }) => {
   const [formData, setFormData] = useState<Partial<Publication>>({
     year: new Date().getFullYear(),
@@ -142,6 +144,38 @@ export const PublicationModal: React.FC<PublicationModalProps> = ({
         {error && (
           <div style={{ background: "#fee2e2", color: "#991b1b", padding: 12, borderRadius: 6, marginBottom: 16 }}>
             {error}
+          </div>
+        )}
+
+        {/* If Admin/Owner creates for a lecturer */}
+        {lecturers && lecturers.length > 0 && !initialData && (
+          <div className="form-group">
+            <label className="form-label">
+              Giảng viên thực hiện <span style={{ color: "red" }}>*</span>
+            </label>
+            <select
+              className="form-control"
+              value={formData.userId}
+              onChange={(e) => {
+                const selected = lecturers.find(
+                  (l) => l.uid === e.target.value || l.id === e.target.value
+                );
+                if (selected) {
+                  setFormData((prev) => ({
+                    ...prev,
+                    userId: selected.uid || selected.id,
+                    userEmail: selected.email,
+                    userName: selected.name,
+                  }));
+                }
+              }}
+            >
+              {lecturers.map((l) => (
+                <option key={l.id} value={l.uid || l.id}>
+                  {l.name} — {l.email} ({l.department || "MTCN"})
+                </option>
+              ))}
+            </select>
           </div>
         )}
 

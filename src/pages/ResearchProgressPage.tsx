@@ -4,13 +4,16 @@ import {
   fetchResearchWorks,
   createResearchWork,
   updateResearchWork,
+  updateResearchWorkOnBehalf,
   deleteResearchWork,
+  fetchActiveLecturers,
 } from "../firebase/firestore";
-import type { ResearchWork, ResearchStatus } from "../types";
+import type { ResearchWork, ResearchStatus, UserProfile } from "../types";
 import { ResearchWorkModal } from "../components/ResearchWorkModal";
 import { ProgressHistoryModal } from "../components/ProgressHistoryModal";
 import { ConvertToPublicationModal } from "../components/ConvertToPublicationModal";
 import { formatDateVN } from "../utils/date";
+import { exportToExcel, exportToCsv } from "../utils/excel";
 import {
   Plus,
   Search,
@@ -22,6 +25,9 @@ import {
   Calendar,
   Layers,
   ArrowRight,
+  Download,
+  FileSpreadsheet,
+  Users,
 } from "lucide-react";
 
 const STATUS_FILTERS = [
@@ -44,17 +50,39 @@ export const ResearchProgressPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("Tất cả");
 
+  // Lecturer list & filter for Admin/Owner
+  const [activeLecturers, setActiveLecturers] = useState<UserProfile[]>([]);
+  const [selectedLecturerId, setSelectedLecturerId] = useState<string>("all");
+
   // Modals
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingWork, setEditingWork] = useState<ResearchWork | null>(null);
   const [historyWork, setHistoryWork] = useState<ResearchWork | null>(null);
   const [convertingWork, setConvertingWork] = useState<ResearchWork | null>(null);
 
+  const isStaff = profile?.role === "admin" || profile?.role === "owner";
+
+  const loadLecturers = async () => {
+    if (isStaff) {
+      try {
+        const list = await fetchActiveLecturers();
+        setActiveLecturers(list);
+      } catch (err) {
+        console.error("Error loading lecturers:", err);
+      }
+    }
+  };
+
   const loadWorks = async () => {
     if (!profile) return;
     setLoading(true);
     try {
-      const data = await fetchResearchWorks(profile.uid);
+      const targetUid = isStaff
+        ? selectedLecturerId === "all"
+          ? undefined
+          : selectedLecturerId
+        : profile.uid;
+      const data = await fetchResearchWorks(targetUid);
       setWorks(data);
     } catch (err: any) {
       console.error(err);
@@ -64,8 +92,12 @@ export const ResearchProgressPage: React.FC = () => {
   };
 
   useEffect(() => {
-    loadWorks();
+    loadLecturers();
   }, [profile]);
+
+  useEffect(() => {
+    loadWorks();
+  }, [profile, selectedLecturerId]);
 
   if (!profile) return null;
 
@@ -73,6 +105,7 @@ export const ResearchProgressPage: React.FC = () => {
     const matchQuery =
       searchQuery.trim() === "" ||
       w.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (w.userName && w.userName.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (w.venue && w.venue.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (w.category && w.category.toLowerCase().includes(searchQuery.toLowerCase()));
 
@@ -84,12 +117,21 @@ export const ResearchProgressPage: React.FC = () => {
 
   const handleQuickStatusChange = async (work: ResearchWork, newStatus: ResearchStatus) => {
     try {
-      await updateResearchWork(
-        work.id,
-        { status: newStatus },
-        `Chuyển nhanh trạng thái thành: ${newStatus}`,
-        { uid: profile.uid, email: profile.email, role: profile.role }
-      );
+      if (isStaff && work.userId !== profile.uid) {
+        await updateResearchWorkOnBehalf(
+          work.id,
+          { status: newStatus },
+          `Chuyển nhanh trạng thái thành: ${newStatus}`,
+          { uid: profile.uid, email: profile.email, role: profile.role }
+        );
+      } else {
+        await updateResearchWork(
+          work.id,
+          { status: newStatus },
+          `Chuyển nhanh trạng thái thành: ${newStatus}`,
+          { uid: profile.uid, email: profile.email, role: profile.role }
+        );
+      }
       await loadWorks();
     } catch (err: any) {
       alert("Lỗi cập nhật trạng thái: " + err.message);
@@ -112,6 +154,46 @@ export const ResearchProgressPage: React.FC = () => {
     }
   };
 
+  const handleExportExcel = async () => {
+    const cols = [
+      { header: "Tên công trình", key: "title", width: 40 },
+      { header: "Loại hình", key: "category", width: 18 },
+      { header: "Giảng viên", key: "userName", width: 22 },
+      { header: "Email", key: "userEmail", width: 25 },
+      { header: "Trạng thái", key: "status", width: 18 },
+      { header: "Hội thảo / Tạp chí", key: "venue", width: 30 },
+      { header: "Hạn nộp", key: "deadline", width: 15 },
+      { header: "Vai trò", key: "role", width: 16 },
+      { header: "Đồng tác giả", key: "coAuthors", width: 25 },
+      { header: "Ghi chú", key: "notes", width: 25 },
+    ];
+    await exportToExcel(
+      `Tien-do-NCKH-${isStaff ? "MTCN" : profile.name}-${new Date().getFullYear()}`,
+      "Tiến độ NCKH",
+      cols,
+      filteredWorks
+    );
+  };
+
+  const handleExportCsv = () => {
+    const cols = [
+      { header: "Tên công trình", key: "title" },
+      { header: "Loại hình", key: "category" },
+      { header: "Giảng viên", key: "userName" },
+      { header: "Email", key: "userEmail" },
+      { header: "Trạng thái", key: "status" },
+      { header: "Hội thảo / Tạp chí", key: "venue" },
+      { header: "Hạn nộp", key: "deadline" },
+      { header: "Vai trò", key: "role" },
+      { header: "Đồng tác giả", key: "coAuthors" },
+    ];
+    exportToCsv(
+      `Tien-do-NCKH-${isStaff ? "MTCN" : profile.name}-${new Date().getFullYear()}`,
+      cols,
+      filteredWorks
+    );
+  };
+
   return (
     <div className="app-container">
       {/* Header bar */}
@@ -132,14 +214,32 @@ export const ResearchProgressPage: React.FC = () => {
           </p>
         </div>
 
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => setIsAddOpen(true)}
-        >
-          <Plus size={16} />
-          Tạo công trình NCKH mới
-        </button>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={handleExportExcel}
+            title="Xuất file Excel"
+          >
+            <FileSpreadsheet size={15} /> Xuất Excel
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={handleExportCsv}
+            title="Xuất file CSV"
+          >
+            <Download size={15} /> Xuất CSV
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => setIsAddOpen(true)}
+          >
+            <Plus size={16} />
+            Tạo công trình NCKH mới
+          </button>
+        </div>
       </div>
 
       {/* Filter and search bar */}
@@ -155,14 +255,36 @@ export const ResearchProgressPage: React.FC = () => {
               type="text"
               className="form-control"
               style={{ paddingLeft: 38 }}
-              placeholder="Tìm kiếm theo tên đề tài, hội thảo, tạp chí..."
+              placeholder="Tìm kiếm theo tên đề tài, giảng viên, hội thảo..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
 
+          {/* Lecturer Selector for Staff */}
+          {isStaff && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Users size={16} color="var(--primary)" />
+              <span style={{ fontSize: "0.85rem", color: "var(--muted)", fontWeight: 600 }}>Giảng viên:</span>
+              <select
+                className="form-control"
+                value={selectedLecturerId}
+                onChange={(e) => setSelectedLecturerId(e.target.value)}
+                style={{ width: "auto" }}
+              >
+                <option value="all">Toàn bộ khoa ({activeLecturers.length} GV)</option>
+                {activeLecturers.map((l) => (
+                  <option key={l.id} value={l.uid || l.id}>
+                    {l.name} ({l.email})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Filter size={16} color="var(--primary)" />
+            <span style={{ fontSize: "0.85rem", color: "var(--muted)", fontWeight: 600 }}>Trạng thái:</span>
             <select
               className="form-control"
               value={selectedStatus}
@@ -208,13 +330,18 @@ export const ResearchProgressPage: React.FC = () => {
               <div key={work.id} className="card card-hover" style={{ padding: 20 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
                   <div style={{ flex: 1, minWidth: 280 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
                       <span className="badge badge-neutral" style={{ fontWeight: 700 }}>
                         {work.category}
                       </span>
                       <span className="badge" style={{ background: "#e0f2fe", color: "#0369a1", fontWeight: 600 }}>
                         {work.role}
                       </span>
+                      {isStaff && (
+                        <span className="badge badge-primary" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <Users size={12} /> {work.userName} ({work.userEmail})
+                        </span>
+                      )}
                       {work.convertedToPublicationId && (
                         <span className="badge badge-success">
                           ĐÃ VÀO HỒ SƠ NGHIÊN CỨU
@@ -334,6 +461,7 @@ export const ResearchProgressPage: React.FC = () => {
         userId={profile.uid}
         userEmail={profile.email}
         userName={profile.name}
+        lecturers={isStaff ? activeLecturers : undefined}
       />
 
       <ResearchWorkModal
@@ -342,12 +470,21 @@ export const ResearchProgressPage: React.FC = () => {
         initialData={editingWork}
         onSubmit={async (data, note) => {
           if (!editingWork) return;
-          await updateResearchWork(
-            editingWork.id,
-            data,
-            note,
-            { uid: profile.uid, email: profile.email, role: profile.role }
-          );
+          if (isStaff && editingWork.userId !== profile.uid) {
+            await updateResearchWorkOnBehalf(
+              editingWork.id,
+              data,
+              note || "Cập nhật công trình bởi Admin",
+              { uid: profile.uid, email: profile.email, role: profile.role }
+            );
+          } else {
+            await updateResearchWork(
+              editingWork.id,
+              data,
+              note,
+              { uid: profile.uid, email: profile.email, role: profile.role }
+            );
+          }
           await loadWorks();
         }}
         userId={profile.uid}

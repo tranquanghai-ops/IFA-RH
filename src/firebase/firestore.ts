@@ -68,6 +68,13 @@ export async function fetchAllUsers(): Promise<UserProfile[]> {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() } as UserProfile));
 }
 
+export async function fetchActiveLecturers(): Promise<UserProfile[]> {
+  const q = query(collection(firestore, "users"), where("active", "==", true));
+  const snap = await getDocs(q);
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as UserProfile));
+  return list.sort((a, b) => a.name.localeCompare(b.name, "vi"));
+}
+
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {
   const docRef = doc(firestore, "users", uid);
   const snap = await getDoc(docRef);
@@ -131,6 +138,19 @@ export async function createOrProvisionUser(
   actor: { uid: string; email: string; role: UserRole }
 ) {
   const normalizedEmail = userData.email.trim().toLowerCase();
+
+  // Validate email domain: must end with @tdtu.edu.vn
+  if (!normalizedEmail.endsWith("@tdtu.edu.vn")) {
+    throw new Error(
+      `Email ${normalizedEmail} không hợp lệ! IFA-RH chỉ chấp nhận email trường kết thúc bằng @tdtu.edu.vn`
+    );
+  }
+
+  // Admin cannot provision an owner
+  if (userData.role === "owner" && actor.role !== "owner") {
+    throw new Error("Chỉ Owner mới có thể tạo hoặc gán quyền Owner!");
+  }
+
   // Check if exists
   const q = query(
     collection(firestore, "users"),
@@ -147,7 +167,7 @@ export async function createOrProvisionUser(
     id,
     uid: id,
     email: normalizedEmail,
-    name: userData.name,
+    name: userData.name.trim(),
     role: userData.role,
     department: userData.department || "",
     academicDegree: userData.academicDegree || "",
@@ -455,6 +475,51 @@ export async function updateResearchWork(
   }
 }
 
+export async function updateResearchWorkOnBehalf(
+  id: string,
+  data: Partial<ResearchWork>,
+  progressNote: string,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  const now = new Date().toISOString();
+  const docRef = doc(firestore, "researchWorks", id);
+  const workSnap = await getDoc(docRef);
+  if (!workSnap.exists()) {
+    throw new Error("Không tìm thấy công trình NCKH!");
+  }
+  const work = workSnap.data() as ResearchWork;
+
+  await updateDoc(docRef, {
+    ...data,
+    updatedAt: now,
+    lastUpdatedBy: actor.email,
+    lastUpdatedByRole: actor.role,
+    onBehalfOfUserId: work.userId,
+  });
+
+  // Append to progress history with actor credentials
+  await addDoc(collection(firestore, "researchProgress"), {
+    researchId: id,
+    userId: work.userId,
+    userEmail: work.userEmail,
+    actorUid: actor.uid,
+    actorEmail: actor.email,
+    actorRole: actor.role,
+    status: data.status || work.status,
+    date: new Date().toLocaleDateString("vi-VN"),
+    notes: progressNote || `Cập nhật hộ GV bởi ${actor.role.toUpperCase()}: ${actor.email}`,
+    createdAt: now,
+  });
+
+  await logAudit(
+    actor,
+    "UPDATE_RESEARCH_WORK_ON_BEHALF",
+    "research",
+    id,
+    `Cập nhật hộ GV ${work.userName} (${work.userEmail}): "${work.title}" - Trạng thái: ${data.status || work.status}`
+  );
+}
+
 export async function deleteResearchWork(
   id: string,
   title: string,
@@ -603,17 +668,22 @@ export async function convertResearchWorkToPublication(
     isCompleted: true,
     status: "Đã xuất bản",
     convertedToPublicationId: pubRef.id,
+    convertedBy: actor.email,
+    convertedAt: now,
     updatedAt: now,
   });
 
-  // 3. Append progress record
+  // 3. Append progress record with actor credentials
   await addDoc(collection(firestore, "researchProgress"), {
     researchId: research.id,
     userId: research.userId,
     userEmail: research.userEmail,
+    actorUid: actor.uid,
+    actorEmail: actor.email,
+    actorRole: actor.role,
     status: "Đã xuất bản",
     date: new Date().toLocaleDateString("vi-VN"),
-    notes: `Chuyển vào Hồ sơ nghiên cứu (Mã hồ sơ: ${pubRef.id})`,
+    notes: `Chuyển vào Hồ sơ nghiên cứu bởi ${actor.role.toUpperCase()}: ${actor.email} (Mã hồ sơ: ${pubRef.id})`,
     createdAt: now,
   });
 
@@ -629,9 +699,33 @@ export async function convertResearchWorkToPublication(
 }
 
 // ======================== RECORD IMPORT BATCH ========================
-export async function recordImportBatch(batch: ImportBatch) {
-  await addDoc(collection(firestore, "imports"), {
+export async function recordImportBatch(
+  batch: ImportBatch,
+  actor?: { uid: string; email: string; role: UserRole }
+) {
+  const ref = await addDoc(collection(firestore, "imports"), {
     ...batch,
     createdAt: serverTimestamp(),
   });
+
+  if (actor) {
+    await logAudit(
+      actor,
+      "IMPORT_BATCH",
+      "import",
+      ref.id,
+      `Nhập dữ liệu [${batch.type}] từ file "${batch.fileName}": Thành công ${batch.successCount}/${batch.totalRows} dòng (Lỗi: ${batch.errorCount})`
+    );
+  }
 }
+
+export async function fetchImports(limitCount = 50): Promise<ImportBatch[]> {
+  const q = query(
+    collection(firestore, "imports"),
+    orderBy("timestamp", "desc"),
+    limit(limitCount)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as ImportBatch));
+}
+

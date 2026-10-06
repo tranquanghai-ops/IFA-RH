@@ -7,7 +7,9 @@ import {
 } from "../firebase/firestore";
 import type { UserProfile } from "../types";
 import { LecturerModal } from "../components/LecturerModal";
-import { parseSpreadsheetFile } from "../utils/excel";
+import { LecturerImportModal } from "../components/LecturerImportModal";
+import { exportToExcel, exportToCsv } from "../utils/excel";
+import { formatDateVN } from "../utils/date";
 import {
   Users,
   Plus,
@@ -19,6 +21,8 @@ import {
   Mail,
   GraduationCap,
   Building,
+  Download,
+  FileSpreadsheet,
 } from "lucide-react";
 
 export const AdminLecturersPage: React.FC = () => {
@@ -30,11 +34,9 @@ export const AdminLecturersPage: React.FC = () => {
 
   // Modals
   const [isAddOpen, setIsAddOpen] = useState(false);
-  const [editingLecturer, setEditingLecturer] = useState<UserProfile | null>(null);
-
-  // Bulk import state
-  const [importing, setImporting] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [importReport, setImportReport] = useState<string | null>(null);
+  const [editingLecturer, setEditingLecturer] = useState<UserProfile | null>(null);
 
   const loadUsers = async () => {
     setLoading(true);
@@ -69,7 +71,7 @@ export const AdminLecturersPage: React.FC = () => {
   const handleToggleActive = async (target: UserProfile) => {
     const newActive = !target.active;
     const actionName = newActive ? "kích hoạt" : "vô hiệu hóa";
-    if (!window.confirm(`Bạn có chắc muốn ${actionName} tài khoản "${target.name} (${target.email})"?`)) {
+    if (!window.confirm(`Bạn có chắc muốn ${actionName} tài khoản "${target.name} (${target.email})"? (Lịch sử NCKH và bài báo vẫn được bảo lưu)`)) {
       return;
     }
     try {
@@ -84,66 +86,39 @@ export const AdminLecturersPage: React.FC = () => {
     }
   };
 
-  const handleBulkUploadExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleExportExcel = async () => {
+    const cols = [
+      { header: "Họ và tên", key: "name", width: 25 },
+      { header: "Email TDTU", key: "email", width: 28 },
+      { header: "Bộ môn / Ngành", key: "department", width: 22 },
+      { header: "Học vị", key: "academicDegree", width: 14 },
+      { header: "Vai trò", key: "role", width: 14 },
+      { header: "Trạng thái", key: "statusText", width: 16 },
+      { header: "ORCID", key: "orcid", width: 20 },
+      { header: "Ngày tạo", key: "formattedCreated", width: 16 },
+    ];
+    const data = filteredUsers.map((u) => ({
+      ...u,
+      statusText: u.active !== false ? "Hoạt động" : "Vô hiệu hóa",
+      formattedCreated: formatDateVN(u.createdAt || ""),
+    }));
+    await exportToExcel("Danh-sach-giang-vien-MTCN", "Giảng viên", cols, data);
+  };
 
-    try {
-      setImporting(true);
-      setImportReport(null);
-      const parsed = await parseSpreadsheetFile(file);
-
-      let successCount = 0;
-      let errorCount = 0;
-      const errors: string[] = [];
-
-      for (const row of parsed.rows) {
-        // Look for keys (case-insensitive)
-        const name =
-          row["Họ tên"] || row["Họ và tên"] || row["Tên"] || row["name"] || "";
-        const email =
-          row["Email"] || row["Email TDTU"] || row["email"] || "";
-        const dept =
-          row["Bộ môn"] || row["Ngành"] || row["department"] || "Khoa MTCN";
-        const degree =
-          row["Học vị"] || row["academicDegree"] || "ThS";
-
-        if (!name || !email || !email.includes("@")) {
-          errorCount++;
-          errors.push(`Dòng ${row._rowIndex}: Thiếu họ tên hoặc email không hợp lệ (${email})`);
-          continue;
-        }
-
-        try {
-          await createOrProvisionUser(
-            {
-              name: String(name).trim(),
-              email: String(email).trim().toLowerCase(),
-              role: "lecturer",
-              department: String(dept).trim(),
-              academicDegree: String(degree).trim(),
-              active: true,
-            },
-            { uid: profile.uid, email: profile.email, role: profile.role }
-          );
-          successCount++;
-        } catch (err: any) {
-          errorCount++;
-          errors.push(`Dòng ${row._rowIndex} (${email}): ${err.message}`);
-        }
-      }
-
-      setImportReport(
-        `Import hoàn tất: Thêm thành công ${successCount} giảng viên. Lỗi/Trùng ${errorCount} dòng.` +
-          (errors.length > 0 ? `\nChi tiết:\n${errors.slice(0, 5).join("\n")}` : "")
-      );
-      await loadUsers();
-    } catch (err: any) {
-      alert("Lỗi đọc file Excel: " + err.message);
-    } finally {
-      setImporting(false);
-      e.target.value = "";
-    }
+  const handleExportCsv = () => {
+    const cols = [
+      { header: "Họ và tên", key: "name" },
+      { header: "Email TDTU", key: "email" },
+      { header: "Bộ môn / Ngành", key: "department" },
+      { header: "Học vị", key: "academicDegree" },
+      { header: "Vai trò", key: "role" },
+      { header: "Trạng thái", key: "statusText" },
+    ];
+    const data = filteredUsers.map((u) => ({
+      ...u,
+      statusText: u.active !== false ? "Hoạt động" : "Vô hiệu hóa",
+    }));
+    exportToCsv("Danh-sach-giang-vien-MTCN", cols, data);
   };
 
   return (
@@ -167,16 +142,29 @@ export const AdminLecturersPage: React.FC = () => {
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <label className="btn btn-secondary btn-sm" style={{ cursor: "pointer" }}>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={handleExportExcel}
+            title="Xuất danh sách ra file Excel"
+          >
+            <FileSpreadsheet size={15} /> Xuất Excel
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={handleExportCsv}
+            title="Xuất danh sách ra file CSV"
+          >
+            <Download size={15} /> Xuất CSV
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => setIsImportOpen(true)}
+          >
             <Upload size={16} /> Import Excel nhiều GV
-            <input
-              type="file"
-              accept=".xlsx,.csv"
-              style={{ display: "none" }}
-              onChange={handleBulkUploadExcel}
-              disabled={importing}
-            />
-          </label>
+          </button>
           <button
             type="button"
             className="btn btn-primary btn-sm"
@@ -363,6 +351,14 @@ export const AdminLecturersPage: React.FC = () => {
           );
           await loadUsers();
         }}
+      />
+
+      <LecturerImportModal
+        isOpen={isImportOpen}
+        onClose={() => setIsImportOpen(false)}
+        onSuccess={loadUsers}
+        existingUsers={users}
+        actor={{ uid: profile.uid, email: profile.email, role: profile.role }}
       />
     </div>
   );

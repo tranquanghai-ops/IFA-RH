@@ -9,6 +9,7 @@ import {
 import type { Opportunity } from "../types";
 import { OpportunityFormModal } from "../components/OpportunityFormModal";
 import { OpportunityDetailModal } from "../components/OpportunityDetailModal";
+import { exportToExcel, exportToCsv } from "../utils/excel";
 import { formatDateVN } from "../utils/date";
 import {
   Plus,
@@ -19,6 +20,8 @@ import {
   ExternalLink,
   Eye,
   Compass,
+  Download,
+  FileSpreadsheet,
 } from "lucide-react";
 
 export const AdminOpportunitiesPage: React.FC = () => {
@@ -77,6 +80,63 @@ export const AdminOpportunitiesPage: React.FC = () => {
     }
   };
 
+  const handleExportExcel = async () => {
+    if (filtered.length === 0) {
+      alert("Không có dữ liệu để xuất");
+      return;
+    }
+    const cols = [
+      { header: "Tên hội thảo / Tạp chí", key: "title", width: 35 },
+      { header: "Loại hình", key: "type", width: 15 },
+      { header: "Đơn vị tổ chức", key: "organizer", width: 25 },
+      { header: "Lĩnh vực / Chuyên ngành", key: "field", width: 20 },
+      { header: "Hạn nộp bài", key: "deadline", width: 15 },
+      { header: "Thời gian diễn ra", key: "eventDate", width: 15 },
+      { header: "Địa điểm", key: "location", width: 20 },
+      { header: "Trạng thái", key: "status", width: 12 },
+      { header: "Website", key: "sourceUrl", width: 30 },
+      { header: "Tags", key: "tagsStr", width: 20 },
+    ];
+    const data = filtered.map((o) => ({
+      ...o,
+      tagsStr: (o.tags || []).join(", "),
+    }));
+    await exportToExcel(
+      `IFA_RH_Co_Hoi_NCKH_${new Date().toISOString().slice(0, 10)}`,
+      "Cơ hội NCKH",
+      cols,
+      data
+    );
+  };
+
+  const handleExportCsv = () => {
+    if (filtered.length === 0) {
+      alert("Không có dữ liệu để xuất");
+      return;
+    }
+    const cols = [
+      { header: "Tên hội thảo / Tạp chí", key: "title" },
+      { header: "Loại hình", key: "type" },
+      { header: "Đơn vị tổ chức", key: "organizer" },
+      { header: "Lĩnh vực / Chuyên ngành", key: "field" },
+      { header: "Hạn nộp bài", key: "deadline" },
+      { header: "Thời gian diễn ra", key: "eventDate" },
+      { header: "Địa điểm", key: "location" },
+      { header: "Trạng thái", key: "status" },
+      { header: "Website", key: "sourceUrl" },
+      { header: "Tags", key: "tagsStr" },
+    ];
+    const data = filtered.map((o) => ({
+      ...o,
+      tagsStr: (o.tags || []).join(", "),
+    }));
+    exportToCsv(
+      `IFA_RH_Co_Hoi_NCKH_${new Date().toISOString().slice(0, 10)}`,
+      cols,
+      data
+    );
+  };
+
   return (
     <div className="app-container">
       {/* Header */}
@@ -97,13 +157,31 @@ export const AdminOpportunitiesPage: React.FC = () => {
           </p>
         </div>
 
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => setIsAddOpen(true)}
-        >
-          <Plus size={16} /> Đăng cơ hội mới
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleExportCsv}
+            title="Xuất danh sách ra file CSV UTF-8"
+          >
+            <Download size={16} /> Xuất CSV
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleExportExcel}
+            title="Xuất danh sách ra file Excel (.xlsx)"
+          >
+            <FileSpreadsheet size={16} /> Xuất Excel
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => setIsAddOpen(true)}
+          >
+            <Plus size={16} /> Đăng cơ hội mới
+          </button>
+        </div>
       </div>
 
       {/* Filter / Search Bar */}

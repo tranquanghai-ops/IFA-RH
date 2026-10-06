@@ -5,8 +5,9 @@ import {
   createPublication,
   updatePublication,
   deletePublication,
+  fetchActiveLecturers,
 } from "../firebase/firestore";
-import type { Publication } from "../types";
+import type { Publication, UserProfile } from "../types";
 import { PublicationModal } from "../components/PublicationModal";
 import { exportToExcel, exportToCsv } from "../utils/excel";
 import {
@@ -19,6 +20,7 @@ import {
   Trash2,
   BookOpen,
   ExternalLink,
+  Users,
 } from "lucide-react";
 
 export const PublicationHistoryPage: React.FC = () => {
@@ -29,16 +31,40 @@ export const PublicationHistoryPage: React.FC = () => {
   const [selectedType, setSelectedType] = useState("Tất cả");
   const [selectedYear, setSelectedYear] = useState<string>("Tất cả");
 
+  // Staff and Scope Filter
+  const isStaff = profile?.role === "admin" || profile?.role === "owner";
+  const [activeLecturers, setActiveLecturers] = useState<UserProfile[]>([]);
+  const [selectedLecturerId, setSelectedLecturerId] = useState<string>("all");
+  const [viewScope, setViewScope] = useState<"personal" | "faculty">("personal");
+
   // Modals
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingPub, setEditingPub] = useState<Publication | null>(null);
+
+  const loadLecturers = async () => {
+    if (isStaff) {
+      try {
+        const list = await fetchActiveLecturers();
+        setActiveLecturers(list);
+      } catch (err) {
+        console.error("Error loading lecturers:", err);
+      }
+    }
+  };
 
   const loadPublications = async () => {
     if (!profile) return;
     setLoading(true);
     try {
-      const data = await fetchPublications(profile.uid);
-      setPublications(data);
+      if (isStaff) {
+        const targetUid = selectedLecturerId === "all" ? undefined : selectedLecturerId;
+        const data = await fetchPublications(targetUid);
+        setPublications(data);
+      } else {
+        const targetUid = viewScope === "personal" ? profile.uid : undefined;
+        const data = await fetchPublications(targetUid);
+        setPublications(data);
+      }
     } catch (err: any) {
       console.error(err);
     } finally {
@@ -47,8 +73,12 @@ export const PublicationHistoryPage: React.FC = () => {
   };
 
   useEffect(() => {
-    loadPublications();
+    loadLecturers();
   }, [profile]);
+
+  useEffect(() => {
+    loadPublications();
+  }, [profile, selectedLecturerId, viewScope]);
 
   if (!profile) return null;
 
@@ -61,6 +91,7 @@ export const PublicationHistoryPage: React.FC = () => {
     const matchQuery =
       searchQuery.trim() === "" ||
       p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (p.userName && p.userName.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (p.journalOrConference && p.journalOrConference.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (p.publisher && p.publisher.toLowerCase().includes(searchQuery.toLowerCase()));
 
@@ -70,11 +101,23 @@ export const PublicationHistoryPage: React.FC = () => {
     return matchQuery && matchType && matchYear;
   });
 
+  const showFacultyMeta = isStaff || viewScope === "faculty";
+
   const handleExportExcel = async () => {
-    const columns = [
+    const columns: Array<{ header: string; key: string; width: number }> = [
       { header: "Năm", key: "year", width: 10 },
       { header: "Tên công trình", key: "title", width: 40 },
       { header: "Loại hình", key: "type", width: 18 },
+    ];
+
+    if (showFacultyMeta) {
+      columns.push(
+        { header: "Giảng viên", key: "userName", width: 22 },
+        { header: "Email", key: "userEmail", width: 25 }
+      );
+    }
+
+    columns.push(
       { header: "Vai trò", key: "role", width: 16 },
       { header: "Tác giả / Đồng tác giả", key: "coAuthors", width: 25 },
       { header: "Tạp chí / Hội thảo", key: "journalOrConference", width: 30 },
@@ -86,10 +129,11 @@ export const PublicationHistoryPage: React.FC = () => {
       { header: "DOI", key: "doi", width: 20 },
       { header: "Chỉ mục (Indexing)", key: "indexing", width: 18 },
       { header: "Link", key: "link", width: 30 },
-      { header: "Ghi chú", key: "notes", width: 25 },
-    ];
+      { header: "Ghi chú", key: "notes", width: 25 }
+    );
+
     await exportToExcel(
-      `Ho-so-NCKH-${profile.name}-${new Date().getFullYear()}`,
+      `Ho-so-NCKH-${showFacultyMeta ? "MTCN" : profile.name}-${new Date().getFullYear()}`,
       "Hồ sơ NCKH",
       columns,
       filteredPublications
@@ -97,10 +141,20 @@ export const PublicationHistoryPage: React.FC = () => {
   };
 
   const handleExportCsv = () => {
-    const columns = [
+    const columns: Array<{ header: string; key: string }> = [
       { header: "Năm", key: "year" },
       { header: "Tên công trình", key: "title" },
       { header: "Loại hình", key: "type" },
+    ];
+
+    if (showFacultyMeta) {
+      columns.push(
+        { header: "Giảng viên", key: "userName" },
+        { header: "Email", key: "userEmail" }
+      );
+    }
+
+    columns.push(
       { header: "Vai trò", key: "role" },
       { header: "Tác giả / Đồng tác giả", key: "coAuthors" },
       { header: "Tạp chí / Hội thảo", key: "journalOrConference" },
@@ -108,10 +162,11 @@ export const PublicationHistoryPage: React.FC = () => {
       { header: "ISBN/ISSN", key: "isbn" },
       { header: "DOI", key: "doi" },
       { header: "Indexing", key: "indexing" },
-      { header: "Link", key: "link" },
-    ];
+      { header: "Link", key: "link" }
+    );
+
     exportToCsv(
-      `Ho-so-NCKH-${profile.name}-${new Date().getFullYear()}`,
+      `Ho-so-NCKH-${showFacultyMeta ? "MTCN" : profile.name}-${new Date().getFullYear()}`,
       columns,
       filteredPublications
     );
@@ -132,6 +187,7 @@ export const PublicationHistoryPage: React.FC = () => {
       alert("Lỗi xóa công trình: " + err.message);
     }
   };
+
 
   return (
     <div className="app-container">
@@ -193,11 +249,52 @@ export const PublicationHistoryPage: React.FC = () => {
               type="text"
               className="form-control"
               style={{ paddingLeft: 38 }}
-              placeholder="Tìm kiếm công trình, tạp chí, nhà xuất bản..."
+              placeholder="Tìm kiếm công trình, giảng viên, tạp chí..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
+
+          {/* Staff: Lecturer Filter */}
+          {isStaff ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Users size={16} color="var(--primary)" />
+              <span style={{ fontSize: "0.85rem", color: "var(--muted)", fontWeight: 600 }}>Giảng viên:</span>
+              <select
+                className="form-control"
+                value={selectedLecturerId}
+                onChange={(e) => setSelectedLecturerId(e.target.value)}
+                style={{ width: "auto" }}
+              >
+                <option value="all">Toàn bộ khoa ({activeLecturers.length} GV)</option>
+                {activeLecturers.map((l) => (
+                  <option key={l.id} value={l.uid || l.id}>
+                    {l.name} ({l.email})
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            /* Lecturer: Personal vs Faculty Toggle */
+            <div style={{ display: "flex", gap: 4, background: "#f1f5f9", padding: 3, borderRadius: 6 }}>
+              <button
+                type="button"
+                className={`btn btn-sm ${viewScope === "personal" ? "btn-primary" : "btn-secondary"}`}
+                style={{ minHeight: 32, padding: "4px 10px", fontSize: "0.8125rem" }}
+                onClick={() => setViewScope("personal")}
+              >
+                Hồ sơ của tôi
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${viewScope === "faculty" ? "btn-primary" : "btn-secondary"}`}
+                style={{ minHeight: 32, padding: "4px 10px", fontSize: "0.8125rem" }}
+                onClick={() => setViewScope("faculty")}
+              >
+                Toàn khoa
+              </button>
+            </div>
+          )}
 
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Filter size={16} color="var(--primary)" />
@@ -260,6 +357,7 @@ export const PublicationHistoryPage: React.FC = () => {
             <thead>
               <tr>
                 <th style={{ width: 70 }}>Năm</th>
+                {showFacultyMeta && <th>Giảng viên</th>}
                 <th>Tên công trình</th>
                 <th>Loại hình</th>
                 <th>Vai trò</th>
@@ -269,74 +367,91 @@ export const PublicationHistoryPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredPublications.map((pub) => (
-                <tr key={pub.id}>
-                  <td style={{ fontWeight: 800, color: "var(--primary)" }}>{pub.year}</td>
-                  <td>
-                    <div style={{ fontWeight: 600, color: "var(--text-main)", marginBottom: 4 }}>
-                      {pub.title}
-                    </div>
-                    {pub.coAuthors && (
-                      <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
-                        Tác giả: {pub.coAuthors}
+              {filteredPublications.map((pub) => {
+                const canModify = isStaff || pub.userId === profile.uid;
+                return (
+                  <tr key={pub.id}>
+                    <td style={{ fontWeight: 800, color: "var(--primary)" }}>{pub.year}</td>
+                    {showFacultyMeta && (
+                      <td>
+                        <div style={{ fontWeight: 600, color: "var(--primary)", fontSize: "0.875rem" }}>
+                          {pub.userName}
+                        </div>
+                        <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                          {pub.userEmail}
+                        </div>
+                      </td>
+                    )}
+                    <td>
+                      <div style={{ fontWeight: 600, color: "var(--text-main)", marginBottom: 4 }}>
+                        {pub.title}
                       </div>
-                    )}
-                    {pub.link && (
-                      <a
-                        href={pub.link}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ fontSize: "0.75rem", display: "inline-flex", alignItems: "center", gap: 3, marginTop: 2 }}
-                      >
-                        Xem bài báo <ExternalLink size={10} />
-                      </a>
-                    )}
-                  </td>
-                  <td>
-                    <span className="badge badge-neutral" style={{ fontWeight: 600 }}>{pub.type}</span>
-                  </td>
-                  <td>{pub.role}</td>
-                  <td>
-                    <div style={{ fontSize: "0.85rem" }}>
-                      {pub.journalOrConference || pub.publisher || "—"}
-                    </div>
-                    {(pub.volume || pub.issue) && (
-                      <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
-                        {pub.volume ? `Vol. ${pub.volume} ` : ""}{pub.issue ? `No. ${pub.issue}` : ""}
+                      {pub.coAuthors && (
+                        <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                          Tác giả: {pub.coAuthors}
+                        </div>
+                      )}
+                      {pub.link && (
+                        <a
+                          href={pub.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ fontSize: "0.75rem", display: "inline-flex", alignItems: "center", gap: 3, marginTop: 2 }}
+                        >
+                          Xem bài báo <ExternalLink size={10} />
+                        </a>
+                      )}
+                    </td>
+                    <td>
+                      <span className="badge badge-neutral" style={{ fontWeight: 600 }}>{pub.type}</span>
+                    </td>
+                    <td>{pub.role}</td>
+                    <td>
+                      <div style={{ fontSize: "0.85rem" }}>
+                        {pub.journalOrConference || pub.publisher || "—"}
                       </div>
-                    )}
-                  </td>
-                  <td>
-                    {pub.indexing ? (
-                      <span className="badge" style={{ background: "#e0f2fe", color: "#0369a1", fontWeight: 600 }}>
-                        {pub.indexing}
-                      </span>
-                    ) : (
-                      <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>—</span>
-                    )}
-                  </td>
-                  <td style={{ textAlign: "right" }}>
-                    <div style={{ display: "inline-flex", gap: 6 }}>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm btn-icon"
-                        onClick={() => setEditingPub(pub)}
-                        title="Sửa công trình"
-                      >
-                        <Edit2 size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-outline-danger btn-sm btn-icon"
-                        onClick={() => handleDelete(pub)}
-                        title="Xóa công trình"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                      {(pub.volume || pub.issue) && (
+                        <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                          {pub.volume ? `Vol. ${pub.volume} ` : ""}{pub.issue ? `No. ${pub.issue}` : ""}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      {pub.indexing ? (
+                        <span className="badge" style={{ background: "#e0f2fe", color: "#0369a1", fontWeight: 600 }}>
+                          {pub.indexing}
+                        </span>
+                      ) : (
+                        <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      {canModify ? (
+                        <div style={{ display: "inline-flex", gap: 6 }}>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm btn-icon"
+                            onClick={() => setEditingPub(pub)}
+                            title="Sửa công trình"
+                          >
+                            <Edit2 size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-outline-danger btn-sm btn-icon"
+                            onClick={() => handleDelete(pub)}
+                            title="Xóa công trình"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: "0.75rem", color: "var(--muted)" }}>Chỉ đọc</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -356,6 +471,7 @@ export const PublicationHistoryPage: React.FC = () => {
         userId={profile.uid}
         userEmail={profile.email}
         userName={profile.name}
+        lecturers={isStaff ? activeLecturers : undefined}
       />
 
       <PublicationModal

@@ -4,8 +4,9 @@ import {
   fetchAllUsers,
   setUserRole,
   fetchAuditLogs,
+  fetchImports,
 } from "../firebase/firestore";
-import type { UserProfile, AuditLog, UserRole } from "../types";
+import type { UserProfile, AuditLog, ImportBatch, UserRole } from "../types";
 import { formatDateVN } from "../utils/date";
 import {
   ShieldAlert,
@@ -16,12 +17,14 @@ import {
   Database,
   Lock,
   Search,
+  FileSpreadsheet,
 } from "lucide-react";
 
 export const OwnerPage: React.FC = () => {
   const { profile } = useAuth();
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [importBatches, setImportBatches] = useState<ImportBatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [auditSearch, setAuditSearch] = useState("");
   const [message, setMessage] = useState("");
@@ -30,12 +33,14 @@ export const OwnerPage: React.FC = () => {
   const loadOwnerData = async () => {
     setLoading(true);
     try {
-      const [u, logs] = await Promise.all([
+      const [u, logs, imp] = await Promise.all([
         fetchAllUsers(),
         fetchAuditLogs(150),
+        fetchImports(50),
       ]);
       setUsers(u);
       setAuditLogs(logs);
+      setImportBatches(imp);
     } catch (err: any) {
       console.error(err);
       setError("Lỗi tải dữ liệu Quản trị Owner.");
@@ -63,6 +68,14 @@ export const OwnerPage: React.FC = () => {
   const handleRoleChange = async (targetUser: UserProfile, newRole: UserRole) => {
     if (targetUser.uid === profile.uid && newRole !== "owner") {
       alert("Bạn không thể tự hạ quyền Owner của chính mình!");
+      return;
+    }
+
+    if (
+      (targetUser.email === "tranquanghai@tdtu.edu.vn" || targetUser.role === "owner") &&
+      newRole !== "owner"
+    ) {
+      alert("Không thể thay đổi hoặc hạ quyền của tài khoản Owner sáng lập hệ thống!");
       return;
     }
 
@@ -284,6 +297,60 @@ export const OwnerPage: React.FC = () => {
                       </span>
                     </td>
                     <td style={{ fontSize: "0.85rem" }}>{log.summary}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Import Batches History */}
+      <div className="card" style={{ marginTop: 24 }}>
+        <h3 style={{ fontSize: "1.15rem", color: "var(--primary)", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+          <FileSpreadsheet size={18} /> Lịch sử các Đợt Import Dữ liệu
+        </h3>
+
+        {importBatches.length === 0 ? (
+          <div style={{ color: "var(--muted)", padding: 24, textAlign: "center" }}>
+            Chưa có đợt import dữ liệu nào được ghi nhận.
+          </div>
+        ) : (
+          <div className="table-container" style={{ maxHeight: 320, overflowY: "auto" }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th style={{ width: 140 }}>Thời gian</th>
+                  <th>Tên tệp</th>
+                  <th>Phân loại</th>
+                  <th>Người thực hiện</th>
+                  <th>Tổng dòng</th>
+                  <th>Thành công</th>
+                  <th>Lỗi / Bỏ qua</th>
+                </tr>
+              </thead>
+              <tbody>
+                {importBatches.map((b) => (
+                  <tr key={b.id}>
+                    <td style={{ fontSize: "0.8rem", color: "var(--muted)", whiteSpace: "nowrap" }}>
+                      {new Date(b.timestamp).toLocaleString("vi-VN")}
+                    </td>
+                    <td style={{ fontWeight: 600 }}>{b.fileName}</td>
+                    <td>
+                      <span className="badge badge-neutral">{b.type}</span>
+                    </td>
+                    <td style={{ fontSize: "0.85rem" }}>{b.importedBy}</td>
+                    <td>{b.totalRows}</td>
+                    <td>
+                      <span className="badge badge-success">{b.successCount}</span>
+                    </td>
+                    <td>
+                      {b.errorCount > 0 ? (
+                        <span className="badge badge-danger">{b.errorCount}</span>
+                      ) : (
+                        <span className="badge badge-neutral">0</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
