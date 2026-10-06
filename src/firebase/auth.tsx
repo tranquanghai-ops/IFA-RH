@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import {
   GoogleAuthProvider,
   onAuthStateChanged,
@@ -10,6 +10,7 @@ import {
   doc,
   getDoc,
   setDoc,
+  deleteDoc,
   collection,
   query,
   where,
@@ -20,9 +21,18 @@ import { auth, firestore } from "./config";
 import { isAllowedTDTUEmail, NOMINATED_OWNER_EMAIL } from "./policy";
 import type { UserProfile } from "../types";
 
+export type AuthStatus =
+  | "initializing"
+  | "unauthenticated"
+  | "authenticated"
+  | "unprovisioned"
+  | "invalid_domain"
+  | "disabled";
+
 interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
+  authStatus: AuthStatus;
   loading: boolean;
   error: string;
   login: () => Promise<void>;
@@ -41,140 +51,176 @@ export const useAuth = () => {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>("initializing");
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
 
-  const loadUserProfile = async (firebaseUser: User) => {
-    try {
-      const email = firebaseUser.email?.trim().toLowerCase() || "";
-      if (!isAllowedTDTUEmail(email)) {
-        await signOut(auth);
-        setUser(null);
-        setProfile(null);
-        setError("Chỉ chấp nhận tài khoản email @tdtu.edu.vn.");
-        setLoading(false);
-        return;
-      }
+  // Lock to prevent concurrent profile fetches / race conditions
+  const inFlightPromiseRef = useRef<Promise<void> | null>(null);
 
-      // 1. Direct doc lookup by UID
-      const userDocRef = doc(firestore, "users", firebaseUser.uid);
-      const userSnap = await getDoc(userDocRef);
-
-      if (userSnap.exists()) {
-        const data = userSnap.data() as UserProfile;
-        if (!data.active) {
-          await signOut(auth);
-          setUser(null);
-          setProfile(null);
-          setError("Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ Ban Chủ nhiệm.");
-          setLoading(false);
-          return;
-        }
-        setProfile({ ...data, id: userSnap.id, uid: firebaseUser.uid });
-        setError("");
-        setLoading(false);
-        return;
-      }
-
-      // 2. Lookup provisioned by email
-      const q = query(collection(firestore, "users"), where("email", "==", email), limit(1));
-      const querySnap = await getDocs(q);
-
-      if (!querySnap.empty) {
-        const provDoc = querySnap.docs[0];
-        const provData = provDoc.data() as UserProfile;
-
-        if (!provData.active) {
-          await signOut(auth);
-          setUser(null);
-          setProfile(null);
-          setError("Tài khoản của bạn đã bị vô hiệu hóa.");
-          setLoading(false);
-          return;
-        }
-
-        // Link provisioned data to actual UID
-        const updatedProfile: UserProfile = {
-          id: firebaseUser.uid,
-          uid: firebaseUser.uid,
-          email,
-          name: provData.name || firebaseUser.displayName || email,
-          role: provData.role || "lecturer",
-          department: provData.department || "",
-          academicDegree: provData.academicDegree || "",
-          orcid: provData.orcid || "",
-          googleScholar: provData.googleScholar || "",
-          researchGate: provData.researchGate || "",
-          website: provData.website || "",
-          active: true,
-          photoURL: firebaseUser.photoURL || "",
-          createdAt: provData.createdAt || new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          linkedAt: new Date().toISOString(),
-        };
-
-        await setDoc(userDocRef, updatedProfile);
-        setProfile(updatedProfile);
-        setError("");
-        setLoading(false);
-        return;
-      }
-
-      // 3. Owner bootstrap check: Check if an Owner already exists in system
-      const ownerQuery = query(
-        collection(firestore, "users"),
-        where("role", "==", "owner"),
-        limit(1)
-      );
-      const ownerSnap = await getDocs(ownerQuery);
-
-      if (ownerSnap.empty && email === NOMINATED_OWNER_EMAIL.toLowerCase()) {
-        // Safe bootstrap of the first Owner
-        const now = new Date().toISOString();
-        const ownerProfile: UserProfile = {
-          id: firebaseUser.uid,
-          uid: firebaseUser.uid,
-          email,
-          name: firebaseUser.displayName || "Trần Quang Hải",
-          role: "owner",
-          department: "Khoa Mỹ thuật Công nghiệp",
-          academicDegree: "ThS",
-          active: true,
-          photoURL: firebaseUser.photoURL || "",
-          createdAt: now,
-          updatedAt: now,
-        };
-        await setDoc(userDocRef, ownerProfile);
-        setProfile(ownerProfile);
-        setError("");
-        setLoading(false);
-        return;
-      }
-
-      // 4. Unauthorized: email is TDTU but not pre-provisioned in system
-      await signOut(auth);
-      setUser(null);
-      setProfile(null);
-      setError(
-        "Tài khoản của bạn chưa được cấp quyền trong hệ thống IFA-RH. Vui lòng liên hệ Quản trị viên Khoa Mỹ thuật Công nghiệp để được thêm vào danh sách."
-      );
-      setLoading(false);
-    } catch (err: any) {
-      console.error("Error loading user profile:", err);
-      setError(err.message || "Lỗi kiểm tra quyền truy cập.");
-      setProfile(null);
-      setLoading(false);
+  const loadUserProfile = async (firebaseUser: User): Promise<void> => {
+    if (inFlightPromiseRef.current) {
+      return inFlightPromiseRef.current;
     }
+
+    const task = (async () => {
+      try {
+        const email = firebaseUser.email?.trim().toLowerCase() || "";
+
+        // Check 1: Domain verification
+        if (!isAllowedTDTUEmail(email)) {
+          setUser(firebaseUser);
+          setProfile(null);
+          setAuthStatus("invalid_domain");
+          setError(`Chỉ chấp nhận tài khoản email @tdtu.edu.vn của Trường Đại học Tôn Đức Thắng. Tài khoản hiện tại (${email}) không hợp lệ.`);
+          setLoading(false);
+          return;
+        }
+
+        // Check 2: Direct document lookup by Firebase Auth UID
+        const userDocRef = doc(firestore, "users", firebaseUser.uid);
+        const userSnap = await getDoc(userDocRef);
+
+        if (userSnap.exists()) {
+          const data = userSnap.data() as UserProfile;
+          if (!data.active) {
+            setUser(firebaseUser);
+            setProfile(null);
+            setAuthStatus("disabled");
+            setError("Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ Ban Chủ nhiệm.");
+            setLoading(false);
+            return;
+          }
+          const loadedProfile: UserProfile = { ...data, id: userSnap.id, uid: firebaseUser.uid };
+          setUser(firebaseUser);
+          setProfile(loadedProfile);
+          setAuthStatus("authenticated");
+          setError("");
+          setLoading(false);
+          return;
+        }
+
+        // Check 3: Nominated Owner Bootstrap
+        if (email === NOMINATED_OWNER_EMAIL.toLowerCase()) {
+          // Check if there is an existing provisioned doc for the owner
+          const provQ = query(collection(firestore, "users"), where("email", "==", email), limit(1));
+          const provSnap = await getDocs(provQ);
+          const provDoc = !provSnap.empty ? provSnap.docs[0] : null;
+          const provData = provDoc ? (provDoc.data() as Partial<UserProfile>) : null;
+
+          const now = new Date().toISOString();
+          const ownerProfile: UserProfile = {
+            id: firebaseUser.uid,
+            uid: firebaseUser.uid,
+            email,
+            name: provData?.name || firebaseUser.displayName || "Trần Quang Hải",
+            role: "owner",
+            department: provData?.department || "Khoa Mỹ thuật Công nghiệp",
+            academicDegree: provData?.academicDegree || "ThS",
+            active: true,
+            photoURL: firebaseUser.photoURL || "",
+            createdAt: provData?.createdAt || now,
+            updatedAt: now,
+            linkedAt: now,
+          };
+
+          await setDoc(userDocRef, ownerProfile);
+
+          // Clean up old provisional doc if its ID differs from UID
+          if (provDoc && provDoc.id !== firebaseUser.uid) {
+            await deleteDoc(provDoc.ref).catch((e) => console.warn("Owner prov doc cleanup note:", e));
+          }
+
+          setUser(firebaseUser);
+          setProfile(ownerProfile);
+          setAuthStatus("authenticated");
+          setError("");
+          setLoading(false);
+          return;
+        }
+
+        // Check 4: Pre-provisioned user lookup by email
+        const q = query(collection(firestore, "users"), where("email", "==", email), limit(1));
+        const querySnap = await getDocs(q);
+
+        if (!querySnap.empty) {
+          const provDoc = querySnap.docs[0];
+          const provData = provDoc.data() as UserProfile;
+
+          if (!provData.active) {
+            setUser(firebaseUser);
+            setProfile(null);
+            setAuthStatus("disabled");
+            setError("Tài khoản của bạn đã bị vô hiệu hóa.");
+            setLoading(false);
+            return;
+          }
+
+          // Link provisioned data to actual Firebase Auth UID
+          const updatedProfile: UserProfile = {
+            id: firebaseUser.uid,
+            uid: firebaseUser.uid,
+            email,
+            name: provData.name || firebaseUser.displayName || email,
+            role: provData.role || "lecturer",
+            department: provData.department || "",
+            academicDegree: provData.academicDegree || "",
+            orcid: provData.orcid || "",
+            googleScholar: provData.googleScholar || "",
+            researchGate: provData.researchGate || "",
+            website: provData.website || "",
+            active: true,
+            photoURL: firebaseUser.photoURL || "",
+            createdAt: provData.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            linkedAt: new Date().toISOString(),
+          };
+
+          await setDoc(userDocRef, updatedProfile);
+
+          // Delete provisional document if ID differs to prevent duplicates
+          if (provDoc.id !== firebaseUser.uid) {
+            await deleteDoc(provDoc.ref).catch((e) => console.warn("Lecturer prov doc cleanup note:", e));
+          }
+
+          setUser(firebaseUser);
+          setProfile(updatedProfile);
+          setAuthStatus("authenticated");
+          setError("");
+          setLoading(false);
+          return;
+        }
+
+        // Check 5: Account is @tdtu.edu.vn but NOT provisioned in system roster
+        setUser(firebaseUser);
+        setProfile(null);
+        setAuthStatus("unprovisioned");
+        setError("Tài khoản này chưa được cấp quyền sử dụng IFA-RH.");
+        setLoading(false);
+      } catch (err: any) {
+        console.error("Error loading user profile:", err);
+        setError(err.message || "Lỗi kiểm tra quyền truy cập.");
+        setProfile(null);
+        setLoading(false);
+      } finally {
+        inFlightPromiseRef.current = null;
+      }
+    })();
+
+    inFlightPromiseRef.current = task;
+    return task;
   };
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
       if (currentUser) {
         setLoading(true);
         await loadUserProfile(currentUser);
       } else {
+        setUser(null);
         setProfile(null);
+        setAuthStatus("unauthenticated");
+        setError("");
         setLoading(false);
       }
     });
@@ -188,13 +234,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
-      const result = await signInWithPopup(auth, provider);
-      if (result.user) {
-        await loadUserProfile(result.user);
-      }
+      await signInWithPopup(auth, provider);
+      // onAuthStateChanged will handle profile loading deterministically
     } catch (err: any) {
       console.error("Login popup error:", err);
-      if (err.code !== "auth/popup-closed-by-user") {
+      if (err.code === "auth/popup-closed-by-user") {
+        // User voluntarily dismissed popup, keep state clean
+        setError("");
+      } else {
         setError(err.message || "Đăng nhập thất bại.");
       }
       setLoading(false);
@@ -206,6 +253,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await signOut(auth);
       setUser(null);
       setProfile(null);
+      setAuthStatus("unauthenticated");
       setError("");
     } catch (err: any) {
       console.error("Logout error:", err);
@@ -223,6 +271,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         user,
         profile,
+        authStatus,
         loading,
         error,
         login,

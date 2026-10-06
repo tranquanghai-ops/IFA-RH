@@ -22,4 +22,23 @@ describe("AUTH & Access Control Policies", () => {
     expect(isAllowedTDTUEmail("TranQuangHai@TDTU.EDU.VN")).toBe(true);
     expect(isAllowedTDTUEmail("  lecturer@tdtu.edu.vn  ")).toBe(true);
   });
+
+  it("should differentiate unprovisioned vs provisioned status for TDTU accounts", () => {
+    const mockRoster = ["tranquanghai@tdtu.edu.vn", "lecturer_a@tdtu.edu.vn"];
+    const checkProvisioned = (email: string) => {
+      const normalized = email.trim().toLowerCase();
+      if (!isAllowedTDTUEmail(normalized)) return "invalid_domain";
+      if (normalized === NOMINATED_OWNER_EMAIL.toLowerCase()) return "owner_bootstrap";
+      return mockRoster.includes(normalized) ? "provisioned" : "unprovisioned";
+    };
+
+    // Case 1: Owner bootstrap
+    expect(checkProvisioned("tranquanghai@tdtu.edu.vn")).toBe("owner_bootstrap");
+    // Case 2: Provisioned lecturer
+    expect(checkProvisioned("lecturer_a@tdtu.edu.vn")).toBe("provisioned");
+    // Case 3: Unprovisioned lecturer
+    expect(checkProvisioned("random_staff@tdtu.edu.vn")).toBe("unprovisioned");
+    // Case 4: Non-TDTU
+    expect(checkProvisioned("outsider@gmail.com")).toBe("invalid_domain");
+  });
 });

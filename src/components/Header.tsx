@@ -215,6 +215,27 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onSelectTab }) => {
                   <LogOut size={16} />
                 </button>
               </div>
+            ) : user ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span
+                  className="role-pill"
+                  style={{ backgroundColor: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}
+                  title="Chưa được phân quyền sử dụng IFA-RH"
+                >
+                  CHƯA CẤP QUYỀN
+                </span>
+                <span style={{ fontSize: "0.85rem", color: "var(--muted)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={user.email || ""}>
+                  {user.email}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-outline-danger btn-sm btn-icon"
+                  onClick={logout}
+                  title="Đăng xuất"
+                >
+                  <LogOut size={16} />
+                </button>
+              </div>
             ) : (
               <button
                 type="button"

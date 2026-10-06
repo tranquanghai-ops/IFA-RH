@@ -573,7 +573,11 @@ service cloud.firestore {
         )
       );
 
-      allow delete: if isOwner();
+      allow delete: if isOwner() || (
+        isAuthenticated() &&
+        resource.data.email == request.auth.token.email &&
+        resource.id != request.auth.uid
+      );
     }
 
     // 2. Opportunities collection
