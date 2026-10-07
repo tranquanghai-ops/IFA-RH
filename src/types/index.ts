@@ -43,6 +43,8 @@ export type OpportunitySourceType = "SPARK" | "ADMIN";
 
 export type OpportunityStatus = "published" | "archived";
 
+export type OpportunityFeeStatus = "SPECIFIED" | "UNKNOWN" | "FREE";
+
 export interface Opportunity {
   id: string;
   title: string;
@@ -60,9 +62,15 @@ export interface Opportunity {
   eventDate?: string;
   location?: string; // Địa điểm / Online / Hybrid
   fee?: string;
+  publicationFee?: string; // Phí đăng bài / xuất bản
+  registrationFee?: string; // Phí tham dự / đăng ký
+  feeStatus?: OpportunityFeeStatus;
+  feeSourceUrl?: string; // Link bảng phí chính thức của BTC
   publicationFormat?: string; // ISBN, ISSN, Scopus, WoS, v.v.
   indexing?: string;
   content: string;
+  detailedContent?: string; // Phân tích nội dung chi tiết
+  topicsDetailed?: string[]; // Danh sách các chủ đề / tracks chi tiết
   submissionUrl?: string;
   sourceUrl?: string;
   directions?: string; // Gợi ý hướng bài cho GV MTCN
@@ -99,9 +107,15 @@ export interface OpportunityCandidate {
   eventDate?: string;
   location?: string;
   fee?: string;
+  publicationFee?: string; // Phí đăng bài / xuất bản
+  registrationFee?: string; // Phí tham dự / đăng ký
+  feeStatus?: OpportunityFeeStatus;
+  feeSourceUrl?: string; // Link bảng phí chính thức của BTC
   publicationFormat?: string;
   indexing?: string;
   content: string;
+  detailedContent?: string; // Phân tích nội dung chi tiết
+  topicsDetailed?: string[]; // Danh sách các chủ đề / tracks chi tiết
   submissionUrl?: string;
   sourceUrl?: string;
   directions?: string;

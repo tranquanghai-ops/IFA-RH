@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import type { OpportunityCandidate } from "../types";
 import { Modal } from "./Modal";
 import { formatDateVN } from "../utils/date";
+import { getPublicationFeeDisplay, getRegistrationFeeDisplay } from "../utils/fee";
 import {
   ExternalLink,
   CheckCircle,
@@ -12,6 +13,8 @@ import {
   Calendar,
   FileText,
   Lightbulb,
+  DollarSign,
+  Layers,
 } from "lucide-react";
 
 interface CandidateReviewModalProps {
@@ -230,9 +233,9 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
           }}
         >
           <div>
-            <div style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700 }}>HẠN NỘP BÀI (DEADLINE)</div>
+            <div style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700 }}>HẠN NỘP TOÀN VĂN</div>
             <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--danger)" }}>
-              {formatDateVN(candidate.deadline) || "Chưa rõ"}
+              {formatDateVN(candidate.fullPaperDeadline || candidate.deadline) || "Chưa có thông tin"}
             </div>
           </div>
           {candidate.abstractDeadline && (
@@ -241,10 +244,16 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
               <div style={{ fontSize: "0.9rem", fontWeight: 600 }}>{formatDateVN(candidate.abstractDeadline)}</div>
             </div>
           )}
+          {candidate.registrationDeadline && (
+            <div>
+              <div style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700 }}>HẠN ĐĂNG KÝ</div>
+              <div style={{ fontSize: "0.9rem", fontWeight: 600 }}>{formatDateVN(candidate.registrationDeadline)}</div>
+            </div>
+          )}
           {candidate.eventDate && (
             <div>
               <div style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700 }}>NGÀY TỔ CHỨC</div>
-              <div style={{ fontSize: "0.9rem", fontWeight: 600 }}>{formatDateVN(candidate.eventDate)}</div>
+              <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "var(--teal)" }}>{formatDateVN(candidate.eventDate)}</div>
             </div>
           )}
           {candidate.publicationFormat && (
@@ -253,6 +262,32 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
               <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "var(--teal)" }}>{candidate.publicationFormat}</div>
             </div>
           )}
+        </div>
+
+        {/* Fees Section */}
+        <div
+          style={{
+            background: "#f8fafc",
+            border: "1px solid #e2e8f0",
+            borderRadius: 8,
+            padding: "12px 16px",
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: 12,
+          }}
+        >
+          <div>
+            <div style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700 }}>PHÍ ĐĂNG BÀI / XUẤT BẢN</div>
+            <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>
+              {getPublicationFeeDisplay(candidate)}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700 }}>PHÍ THAM DỰ / ĐẠI BIỂU</div>
+            <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>
+              {getRegistrationFeeDisplay(candidate)}
+            </div>
+          </div>
         </div>
 
         {/* Suitability */}

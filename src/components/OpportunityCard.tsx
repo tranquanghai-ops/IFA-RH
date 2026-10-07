@@ -1,6 +1,7 @@
 import React from "react";
 import type { Opportunity } from "../types";
 import { formatDateVN, getOpportunityDeadlineInfo } from "../utils/date";
+import { getFeeStatusInfo } from "../utils/fee";
 import {
   Calendar,
   Building,
@@ -8,6 +9,7 @@ import {
   Clock,
   BookOpen,
   Award,
+  DollarSign,
 } from "lucide-react";
 
 interface OpportunityCardProps {
@@ -20,6 +22,7 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
   onViewDetail,
 }) => {
   const deadlineInfo = getOpportunityDeadlineInfo(opportunity);
+  const feeStatusInfo = getFeeStatusInfo(opportunity);
 
   // Parse suitability badge
   const getSuitabilityBadge = () => {
@@ -264,9 +267,9 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
         </div>
       )}
 
-      {/* 6. Indexing / Publication format badge */}
-      {(opportunity.indexing || opportunity.publicationFormat) && (
-        <div style={{ marginBottom: 12 }}>
+      {/* 6. Indexing & Fee badges */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
+        {(opportunity.indexing || opportunity.publicationFormat) && (
           <div
             style={{
               display: "inline-flex",
@@ -285,8 +288,26 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
             <Award size={13} style={{ flexShrink: 0 }} />
             <span>{opportunity.indexing || opportunity.publicationFormat}</span>
           </div>
+        )}
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            fontSize: "0.74rem",
+            background: feeStatusInfo.bg,
+            color: feeStatusInfo.color,
+            border: `1px solid ${feeStatusInfo.border}`,
+            padding: "3px 8px",
+            borderRadius: 4,
+            fontWeight: 600,
+            lineHeight: 1.3,
+          }}
+        >
+          <DollarSign size={12} style={{ flexShrink: 0 }} />
+          <span>{feeStatusInfo.label}</span>
         </div>
-      )}
+      </div>
 
       {/* 7. Deadlines & Schedule box (Priority: Abstract -> Full Paper -> Registration -> Event) */}
       <div

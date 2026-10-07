@@ -551,6 +551,12 @@ export async function approveCandidate(
   if (candidate.eventDate) oppData.eventDate = candidate.eventDate;
   if (candidate.location) oppData.location = candidate.location;
   if (candidate.fee) oppData.fee = candidate.fee;
+  if (candidate.publicationFee) oppData.publicationFee = candidate.publicationFee;
+  if (candidate.registrationFee) oppData.registrationFee = candidate.registrationFee;
+  if (candidate.feeStatus) oppData.feeStatus = candidate.feeStatus;
+  if (candidate.feeSourceUrl) oppData.feeSourceUrl = candidate.feeSourceUrl;
+  if (candidate.detailedContent) oppData.detailedContent = candidate.detailedContent;
+  if (candidate.topicsDetailed) oppData.topicsDetailed = candidate.topicsDetailed;
   if (candidate.publicationFormat) oppData.publicationFormat = candidate.publicationFormat;
   if (candidate.indexing) oppData.indexing = candidate.indexing;
   if (candidate.submissionUrl) oppData.submissionUrl = candidate.submissionUrl;
