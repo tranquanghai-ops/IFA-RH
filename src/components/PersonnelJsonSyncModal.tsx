@@ -4,24 +4,23 @@ import type {
   SharedPersonnelExportPayload,
   PersonnelSyncLog,
   UserRole,
+  RowValidationStatus,
+  SkippedRowDetail,
 } from "../types";
 import { Modal } from "./Modal";
 import { syncSharedPersonnelBatch } from "../firebase/firestore";
 import { formatDateVN } from "../utils/date";
 import {
-  Upload,
   FileJson,
   CheckCircle2,
   AlertTriangle,
   XCircle,
-  Users,
   Check,
   RefreshCw,
   Info,
   ShieldCheck,
-  UserPlus,
-  UserMinus,
-  Sparkles,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 
 interface PersonnelJsonSyncModalProps {
@@ -49,6 +48,8 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
   const [fileName, setFileName] = useState("");
   const [payload, setPayload] = useState<SharedPersonnelExportPayload | null>(null);
   const [diffItems, setDiffItems] = useState<DiffItem[]>([]);
+  const [skippedRows, setSkippedRows] = useState<SkippedRowDetail[]>([]);
+  const [showSkippedDetails, setShowSkippedDetails] = useState(false);
   const [filterTab, setFilterTab] = useState<"all" | "changes" | "create" | "deactivate">("all");
   const [syncing, setSyncing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -59,6 +60,8 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
     setFileName("");
     setPayload(null);
     setDiffItems([]);
+    setSkippedRows([]);
+    setShowSkippedDetails(false);
     setFilterTab("all");
     setSyncing(false);
     setErrorMsg(null);
@@ -82,11 +85,11 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
       let json: any;
       try {
         json = JSON.parse(text);
-      } catch (parseErr) {
+      } catch {
         throw new Error("Tệp không đúng định dạng JSON hợp lệ.");
       }
 
-      // Validate root schema
+      // ==================== FILE-LEVEL VALIDATIONS ====================
       if (!json || typeof json !== "object") {
         throw new Error("Nội dung tệp JSON không hợp lệ.");
       }
@@ -109,32 +112,82 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
         throw new Error("Tệp danh bạ không chứa bất kỳ bản ghi nhân sự nào.");
       }
 
-      // Build existing lookup map by emailNormalized
+      // ==================== ROW-LEVEL CLASSIFICATIONS ====================
       const existingMap = new Map<string, SharedPersonnelRecord>();
       existingPersonnel.forEach((p) => {
-        const key = (p.emailNormalized || p.displayName || "").trim().toLowerCase();
+        const key = (p.emailNormalized || "").trim().toLowerCase();
         if (key) existingMap.set(key, p);
       });
 
       const parsedRecords: SharedPersonnelRecord[] = [];
       const computedDiffs: DiffItem[] = [];
+      const skippedList: SkippedRowDetail[] = [];
+      const seenEmailsInFile = new Set<string>();
+
+      const emailRegex = /^[a-z0-9._%+-]+@tdtu\.edu\.vn$/;
 
       for (let i = 0; i < rawList.length; i++) {
         const item = rawList[i];
-        const email = String(item.emailNormalized || item.email || "").trim().toLowerCase();
+        const rowNumber = i + 1;
         const displayName = String(item.displayName || item.name || "").trim();
+        const rawEmail = item.emailNormalized ?? item.email;
+        const emailStr =
+          rawEmail !== undefined && rawEmail !== null
+            ? String(rawEmail).trim().toLowerCase()
+            : "";
 
-        if (!email || !email.endsWith("@tdtu.edu.vn")) {
-          throw new Error(
-            `Dòng #${i + 1}: Email "${email}" không hợp lệ hoặc không thuộc tên miền @tdtu.edu.vn.`
-          );
-        }
+        // Check 1: Missing display name
         if (!displayName) {
-          throw new Error(`Dòng #${i + 1} (${email}): Họ tên không được để trống.`);
+          skippedList.push({
+            rowNumber,
+            displayName: "—",
+            email: emailStr || "—",
+            status: "SKIPPED_INVALID_RECORD",
+            reason: "Thiếu họ tên giảng viên",
+          });
+          continue;
         }
+
+        // Check 2: Missing email
+        if (!emailStr) {
+          skippedList.push({
+            rowNumber,
+            displayName,
+            email: "—",
+            status: "SKIPPED_MISSING_EMAIL",
+            reason: "Thiếu email TDTU",
+          });
+          continue;
+        }
+
+        // Check 3: Invalid email format or non-tdtu domain
+        if (!emailRegex.test(emailStr)) {
+          skippedList.push({
+            rowNumber,
+            displayName,
+            email: emailStr,
+            status: "SKIPPED_INVALID_EMAIL",
+            reason: "Email không thuộc tên miền @tdtu.edu.vn",
+          });
+          continue;
+        }
+
+        // Check 4: Duplicate email in the same file
+        if (seenEmailsInFile.has(emailStr)) {
+          skippedList.push({
+            rowNumber,
+            displayName,
+            email: emailStr,
+            status: "SKIPPED_DUPLICATE_EMAIL",
+            reason: "Email bị trùng lặp trong tệp (đã giữ dòng đầu)",
+          });
+          continue;
+        }
+
+        seenEmailsInFile.add(emailStr);
 
         const validRecord: SharedPersonnelRecord = {
-          emailNormalized: email,
+          emailNormalized: emailStr,
           displayName,
           departmentId: String(item.departmentId || "").trim(),
           departmentName: String(item.departmentName || item.department || "Chưa phân ngành").trim(),
@@ -150,7 +203,7 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
         parsedRecords.push(validRecord);
 
         // Diff computation
-        const existing = existingMap.get(email);
+        const existing = existingMap.get(emailStr);
         if (!existing) {
           computedDiffs.push({
             record: validRecord,
@@ -198,10 +251,11 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
         schemaVersion: 1,
         source: "IFA-WORK",
         generatedAt: json.generatedAt || new Date().toISOString(),
-        totalRecords: parsedRecords.length,
+        totalRecords: rawList.length,
         personnel: parsedRecords,
       });
       setDiffItems(computedDiffs);
+      setSkippedRows(skippedList);
       setStep("preview");
     } catch (err: any) {
       console.error(err);
@@ -210,7 +264,11 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
   };
 
   const handleApplySync = async () => {
-    if (!payload || !payload.personnel.length) return;
+    if (!payload) return;
+    if (payload.personnel.length === 0) {
+      setErrorMsg("Không có bản ghi hợp lệ để đồng bộ.");
+      return;
+    }
     if (actor.role !== "owner") {
       setErrorMsg("Chỉ Owner mới có quyền cập nhật danh bạ từ IFA-WORK.");
       return;
@@ -220,10 +278,27 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
     setErrorMsg(null);
 
     try {
+      const stats = {
+        totalRows: payload.totalRecords,
+        validRows: payload.personnel.length,
+        skippedCount: skippedRows.length,
+        skippedMissingEmailCount: skippedRows.filter(
+          (s) => s.status === "SKIPPED_MISSING_EMAIL"
+        ).length,
+        skippedInvalidEmailCount: skippedRows.filter(
+          (s) => s.status === "SKIPPED_INVALID_EMAIL"
+        ).length,
+        skippedDuplicateEmailCount: skippedRows.filter(
+          (s) => s.status === "SKIPPED_DUPLICATE_EMAIL"
+        ).length,
+        errorsCount: 0,
+      };
+
       const log = await syncSharedPersonnelBatch(
         payload.personnel,
         fileName || "IFA-PERSONNEL.json",
-        actor
+        actor,
+        stats
       );
       setResultLog(log);
       setStep("done");
@@ -282,16 +357,18 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
                 type="button"
                 className="btn btn-primary"
                 onClick={handleApplySync}
-                disabled={syncing || diffItems.length === 0}
+                disabled={syncing || !payload || payload.personnel.length === 0}
               >
                 {syncing ? (
                   <>
                     <RefreshCw size={16} className="spin-animate" /> Đang đồng bộ...
                   </>
-                ) : (
+                ) : payload && payload.personnel.length > 0 ? (
                   <>
-                    <Check size={16} /> Xác nhận đồng bộ ({diffItems.length} bản ghi)
+                    <Check size={16} /> Xác nhận đồng bộ ({payload.personnel.length} bản ghi)
                   </>
+                ) : (
+                  "Không có bản ghi hợp lệ để đồng bộ"
                 )}
               </button>
             </div>
@@ -324,10 +401,10 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
             Danh bạ Giảng viên được quản lý tập trung tại <strong>IFA-WORK</strong>. Để cập nhật vào IFA-RH:
             <ol style={{ margin: "8px 0 0 20px", padding: 0 }}>
               <li>
-                Mở <strong>IFA-WORK</strong> &rarr; trang <em>Nhân sự</em> &rarr; bấm <strong>"Xuất danh bạ dùng chung"</strong> để tải về tệp <code>IFA-PERSONNEL.json</code>.
+                Mở <strong>IFA-WORK</strong> &rarr; trang <em>Nhân sự</em> &rarr; bấm <strong>"Xuất danh sách GV"</strong> để tải về tệp <code>IFA-PERSONNEL.json</code>.
               </li>
               <li>Chọn và tải tệp JSON đó vào khung bên dưới.</li>
-              <li>Hệ thống sẽ đối soát (diff preview) và cho bạn xem trước các thay đổi trước khi ghi dữ liệu.</li>
+              <li>Hệ thống sẽ đối soát (diff preview), chỉ nhập các dòng đủ điều kiện và bỏ qua các dòng chưa có email.</li>
             </ol>
           </div>
 
@@ -412,7 +489,7 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
             </div>
           </div>
 
-          {/* Safety Rule Notice */}
+          {/* Safety Policy Notice */}
           <div
             style={{
               background: "#ecfdf5",
@@ -432,131 +509,268 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
             </span>
           </div>
 
-          {/* KPI Summary Grid */}
+          {/* Skipped Rows Amber Notice (Non-blocking) */}
+          {skippedRows.length > 0 && (
+            <div
+              style={{
+                background: "#fffbeb",
+                border: "1px solid #fef3c7",
+                borderRadius: 8,
+                padding: "10px 14px",
+                fontSize: "0.85rem",
+                color: "#92400e",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: 8,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <AlertTriangle size={18} color="#d97706" style={{ flexShrink: 0 }} />
+                <span>
+                  Có <strong>{skippedRows.length}</strong> bản ghi chưa đủ điều kiện đồng bộ và sẽ được bỏ qua.
+                </span>
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setShowSkippedDetails((prev) => !prev)}
+                style={{ fontSize: "0.8rem", padding: "4px 8px", display: "inline-flex", alignItems: "center", gap: 4 }}
+              >
+                {showSkippedDetails ? (
+                  <>
+                    Ẩn danh sách bỏ qua <ChevronUp size={14} />
+                  </>
+                ) : (
+                  <>
+                    Xem chi tiết bỏ qua ({skippedRows.length}) <ChevronDown size={14} />
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Collapsible/Scrollable Skipped Rows Section */}
+          {skippedRows.length > 0 && showSkippedDetails && (
+            <div
+              style={{
+                border: "1px solid #fed7aa",
+                borderRadius: 8,
+                background: "#fffdfa",
+                padding: "12px 14px",
+              }}
+            >
+              <div
+                style={{
+                  fontWeight: 600,
+                  fontSize: "0.875rem",
+                  color: "#9a3412",
+                  marginBottom: 8,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                <AlertTriangle size={15} /> Các dòng bị bỏ qua ({skippedRows.length})
+              </div>
+              <div className="table-container" style={{ maxHeight: 200, overflowY: "auto" }}>
+                <table className="table" style={{ fontSize: "0.825rem", margin: 0 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 60 }}>Dòng</th>
+                      <th>Họ và tên</th>
+                      <th>Email</th>
+                      <th>Lý do bỏ qua</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {skippedRows.map((s) => (
+                      <tr key={s.rowNumber}>
+                        <td><strong>#{s.rowNumber}</strong></td>
+                        <td>{s.displayName}</td>
+                        <td style={{ color: "var(--muted)", fontFamily: "monospace" }}>{s.email}</td>
+                        <td>
+                          <span
+                            className="badge badge-warning"
+                            style={{
+                              background: "#fef3c7",
+                              color: "#92400e",
+                              border: "1px solid #fde68a",
+                            }}
+                          >
+                            {s.reason}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Zero Valid Rows Warning */}
+          {payload.personnel.length === 0 && (
+            <div
+              style={{
+                background: "#fef2f2",
+                border: "1px solid #fecaca",
+                borderRadius: 8,
+                padding: 12,
+                color: "#991b1b",
+                fontSize: "0.875rem",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <XCircle size={18} />
+              <span>Không có bản ghi hợp lệ nào trong tệp để đồng bộ. Vui lòng kiểm tra lại tệp nguồn.</span>
+            </div>
+          )}
+
+          {/* KPI Summary Grid (9 Metrics) */}
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-              gap: 10,
+              gridTemplateColumns: "repeat(auto-fit, minmax(105px, 1fr))",
+              gap: 8,
             }}
           >
-            <div className="card" style={{ padding: "10px 12px", textAlign: "center" }}>
-              <div style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase" }}>Tổng trong file</div>
-              <div style={{ fontSize: "1.4rem", fontWeight: 700, color: "var(--foreground)" }}>{payload.totalRecords}</div>
+            <div className="card" style={{ padding: "10px 8px", textAlign: "center" }}>
+              <div style={{ fontSize: "0.72rem", color: "var(--muted)", textTransform: "uppercase" }}>Tổng trong file</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--foreground)" }}>{payload.totalRecords}</div>
             </div>
-            <div className="card" style={{ padding: "10px 12px", textAlign: "center", borderColor: countCreate > 0 ? "#86efac" : undefined }}>
-              <div style={{ fontSize: "0.75rem", color: "#16a34a", textTransform: "uppercase" }}>Mới (Thêm)</div>
-              <div style={{ fontSize: "1.4rem", fontWeight: 700, color: "#16a34a" }}>+{countCreate}</div>
+            <div className="card" style={{ padding: "10px 8px", textAlign: "center", borderColor: payload.personnel.length > 0 ? "#86efac" : undefined }}>
+              <div style={{ fontSize: "0.72rem", color: "#16a34a", textTransform: "uppercase" }}>Hợp lệ</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#16a34a" }}>{payload.personnel.length}</div>
             </div>
-            <div className="card" style={{ padding: "10px 12px", textAlign: "center", borderColor: countUpdate > 0 ? "#93c5fd" : undefined }}>
-              <div style={{ fontSize: "0.75rem", color: "#2563eb", textTransform: "uppercase" }}>Cập nhật</div>
-              <div style={{ fontSize: "1.4rem", fontWeight: 700, color: "#2563eb" }}>{countUpdate}</div>
+            <div className="card" style={{ padding: "10px 8px", textAlign: "center", borderColor: countCreate > 0 ? "#86efac" : undefined }}>
+              <div style={{ fontSize: "0.72rem", color: "#16a34a", textTransform: "uppercase" }}>Mới (Thêm)</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#16a34a" }}>+{countCreate}</div>
             </div>
-            <div className="card" style={{ padding: "10px 12px", textAlign: "center", borderColor: countDeactivate > 0 ? "#fca5a5" : undefined }}>
-              <div style={{ fontSize: "0.75rem", color: "#dc2626", textTransform: "uppercase" }}>Ngừng CT</div>
-              <div style={{ fontSize: "1.4rem", fontWeight: 700, color: "#dc2626" }}>{countDeactivate}</div>
+            <div className="card" style={{ padding: "10px 8px", textAlign: "center", borderColor: countUpdate > 0 ? "#93c5fd" : undefined }}>
+              <div style={{ fontSize: "0.72rem", color: "#2563eb", textTransform: "uppercase" }}>Cập nhật</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#2563eb" }}>{countUpdate}</div>
             </div>
-            <div className="card" style={{ padding: "10px 12px", textAlign: "center", borderColor: countReactivate > 0 ? "#d8b4fe" : undefined }}>
-              <div style={{ fontSize: "0.75rem", color: "#9333ea", textTransform: "uppercase" }}>Tái kích hoạt</div>
-              <div style={{ fontSize: "1.4rem", fontWeight: 700, color: "#9333ea" }}>{countReactivate}</div>
+            <div className="card" style={{ padding: "10px 8px", textAlign: "center" }}>
+              <div style={{ fontSize: "0.72rem", color: "var(--muted)", textTransform: "uppercase" }}>Không đổi</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--muted)" }}>{countUnchanged}</div>
             </div>
-            <div className="card" style={{ padding: "10px 12px", textAlign: "center" }}>
-              <div style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase" }}>Không đổi</div>
-              <div style={{ fontSize: "1.4rem", fontWeight: 700, color: "var(--muted)" }}>{countUnchanged}</div>
+            <div className="card" style={{ padding: "10px 8px", textAlign: "center", borderColor: countDeactivate > 0 ? "#fca5a5" : undefined }}>
+              <div style={{ fontSize: "0.72rem", color: "#dc2626", textTransform: "uppercase" }}>Ngừng CT</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#dc2626" }}>{countDeactivate}</div>
+            </div>
+            <div className="card" style={{ padding: "10px 8px", textAlign: "center", borderColor: countReactivate > 0 ? "#d8b4fe" : undefined }}>
+              <div style={{ fontSize: "0.72rem", color: "#9333ea", textTransform: "uppercase" }}>Tái kích hoạt</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#9333ea" }}>{countReactivate}</div>
+            </div>
+            <div className="card" style={{ padding: "10px 8px", textAlign: "center", borderColor: skippedRows.length > 0 ? "#fcd34d" : undefined }}>
+              <div style={{ fontSize: "0.72rem", color: "#d97706", textTransform: "uppercase" }}>Bỏ qua</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#d97706" }}>{skippedRows.length}</div>
+            </div>
+            <div className="card" style={{ padding: "10px 8px", textAlign: "center" }}>
+              <div style={{ fontSize: "0.72rem", color: "var(--muted)", textTransform: "uppercase" }}>Lỗi file</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--muted)" }}>0</div>
             </div>
           </div>
 
           {/* Filter Bar */}
-          <div style={{ display: "flex", gap: 8, borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
-            <button
-              type="button"
-              className={`btn btn-sm ${filterTab === "all" ? "btn-primary" : "btn-secondary"}`}
-              onClick={() => setFilterTab("all")}
-            >
-              Tất cả ({diffItems.length})
-            </button>
-            <button
-              type="button"
-              className={`btn btn-sm ${filterTab === "changes" ? "btn-primary" : "btn-secondary"}`}
-              onClick={() => setFilterTab("changes")}
-            >
-              Có thay đổi ({countCreate + countUpdate + countDeactivate + countReactivate})
-            </button>
-            <button
-              type="button"
-              className={`btn btn-sm ${filterTab === "create" ? "btn-primary" : "btn-secondary"}`}
-              onClick={() => setFilterTab("create")}
-            >
-              Thêm mới ({countCreate})
-            </button>
-            <button
-              type="button"
-              className={`btn btn-sm ${filterTab === "deactivate" ? "btn-primary" : "btn-secondary"}`}
-              onClick={() => setFilterTab("deactivate")}
-            >
-              Trạng thái ({countDeactivate + countReactivate})
-            </button>
-          </div>
+          {payload.personnel.length > 0 && (
+            <>
+              <div style={{ display: "flex", gap: 8, borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${filterTab === "all" ? "btn-primary" : "btn-secondary"}`}
+                  onClick={() => setFilterTab("all")}
+                >
+                  Tất cả hợp lệ ({diffItems.length})
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${filterTab === "changes" ? "btn-primary" : "btn-secondary"}`}
+                  onClick={() => setFilterTab("changes")}
+                >
+                  Có thay đổi ({countCreate + countUpdate + countDeactivate + countReactivate})
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${filterTab === "create" ? "btn-primary" : "btn-secondary"}`}
+                  onClick={() => setFilterTab("create")}
+                >
+                  Thêm mới ({countCreate})
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${filterTab === "deactivate" ? "btn-primary" : "btn-secondary"}`}
+                  onClick={() => setFilterTab("deactivate")}
+                >
+                  Trạng thái ({countDeactivate + countReactivate})
+                </button>
+              </div>
 
-          {/* Preview Table */}
-          <div className="table-container" style={{ maxHeight: 340, overflowY: "auto" }}>
-            <table className="table" style={{ fontSize: "0.85rem" }}>
-              <thead>
-                <tr>
-                  <th style={{ width: 100 }}>Trạng thái</th>
-                  <th>Họ và tên</th>
-                  <th>Email TDTU</th>
-                  <th>Đơn vị / Ngành</th>
-                  <th>Học vị</th>
-                  <th>Chi tiết thay đổi</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredItems.map((item) => {
-                  let badge = <span className="badge badge-secondary">Không đổi</span>;
-                  if (item.status === "create") {
-                    badge = <span className="badge badge-success">+ Tạo mới</span>;
-                  } else if (item.status === "update") {
-                    badge = <span className="badge badge-info">Cập nhật</span>;
-                  } else if (item.status === "deactivate") {
-                    badge = <span className="badge badge-danger">Ngừng CT</span>;
-                  } else if (item.status === "reactivate") {
-                    badge = <span className="badge badge-warning">Kích hoạt</span>;
-                  }
-
-                  return (
-                    <tr key={item.record.emailNormalized}>
-                      <td>{badge}</td>
-                      <td>
-                        <strong>{item.record.displayName}</strong>
-                        {!item.record.active && (
-                          <span style={{ color: "#dc2626", fontSize: "0.75rem", marginLeft: 6 }}>
-                            (Nghỉ)
-                          </span>
-                        )}
-                      </td>
-                      <td style={{ color: "var(--muted)", fontFamily: "monospace" }}>
-                        {item.record.emailNormalized}
-                      </td>
-                      <td>{item.record.departmentName}</td>
-                      <td>{item.record.academicDegree || "—"}</td>
-                      <td style={{ maxWidth: 220 }}>
-                        {item.changes.length > 0 ? (
-                          <ul style={{ margin: 0, paddingLeft: 14, color: "var(--foreground)" }}>
-                            {item.changes.map((c, i) => (
-                              <li key={i}>{c}</li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <span style={{ color: "var(--muted)" }}>Dữ liệu khớp hoàn toàn</span>
-                        )}
-                      </td>
+              {/* Preview Table */}
+              <div className="table-container" style={{ maxHeight: 320, overflowY: "auto" }}>
+                <table className="table" style={{ fontSize: "0.85rem" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 100 }}>Trạng thái</th>
+                      <th>Họ và tên</th>
+                      <th>Email TDTU</th>
+                      <th>Đơn vị / Ngành</th>
+                      <th>Học vị</th>
+                      <th>Chi tiết thay đổi</th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                  </thead>
+                  <tbody>
+                    {filteredItems.map((item) => {
+                      let badge = <span className="badge badge-secondary">Không đổi</span>;
+                      if (item.status === "create") {
+                        badge = <span className="badge badge-success">+ Tạo mới</span>;
+                      } else if (item.status === "update") {
+                        badge = <span className="badge badge-info">Cập nhật</span>;
+                      } else if (item.status === "deactivate") {
+                        badge = <span className="badge badge-danger">Ngừng CT</span>;
+                      } else if (item.status === "reactivate") {
+                        badge = <span className="badge badge-warning">Kích hoạt</span>;
+                      }
+
+                      return (
+                        <tr key={item.record.emailNormalized}>
+                          <td>{badge}</td>
+                          <td>
+                            <strong>{item.record.displayName}</strong>
+                            {!item.record.active && (
+                              <span style={{ color: "#dc2626", fontSize: "0.75rem", marginLeft: 6 }}>
+                                (Nghỉ)
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ color: "var(--muted)", fontFamily: "monospace" }}>
+                            {item.record.emailNormalized}
+                          </td>
+                          <td>{item.record.departmentName}</td>
+                          <td>{item.record.academicDegree || "—"}</td>
+                          <td style={{ maxWidth: 220 }}>
+                            {item.changes.length > 0 ? (
+                              <ul style={{ margin: 0, paddingLeft: 14, color: "var(--foreground)" }}>
+                                {item.changes.map((c, i) => (
+                                  <li key={i}>{c}</li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <span style={{ color: "var(--muted)" }}>Dữ liệu khớp hoàn toàn</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -577,7 +791,7 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
           <CheckCircle2 size={56} color="#16a34a" style={{ margin: "0 auto 16px" }} />
           <h3 style={{ margin: "0 0 8px", color: "var(--foreground)" }}>Đồng bộ danh bạ thành công!</h3>
           <p style={{ color: "var(--muted)", fontSize: "0.9rem", marginBottom: 24 }}>
-            Đã đồng bộ {resultLog.totalRecords} bản ghi từ IFA-WORK vào IFA-RH trong {resultLog.durationMs ?? 0}ms.
+            Đã đồng bộ {resultLog.validRows ?? resultLog.totalRecords}/{resultLog.totalRecords} bản ghi từ IFA-WORK vào IFA-RH trong {resultLog.durationMs ?? 0}ms.
           </p>
 
           <div
@@ -586,7 +800,7 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
               border: "1px solid var(--border)",
               borderRadius: 8,
               padding: 16,
-              maxWidth: 420,
+              maxWidth: 440,
               margin: "0 auto",
               textAlign: "left",
               fontSize: "0.875rem",
@@ -595,11 +809,15 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
           >
             <div><strong>Thời gian:</strong> {formatDateVN(resultLog.timestamp)}</div>
             <div><strong>Phương thức:</strong> {resultLog.method === "manual_json" ? "Tệp JSON thủ công" : "GitHub Action"}</div>
+            <div><strong>Tổng trong file:</strong> <strong>{resultLog.totalRecords}</strong></div>
+            <div><strong>Đã xử lý (Hợp lệ):</strong> <strong style={{ color: "#16a34a" }}>{resultLog.validRows ?? resultLog.totalRecords}</strong></div>
             <div><strong>Tạo mới:</strong> <span style={{ color: "#16a34a", fontWeight: 700 }}>+{resultLog.createdCount}</span></div>
             <div><strong>Cập nhật:</strong> <span style={{ color: "#2563eb", fontWeight: 700 }}>{resultLog.updatedCount}</span></div>
+            <div><strong>Không đổi:</strong> {resultLog.unchangedCount}</div>
             <div><strong>Ngừng công tác:</strong> <span style={{ color: "#dc2626", fontWeight: 700 }}>{resultLog.deactivatedCount}</span></div>
             <div><strong>Kích hoạt lại:</strong> <span style={{ color: "#9333ea", fontWeight: 700 }}>{resultLog.reactivatedCount}</span></div>
-            <div><strong>Không đổi:</strong> {resultLog.unchangedCount}</div>
+            <div><strong>Bỏ qua:</strong> <span style={{ color: "#d97706", fontWeight: 700 }}>{resultLog.skippedCount ?? 0}</span></div>
+            <div><strong>Lỗi:</strong> <span>{resultLog.errorsCount ?? 0}</span></div>
           </div>
         </div>
       )}

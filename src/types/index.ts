@@ -260,6 +260,21 @@ export interface SharedPersonnelExportPayload {
   personnel: SharedPersonnelRecord[];
 }
 
+export type RowValidationStatus =
+  | 'VALID'
+  | 'SKIPPED_MISSING_EMAIL'
+  | 'SKIPPED_INVALID_EMAIL'
+  | 'SKIPPED_DUPLICATE_EMAIL'
+  | 'SKIPPED_INVALID_RECORD';
+
+export interface SkippedRowDetail {
+  rowNumber: number;
+  displayName: string;
+  email: string;
+  status: RowValidationStatus;
+  reason: string;
+}
+
 export interface PersonnelSyncLog {
   id: string;
   timestamp: string;
@@ -274,5 +289,24 @@ export interface PersonnelSyncLog {
   deactivatedCount: number;
   reactivatedCount: number;
   durationMs?: number;
+  // Enhanced row-level metrics
+  totalRows?: number;
+  validRows?: number;
+  skippedCount?: number;
+  skippedMissingEmailCount?: number;
+  skippedInvalidEmailCount?: number;
+  skippedDuplicateEmailCount?: number;
+  errorsCount?: number;
+  // Aliases matching specific reporting requirements
+  created?: number;
+  updated?: number;
+  unchanged?: number;
+  inactive?: number;
+  reactivated?: number;
+  skipped?: number;
+  skippedMissingEmail?: number;
+  skippedInvalidEmail?: number;
+  skippedDuplicateEmail?: number;
+  errors?: number;
 }
 

@@ -123,18 +123,46 @@ async function executeSync(rhDb, incomingRecords, method, triggeredBy, dryRun) {
   let unchangedCount = 0;
   let deactivatedCount = 0;
   let reactivatedCount = 0;
+  let skippedMissingEmailCount = 0;
+  let skippedInvalidEmailCount = 0;
+  let skippedDuplicateEmailCount = 0;
+  let skippedInvalidRecordCount = 0;
 
+  const emailRegex = /^[a-z0-9._%+-]+@tdtu\.edu\.vn$/;
   const now = new Date().toISOString();
   const batchList = [];
+  const seenBatchEmails = new Set();
 
   for (const item of incomingRecords) {
-    const emailNorm = (item.emailNormalized || item.email || '').trim().toLowerCase();
-    if (!emailNorm || !emailNorm.endsWith('@tdtu.edu.vn')) continue;
+    const rawEmail = item.emailNormalized ?? item.email;
+    const emailNorm = (rawEmail !== undefined && rawEmail !== null ? String(rawEmail) : '').trim().toLowerCase();
+    const displayName = String(item.displayName || item.name || '').trim();
+
+    if (!displayName) {
+      skippedInvalidRecordCount++;
+      continue;
+    }
+
+    if (!emailNorm) {
+      skippedMissingEmailCount++;
+      continue;
+    }
+
+    if (!emailRegex.test(emailNorm)) {
+      skippedInvalidEmailCount++;
+      continue;
+    }
+
+    if (seenBatchEmails.has(emailNorm)) {
+      skippedDuplicateEmailCount++;
+      continue;
+    }
+    seenBatchEmails.add(emailNorm);
 
     const existing = existingMap.get(emailNorm);
     const validRecord = {
       emailNormalized: emailNorm,
-      displayName: item.displayName || item.name || '',
+      displayName,
       departmentId: item.departmentId || '',
       departmentName: item.departmentName || item.department || 'Chưa phân ngành',
       lecturerType: item.lecturerType || 'lecturer',
@@ -178,14 +206,23 @@ async function executeSync(rhDb, incomingRecords, method, triggeredBy, dryRun) {
     }
   }
 
+  const totalRows = incomingRecords.length;
+  const validRows = batchList.length;
+  const skippedTotal = skippedMissingEmailCount + skippedInvalidEmailCount + skippedDuplicateEmailCount + skippedInvalidRecordCount;
+
   console.log('--------------------------------------------------');
   console.log('KẾT QUẢ ĐỐI SOÁT (DIFF SUMMARY):');
-  console.log(`- Tổng bản ghi nguồn:     ${incomingRecords.length}`);
-  console.log(`- Mới tạo (Create):        +${createdCount}`);
-  console.log(`- Cập nhật (Update):       ${updatedCount}`);
-  console.log(`- Ngừng CT (Deactivated):  -${deactivatedCount}`);
-  console.log(`- Tái kích hoạt:           +${reactivatedCount}`);
-  console.log(`- Không đổi (Unchanged):   ${unchangedCount}`);
+  console.log(`- Source (Tổng bản ghi):      ${totalRows}`);
+  console.log(`- Valid (Hợp lệ):             ${validRows}`);
+  console.log(`- Skipped missing email:      ${skippedMissingEmailCount}`);
+  console.log(`- Skipped invalid email:      ${skippedInvalidEmailCount}`);
+  console.log(`- Skipped duplicate email:    ${skippedDuplicateEmailCount}`);
+  console.log(`- Mới tạo (Create):           +${createdCount}`);
+  console.log(`- Cập nhật (Update):          ${updatedCount}`);
+  console.log(`- Ngừng CT (Deactivated):     -${deactivatedCount}`);
+  console.log(`- Tái kích hoạt:              +${reactivatedCount}`);
+  console.log(`- Không đổi (Unchanged):      ${unchangedCount}`);
+  console.log(`- Errors:                     0`);
   console.log('--------------------------------------------------');
 
   if (dryRun) {
@@ -230,13 +267,30 @@ async function executeSync(rhDb, incomingRecords, method, triggeredBy, dryRun) {
     method,
     triggeredBy,
     schemaVersion: 1,
-    totalRecords: incomingRecords.length,
+    totalRecords: totalRows,
     createdCount,
     updatedCount,
     unchangedCount,
     deactivatedCount,
     reactivatedCount,
     durationMs,
+    totalRows,
+    validRows,
+    skippedCount: skippedTotal,
+    skippedMissingEmailCount,
+    skippedInvalidEmailCount,
+    skippedDuplicateEmailCount,
+    errorsCount: 0,
+    created: createdCount,
+    updated: updatedCount,
+    unchanged: unchangedCount,
+    inactive: deactivatedCount,
+    reactivated: reactivatedCount,
+    skipped: skippedTotal,
+    skippedMissingEmail: skippedMissingEmailCount,
+    skippedInvalidEmail: skippedInvalidEmailCount,
+    skippedDuplicateEmail: skippedDuplicateEmailCount,
+    errors: 0,
   };
 
   await rhDb.collection('personnelSyncLogs').doc(logId).set(logData);
@@ -246,15 +300,18 @@ async function executeSync(rhDb, incomingRecords, method, triggeredBy, dryRun) {
   const summaryFile = process.env.GITHUB_STEP_SUMMARY;
   if (summaryFile) {
     const md = `### Kết quả Đồng bộ Danh bạ Giảng viên (IFA-WORK -> IFA-RH)
-- **Thời gian**: ${now}
-- **Phương thức**: ${method} (${triggeredBy})
-- **Tổng số**: ${incomingRecords.length}
-- **Tạo mới**: +${createdCount}
-- **Cập nhật**: ${updatedCount}
-- **Ngừng công tác**: ${deactivatedCount}
-- **Kích hoạt lại**: ${reactivatedCount}
-- **Không đổi**: ${unchangedCount}
-- **Thời gian xử lý**: ${durationMs}ms
+- **Source**: ${totalRows}
+- **Valid**: ${validRows}
+- **Skipped missing email**: ${skippedMissingEmailCount}
+- **Skipped invalid email**: ${skippedInvalidEmailCount}
+- **Skipped duplicate email**: ${skippedDuplicateEmailCount}
+- **Created**: +${createdCount}
+- **Updated**: ${updatedCount}
+- **Inactive**: ${deactivatedCount}
+- **Reactivated**: ${reactivatedCount}
+- **Unchanged**: ${unchangedCount}
+- **Errors**: 0
+- **Duration**: ${durationMs}ms
 `;
     fs.appendFileSync(summaryFile, md);
   }

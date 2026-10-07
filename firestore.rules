@@ -204,6 +204,11 @@ rules_version = '2';
 //   - reactivatedCount: int (required, >= 0) - Count of reactivated records
 //   - durationMs: int (optional, >= 0) - Sync processing duration in milliseconds
 //   - createdAt: string | timestamp (optional, max 50 chars if string)
+//   - totalRows, validRows, skippedCount, skippedMissingEmailCount,
+//     skippedInvalidEmailCount, skippedDuplicateEmailCount, errorsCount,
+//     created, updated, unchanged, inactive, reactivated, skipped,
+//     skippedMissingEmail, skippedInvalidEmail, skippedDuplicateEmail,
+//     errors: int (optional, >= 0) - Enhanced row-level metrics and counter aliases
 //
 // ===============================================================
 
@@ -615,7 +620,13 @@ service cloud.firestore {
           'sourceFile', 'schemaVersion', 'totalRecords',
           'createdCount', 'updatedCount', 'unchangedCount',
           'deactivatedCount', 'reactivatedCount', 'durationMs',
-          'createdAt'
+          'createdAt',
+          'totalRows', 'validRows', 'skippedCount',
+          'skippedMissingEmailCount', 'skippedInvalidEmailCount',
+          'skippedDuplicateEmailCount', 'errorsCount',
+          'created', 'updated', 'unchanged', 'inactive',
+          'reactivated', 'skipped', 'skippedMissingEmail',
+          'skippedInvalidEmail', 'skippedDuplicateEmail', 'errors'
         ]) &&
         validString(data.id, 1, 128) &&
         (validString(data.timestamp, 1, 50) || data.timestamp is timestamp) &&
@@ -630,7 +641,24 @@ service cloud.firestore {
         data.reactivatedCount is int && data.reactivatedCount >= 0 &&
         (!('sourceFile' in data) || validString(data.sourceFile, 0, 200)) &&
         (!('durationMs' in data) || (data.durationMs is int && data.durationMs >= 0)) &&
-        (!('createdAt' in data) || validString(data.createdAt, 1, 50) || data.createdAt is timestamp);
+        (!('createdAt' in data) || validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
+        (!('totalRows' in data) || (data.totalRows is int && data.totalRows >= 0)) &&
+        (!('validRows' in data) || (data.validRows is int && data.validRows >= 0)) &&
+        (!('skippedCount' in data) || (data.skippedCount is int && data.skippedCount >= 0)) &&
+        (!('skippedMissingEmailCount' in data) || (data.skippedMissingEmailCount is int && data.skippedMissingEmailCount >= 0)) &&
+        (!('skippedInvalidEmailCount' in data) || (data.skippedInvalidEmailCount is int && data.skippedInvalidEmailCount >= 0)) &&
+        (!('skippedDuplicateEmailCount' in data) || (data.skippedDuplicateEmailCount is int && data.skippedDuplicateEmailCount >= 0)) &&
+        (!('errorsCount' in data) || (data.errorsCount is int && data.errorsCount >= 0)) &&
+        (!('created' in data) || (data.created is int && data.created >= 0)) &&
+        (!('updated' in data) || (data.updated is int && data.updated >= 0)) &&
+        (!('unchanged' in data) || (data.unchanged is int && data.unchanged >= 0)) &&
+        (!('inactive' in data) || (data.inactive is int && data.inactive >= 0)) &&
+        (!('reactivated' in data) || (data.reactivated is int && data.reactivated >= 0)) &&
+        (!('skipped' in data) || (data.skipped is int && data.skipped >= 0)) &&
+        (!('skippedMissingEmail' in data) || (data.skippedMissingEmail is int && data.skippedMissingEmail >= 0)) &&
+        (!('skippedInvalidEmail' in data) || (data.skippedInvalidEmail is int && data.skippedInvalidEmail >= 0)) &&
+        (!('skippedDuplicateEmail' in data) || (data.skippedDuplicateEmail is int && data.skippedDuplicateEmail >= 0)) &&
+        (!('errors' in data) || (data.errors is int && data.errors >= 0));
     }
 
     // ===============================================================

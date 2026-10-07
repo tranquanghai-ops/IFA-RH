@@ -900,10 +900,21 @@ export async function fetchLatestPersonnelSyncLog(): Promise<PersonnelSyncLog | 
   }
 }
 
+export interface SyncBatchStats {
+  totalRows?: number;
+  validRows?: number;
+  skippedCount?: number;
+  skippedMissingEmailCount?: number;
+  skippedInvalidEmailCount?: number;
+  skippedDuplicateEmailCount?: number;
+  errorsCount?: number;
+}
+
 export async function syncSharedPersonnelBatch(
   records: SharedPersonnelRecord[],
   sourceFile: string,
-  actor: { uid: string; email: string; role: UserRole }
+  actor: { uid: string; email: string; role: UserRole },
+  stats?: SyncBatchStats
 ): Promise<PersonnelSyncLog> {
   if (actor.role !== "owner") {
     throw new Error("Chỉ Owner mới có quyền cập nhật danh bạ từ IFA-WORK.");
@@ -921,15 +932,27 @@ export async function syncSharedPersonnelBatch(
 
   const now = new Date().toISOString();
   const toWrite: SharedPersonnelRecord[] = [];
+  const seenBatchEmails = new Set<string>();
 
   for (const record of records) {
-    const emailNorm = record.emailNormalized.trim().toLowerCase();
+    const emailNorm = (record.emailNormalized || "").trim().toLowerCase();
+    // Defensive row-level skip: skip if missing email, invalid domain, or duplicate in same batch
+    if (!emailNorm || !emailNorm.endsWith("@tdtu.edu.vn") || !record.displayName?.trim()) {
+      continue;
+    }
+    if (seenBatchEmails.has(emailNorm)) {
+      continue;
+    }
+    seenBatchEmails.add(emailNorm);
+
     const existing = existingMap.get(emailNorm);
 
     if (!existing) {
       createdCount++;
       toWrite.push({
         ...record,
+        emailNormalized: emailNorm,
+        displayName: record.displayName.trim(),
         sharedUpdatedAt: now,
       });
     } else {
@@ -957,12 +980,16 @@ export async function syncSharedPersonnelBatch(
         updatedCount++;
         toWrite.push({
           ...record,
+          emailNormalized: emailNorm,
+          displayName: record.displayName.trim(),
           sharedUpdatedAt: now,
         });
       } else {
         unchangedCount++;
         toWrite.push({
           ...record,
+          emailNormalized: emailNorm,
+          displayName: record.displayName.trim(),
           sharedUpdatedAt: now,
         });
       }
@@ -1002,6 +1029,14 @@ export async function syncSharedPersonnelBatch(
   }
 
   const durationMs = Date.now() - startTime;
+  const totalRows = stats?.totalRows ?? records.length;
+  const validRows = stats?.validRows ?? toWrite.length;
+  const skippedCount = stats?.skippedCount ?? Math.max(0, totalRows - validRows);
+  const skippedMissingEmailCount = stats?.skippedMissingEmailCount ?? 0;
+  const skippedInvalidEmailCount = stats?.skippedInvalidEmailCount ?? 0;
+  const skippedDuplicateEmailCount = stats?.skippedDuplicateEmailCount ?? 0;
+  const errorsCount = stats?.errorsCount ?? 0;
+
   const logId = `sync_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const logData: PersonnelSyncLog = {
     id: logId,
@@ -1010,13 +1045,30 @@ export async function syncSharedPersonnelBatch(
     triggeredBy: actor.email,
     sourceFile,
     schemaVersion: 1,
-    totalRecords: records.length,
+    totalRecords: totalRows,
     createdCount,
     updatedCount,
     unchangedCount,
     deactivatedCount,
     reactivatedCount,
     durationMs,
+    totalRows,
+    validRows,
+    skippedCount,
+    skippedMissingEmailCount,
+    skippedInvalidEmailCount,
+    skippedDuplicateEmailCount,
+    errorsCount,
+    created: createdCount,
+    updated: updatedCount,
+    unchanged: unchangedCount,
+    inactive: deactivatedCount,
+    reactivated: reactivatedCount,
+    skipped: skippedCount,
+    skippedMissingEmail: skippedMissingEmailCount,
+    skippedInvalidEmail: skippedInvalidEmailCount,
+    skippedDuplicateEmail: skippedDuplicateEmailCount,
+    errors: errorsCount,
   };
 
   await setDoc(doc(firestore, "personnelSyncLogs", logId), logData);
@@ -1026,7 +1078,7 @@ export async function syncSharedPersonnelBatch(
     "SYNC_SHARED_PERSONNEL",
     "import",
     logId,
-    `Đồng bộ danh bạ dùng chung từ IFA-WORK: ${records.length} bản ghi (+${createdCount} mới, ~${updatedCount} cập nhật, -${deactivatedCount} ngừng CT) trong ${durationMs}ms.`
+    `Đồng bộ danh bạ dùng chung từ IFA-WORK: ${validRows}/${totalRows} bản ghi (+${createdCount} mới, ~${updatedCount} cập nhật, -${deactivatedCount} ngừng CT, ${skippedCount} bỏ qua) trong ${durationMs}ms.`
   );
 
   return logData;
