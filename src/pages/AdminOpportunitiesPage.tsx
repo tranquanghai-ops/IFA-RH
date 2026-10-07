@@ -5,10 +5,14 @@ import {
   createOpportunity,
   updateOpportunity,
   deleteOpportunity,
+  hideOpportunity,
+  republishOpportunity,
+  recallOpportunityToCandidateQueue,
 } from "../firebase/firestore";
 import type { Opportunity } from "../types";
 import { OpportunityFormModal } from "../components/OpportunityFormModal";
 import { OpportunityDetailModal } from "../components/OpportunityDetailModal";
+import { Modal } from "../components/Modal";
 import { exportToExcel, exportToCsv } from "../utils/excel";
 import { formatDateVN } from "../utils/date";
 import {
@@ -19,9 +23,13 @@ import {
   Trash2,
   ExternalLink,
   Eye,
+  EyeOff,
+  RotateCcw,
+  Globe,
   Compass,
   Download,
   FileSpreadsheet,
+  AlertTriangle,
 } from "lucide-react";
 
 export const AdminOpportunitiesPage: React.FC = () => {
@@ -29,12 +37,15 @@ export const AdminOpportunitiesPage: React.FC = () => {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "published" | "archived">("published");
+  const [statusFilter, setStatusFilter] = useState<"all" | "published" | "hidden" | "recalled" | "archived">("published");
 
   // Modals
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingOpp, setEditingOpp] = useState<Opportunity | null>(null);
   const [viewingOpp, setViewingOpp] = useState<Opportunity | null>(null);
+  const [hidingOpp, setHidingOpp] = useState<Opportunity | null>(null);
+  const [recallingOpp, setRecallingOpp] = useState<Opportunity | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   const loadOpportunities = async () => {
     setLoading(true);
@@ -77,6 +88,56 @@ export const AdminOpportunitiesPage: React.FC = () => {
       await loadOpportunities();
     } catch (err: any) {
       alert("Lỗi xóa cơ hội: " + err.message);
+    }
+  };
+
+  const handleConfirmHide = async () => {
+    if (!hidingOpp || !profile) return;
+    setActionLoading(true);
+    try {
+      await hideOpportunity(hidingOpp.id, {
+        uid: profile.uid,
+        email: profile.email,
+        role: profile.role,
+      });
+      setHidingOpp(null);
+      await loadOpportunities();
+    } catch (err: any) {
+      alert("Lỗi ẩn tin: " + (err.message || err));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRepublish = async (opp: Opportunity) => {
+    if (!profile) return;
+    try {
+      await republishOpportunity(opp.id, {
+        uid: profile.uid,
+        email: profile.email,
+        role: profile.role,
+      });
+      await loadOpportunities();
+    } catch (err: any) {
+      alert("Lỗi công bố lại tin: " + (err.message || err));
+    }
+  };
+
+  const handleConfirmRecall = async () => {
+    if (!recallingOpp || !profile) return;
+    setActionLoading(true);
+    try {
+      await recallOpportunityToCandidateQueue(recallingOpp, {
+        uid: profile.uid,
+        email: profile.email,
+        role: profile.role,
+      });
+      setRecallingOpp(null);
+      await loadOpportunities();
+    } catch (err: any) {
+      alert("Lỗi thu hồi tin: " + (err.message || err));
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -179,7 +240,7 @@ export const AdminOpportunitiesPage: React.FC = () => {
             className="btn btn-primary"
             onClick={() => setIsAddOpen(true)}
           >
-            <Plus size={16} /> Đăng cơ hội mới
+            <Plus size={16} /> Đăng tin mới
           </button>
         </div>
       </div>
@@ -213,6 +274,8 @@ export const AdminOpportunitiesPage: React.FC = () => {
               style={{ width: "auto" }}
             >
               <option value="published">Đã công bố (Published)</option>
+              <option value="hidden">Đã ẩn (Hidden)</option>
+              <option value="recalled">Đã thu hồi (Recalled)</option>
               <option value="archived">Lưu trữ (Archived)</option>
               <option value="all">Tất cả</option>
             </select>
@@ -228,16 +291,16 @@ export const AdminOpportunitiesPage: React.FC = () => {
       ) : filtered.length === 0 ? (
         <div className="card" style={{ textAlign: "center", padding: 48, color: "var(--muted)" }}>
           <Compass size={36} color="var(--muted)" style={{ margin: "0 auto 12px" }} />
-          <h3 style={{ color: "var(--primary)", marginBottom: 6 }}>Chưa có cơ hội nào</h3>
+          <h3 style={{ color: "var(--primary)", marginBottom: 6 }}>Chưa có tin nào</h3>
           <p style={{ fontSize: "0.9rem", maxWidth: 450, margin: "0 auto 16px" }}>
-            Bấm vào nút bên dưới để tạo bài đăng cơ hội NCKH mới cho giảng viên.
+            Bấm vào nút bên dưới để tạo bài đăng tin mới cho giảng viên.
           </p>
           <button
             type="button"
             className="btn btn-primary btn-sm"
             onClick={() => setIsAddOpen(true)}
           >
-            <Plus size={16} /> Đăng cơ hội mới
+            <Plus size={16} /> Đăng tin mới
           </button>
         </div>
       ) : (
@@ -251,6 +314,7 @@ export const AdminOpportunitiesPage: React.FC = () => {
                 <th>Cấp độ</th>
                 <th>Hạn nộp (Deadline)</th>
                 <th>Nguồn gốc</th>
+                <th>Trạng thái</th>
                 <th style={{ textAlign: "right" }}>Thao tác</th>
               </tr>
             </thead>
@@ -287,8 +351,69 @@ export const AdminOpportunitiesPage: React.FC = () => {
                       {opp.sourceType}
                     </span>
                   </td>
+                  <td>
+                    {opp.status === "published" && (
+                      <span className="badge" style={{ background: "#dcfce7", color: "#15803d", fontWeight: 600 }}>
+                        Đã công bố
+                      </span>
+                    )}
+                    {opp.status === "hidden" && (
+                      <span className="badge" style={{ background: "#fef3c7", color: "#b45309", fontWeight: 600 }}>
+                        Đã ẩn
+                      </span>
+                    )}
+                    {opp.status === "recalled" && (
+                      <span className="badge" style={{ background: "#f3e8ff", color: "#7e22ce", fontWeight: 600 }}>
+                        Đã thu hồi
+                      </span>
+                    )}
+                    {opp.status === "archived" && (
+                      <span className="badge badge-neutral" style={{ fontWeight: 600 }}>
+                        Lưu trữ
+                      </span>
+                    )}
+                  </td>
                   <td style={{ textAlign: "right" }}>
-                    <div style={{ display: "inline-flex", gap: 6 }}>
+                    <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                      {/* Ẩn tin (áp dụng cho tin đang công bố) */}
+                      {opp.status === "published" && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => setHidingOpp(opp)}
+                          title="Ẩn tin khỏi trang công khai"
+                          style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 8px", fontSize: "0.78rem" }}
+                        >
+                          <EyeOff size={13} /> Ẩn tin
+                        </button>
+                      )}
+
+                      {/* Công bố lại (áp dụng cho tin đang ẩn) */}
+                      {opp.status === "hidden" && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => handleRepublish(opp)}
+                          title="Công bố lại tin lên trang công khai"
+                          style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 8px", fontSize: "0.78rem", color: "var(--teal)" }}
+                        >
+                          <Globe size={13} /> Công bố lại
+                        </button>
+                      )}
+
+                      {/* Thu hồi về chờ duyệt (chỉ cho bài nguồn SPARK/AI, khi chưa bị thu hồi) */}
+                      {opp.sourceType === "SPARK" && opp.status !== "recalled" && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => setRecallingOpp(opp)}
+                          title="Thu hồi tin này về danh sách Dữ liệu AI tìm để duyệt lại"
+                          style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 8px", fontSize: "0.78rem", color: "#7e22ce" }}
+                        >
+                          <RotateCcw size={13} /> Thu hồi
+                        </button>
+                      )}
+
                       <button
                         type="button"
                         className="btn btn-secondary btn-sm btn-icon"
@@ -301,7 +426,7 @@ export const AdminOpportunitiesPage: React.FC = () => {
                         type="button"
                         className="btn btn-secondary btn-sm btn-icon"
                         onClick={() => setEditingOpp(opp)}
-                        title="Sửa cơ hội"
+                        title="Sửa tin"
                       >
                         <Edit2 size={14} />
                       </button>
@@ -309,7 +434,7 @@ export const AdminOpportunitiesPage: React.FC = () => {
                         type="button"
                         className="btn btn-outline-danger btn-sm btn-icon"
                         onClick={() => handleDelete(opp)}
-                        title="Xóa cơ hội"
+                        title="Xóa tin"
                       >
                         <Trash2 size={14} />
                       </button>
@@ -354,6 +479,155 @@ export const AdminOpportunitiesPage: React.FC = () => {
         opportunity={viewingOpp}
         onClose={() => setViewingOpp(null)}
       />
+
+      {/* Modal xác nhận Ẩn tin */}
+      <Modal
+        isOpen={!!hidingOpp}
+        onClose={() => setHidingOpp(null)}
+        title="Xác nhận ẩn tin"
+        footer={
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setHidingOpp(null)}
+              disabled={actionLoading}
+            >
+              Hủy
+            </button>
+            <button
+              type="button"
+              className="btn btn-warning"
+              onClick={handleConfirmHide}
+              disabled={actionLoading}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              <EyeOff size={16} />
+              {actionLoading ? "Đang xử lý..." : "Xác nhận ẩn tin"}
+            </button>
+          </div>
+        }
+      >
+        <div style={{ padding: "8px 0" }}>
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 16 }}>
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: "50%",
+                background: "#fef3c7",
+                color: "#b45309",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
+              <AlertTriangle size={22} />
+            </div>
+            <div>
+              <h4 style={{ margin: "0 0 6px", color: "var(--primary)", fontSize: "1rem" }}>
+                Ẩn tin này khỏi trang công khai?
+              </h4>
+              <p style={{ margin: 0, color: "var(--muted)", fontSize: "0.9rem", lineHeight: 1.5 }}>
+                Tin sẽ không còn hiển thị với giảng viên nhưng toàn bộ dữ liệu vẫn được giữ lại.
+              </p>
+            </div>
+          </div>
+          {hidingOpp && (
+            <div
+              style={{
+                background: "#f8fafc",
+                border: "1px solid var(--line)",
+                borderRadius: 6,
+                padding: 12,
+                fontSize: "0.88rem",
+              }}
+            >
+              <div><strong>Tiêu đề:</strong> {hidingOpp.title}</div>
+              <div style={{ marginTop: 4 }}><strong>Đơn vị tổ chức:</strong> {hidingOpp.organizer}</div>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* Modal xác nhận Thu hồi về chờ duyệt (AI / Spark) */}
+      <Modal
+        isOpen={!!recallingOpp}
+        onClose={() => setRecallingOpp(null)}
+        title="Xác nhận thu hồi tin về chờ duyệt"
+        footer={
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setRecallingOpp(null)}
+              disabled={actionLoading}
+            >
+              Hủy
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={handleConfirmRecall}
+              disabled={actionLoading}
+              style={{
+                background: "#7e22ce",
+                borderColor: "#7e22ce",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <RotateCcw size={16} />
+              {actionLoading ? "Đang xử lý..." : "Xác nhận thu hồi"}
+            </button>
+          </div>
+        }
+      >
+        <div style={{ padding: "8px 0" }}>
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginBottom: 16 }}>
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: "50%",
+                background: "#f3e8ff",
+                color: "#7e22ce",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
+              <RotateCcw size={22} />
+            </div>
+            <div>
+              <h4 style={{ margin: "0 0 6px", color: "var(--primary)", fontSize: "1rem" }}>
+                Thu hồi tin này về danh sách Dữ liệu AI tìm để duyệt lại?
+              </h4>
+              <p style={{ margin: 0, color: "var(--muted)", fontSize: "0.9rem", lineHeight: 1.5 }}>
+                Tin sẽ ngay lập tức ngừng hiển thị trên trang công khai và chuyển về trạng thái chờ duyệt.
+              </p>
+            </div>
+          </div>
+          {recallingOpp && (
+            <div
+              style={{
+                background: "#f8fafc",
+                border: "1px solid var(--line)",
+                borderRadius: 6,
+                padding: 12,
+                fontSize: "0.88rem",
+              }}
+            >
+              <div><strong>Tiêu đề:</strong> {recallingOpp.title}</div>
+              <div style={{ marginTop: 4 }}><strong>Đơn vị tổ chức:</strong> {recallingOpp.organizer}</div>
+              <div style={{ marginTop: 4 }}><strong>Nguồn gốc:</strong> SPARK / AI</div>
+            </div>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 };

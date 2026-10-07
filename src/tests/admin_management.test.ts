@@ -69,7 +69,7 @@ describe("Owner Admin Management & Mandatory Security Cases", () => {
     if (role === "admin") {
       return [
         ...baseItems,
-        "Hàng chờ Spark",
+        "Dữ liệu AI tìm",
         "Giảng viên",
         "Thống kê NCKH",
         "Import dữ liệu",
@@ -78,7 +78,7 @@ describe("Owner Admin Management & Mandatory Security Cases", () => {
     if (role === "owner") {
       return [
         ...baseItems,
-        "Hàng chờ Spark",
+        "Dữ liệu AI tìm",
         "Giảng viên",
         "Thống kê NCKH",
         "Import dữ liệu",
@@ -126,7 +126,7 @@ describe("Owner Admin Management & Mandatory Security Cases", () => {
     expect(adminNav).toContain("Cơ hội NCKH");
     expect(adminNav).toContain("Tiến độ NCKH");
     expect(adminNav).toContain("Hồ sơ nghiên cứu");
-    expect(adminNav).toContain("Hàng chờ Spark");
+    expect(adminNav).toContain("Dữ liệu AI tìm");
     expect(adminNav).toContain("Giảng viên");
     expect(adminNav).toContain("Thống kê NCKH");
     expect(adminNav).toContain("Import dữ liệu");

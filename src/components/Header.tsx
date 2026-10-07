@@ -120,7 +120,7 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onSelectTab }) => {
                       onClick={() => onSelectTab("admin_candidates")}
                     >
                       <Sparkles size={18} />
-                      Hàng chờ Spark
+                      Dữ liệu AI tìm
                     </button>
                   </li>
                   <li>

@@ -1,5 +1,6 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { useAuth } from "../firebase/auth";
+import { subscribePendingCandidatesCount } from "../firebase/firestore";
 import {
   LayoutDashboard,
   Compass,
@@ -29,6 +30,7 @@ interface NavItem {
   icon: React.ReactNode;
   tabTarget?: string;
   action?: () => void;
+  badge?: React.ReactNode;
 }
 
 interface NavGroup {
@@ -50,6 +52,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const role = profile.role;
   const isOwner = role === "owner";
   const isAdmin = role === "admin" || isOwner;
+
+  const [pendingAiCount, setPendingAiCount] = useState<number>(0);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    const unsubscribe = subscribePendingCandidatesCount((count) => {
+      setPendingAiCount(count);
+    });
+    return () => unsubscribe();
+  }, [isAdmin]);
 
   // Build navigation groups strictly per requirements
   const navGroups: NavGroup[] = [];
@@ -99,9 +111,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
       items: [
         {
           id: "admin_candidates",
-          label: "Hàng chờ Spark",
+          label: "Dữ liệu AI tìm",
           icon: <Sparkles size={18} />,
           tabTarget: "admin_candidates",
+          badge:
+            pendingAiCount > 0 ? (
+              <span
+                className="badge-pending-count"
+                style={{
+                  marginLeft: 6,
+                  color: "#dc2626",
+                  fontWeight: 700,
+                  fontSize: "0.82rem",
+                }}
+              >
+                ({pendingAiCount})
+              </span>
+            ) : null,
         },
         {
           id: "admin_lecturers",
@@ -234,7 +260,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         aria-current={isActive ? "page" : undefined}
                       >
                         <span className="sidebar-nav-icon">{item.icon}</span>
-                        <span className="sidebar-nav-label">{item.label}</span>
+                        <span className="sidebar-nav-label" style={{ display: "inline-flex", alignItems: "center" }}>
+                          <span>{item.label}</span>
+                          {item.badge}
+                        </span>
                       </button>
                     </li>
                   );

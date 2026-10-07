@@ -30,7 +30,7 @@ export const Topbar: React.FC<TopbarProps> = ({
       case "publications":
         return { root: "Nghiên cứu", leaf: "Hồ sơ nghiên cứu & Công bố" };
       case "admin_candidates":
-        return { root: "Quản trị", leaf: "Hàng chờ Spark AI" };
+        return { root: "Quản trị", leaf: "Dữ liệu AI tìm" };
       case "admin_lecturers":
         return { root: "Quản trị", leaf: "Danh sách Giảng viên" };
       case "admin_import":

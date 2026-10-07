@@ -174,7 +174,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
                 </>
               ) : (
                 <>
-                  <Sparkles size={14} /> Ghi nhận {newCount} bản ghi vào Hàng chờ Spark
+                  <Sparkles size={14} /> Ghi nhận {newCount} bản ghi vào Dữ liệu AI tìm
                 </>
               )}
             </button>
@@ -237,7 +237,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
           >
             <CheckCircle2 size={18} color="#059669" />
             <span>
-              Đồng bộ thành công! Đã thêm <strong>{saveResult.added}</strong> cơ hội vào Hàng chờ Spark ({saveResult.skipped} bản ghi bỏ qua do đã có).
+              Đồng bộ thành công! Đã thêm <strong>{saveResult.added}</strong> cơ hội vào Dữ liệu AI tìm ({saveResult.skipped} bản ghi bỏ qua do đã có).
             </span>
           </div>
         )}

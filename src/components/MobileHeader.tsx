@@ -23,7 +23,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({ currentTab, onOpenMo
       case "publications":
         return "Hồ sơ nghiên cứu";
       case "admin_candidates":
-        return "Hàng chờ Spark";
+        return "Dữ liệu AI tìm";
       case "admin_lecturers":
         return "Giảng viên";
       case "admin_import":

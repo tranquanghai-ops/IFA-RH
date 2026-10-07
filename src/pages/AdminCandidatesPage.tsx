@@ -117,16 +117,16 @@ export const AdminCandidatesPage: React.FC = () => {
       >
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <h1 style={{ fontSize: "1.6rem", color: "var(--primary)" }}>Hàng chờ Cơ hội AI / Spark tìm được</h1>
+            <h1 style={{ fontSize: "1.6rem", color: "var(--primary)" }}>Dữ liệu AI tìm</h1>
             <span
               className="badge"
               style={{ background: "#f3e8ff", color: "#6b21a8", fontWeight: 700, padding: "4px 8px" }}
             >
-              SPARK QUEUE
+              CHỜ DUYỆT
             </span>
           </div>
           <p style={{ color: "var(--muted)", fontSize: "0.9rem", marginTop: 4 }}>
-            Các hội thảo, Call for Papers do AI Spark thu thập tự động. Quản trị viên duyệt trước khi công bố ra công chúng.
+            Các hội thảo và cơ hội NCKH do hệ thống tự động phát hiện, đang chờ duyệt.
           </p>
         </div>
 
@@ -223,7 +223,7 @@ export const AdminCandidatesPage: React.FC = () => {
       {/* Content Area */}
       {loading ? (
         <div style={{ textAlign: "center", padding: 48, color: "var(--muted)" }}>
-          Đang tải hàng chờ Spark...
+          Đang tải dữ liệu AI tìm...
         </div>
       ) : filteredCandidates.length === 0 ? (
         <div className="card" style={{ textAlign: "center", padding: 48, color: "var(--muted)" }}>

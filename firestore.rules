@@ -64,8 +64,12 @@ rules_version = '2';
 //   - sourceUrl: string (optional, max 500 chars)
 //   - directions: string (optional, max 2000 chars) - Faculty writing guidance
 //   - sourceType: string (required, 'SPARK' | 'ADMIN')
-//   - status: string (required, 'published' | 'archived')
+//   - status: string (required, 'published' | 'archived' | 'hidden' | 'recalled')
 //   - candidateId: string (optional, max 100 chars) - Reference to spark candidate
+//   - recalledAt: string | timestamp (optional, max 50 chars)
+//   - recalledBy: string (optional, max 100 chars)
+//   - hiddenAt: string | timestamp (optional, max 50 chars)
+//   - hiddenBy: string (optional, max 100 chars)
 //   - createdAt: string | timestamp (required, max 50 chars)
 //   - updatedAt: string | timestamp (required, max 50 chars)
 //   - createdBy: string (required, 1-100 chars)
@@ -77,6 +81,8 @@ rules_version = '2';
 //   - Similar to opportunities, with status in ['pending', 'approved', 'rejected'],
 //     sourceType == 'SPARK', normalizedTitle: string (required, 1-500 chars),
 //     rejectionReason: string (optional, max 1000 chars), reviewedBy: string (optional),
+//     publishedOpportunityId: string (optional, max 100 chars),
+//     recalledAt: string | timestamp (optional, max 50 chars), recalledBy: string (optional, max 100 chars),
 //     detailedContent, topicsDetailed, publicationFee, registrationFee, feeStatus, feeSourceUrl.
 //
 // Collection: researchWorks
@@ -156,6 +162,9 @@ rules_version = '2';
 //   - entityType: string (required)
 //   - entityId: string (required, 1-128 chars)
 //   - summary: string (required, 1-1000 chars)
+//   - oldStatus: string (optional, max 50 chars)
+//   - newStatus: string (optional, max 50 chars)
+//   - sourceCandidateId: string (optional, max 100 chars)
 //   - createdAt: timestamp | string (optional, max 50 chars)
 //
 // Collection: systemConfig
@@ -366,7 +375,8 @@ service cloud.firestore {
           'sourceType', 'status', 'candidateId', 'createdAt', 'updatedAt',
           'createdBy', 'updatedBy',
           'publicationFee', 'registrationFee', 'feeStatus', 'feeSourceUrl',
-          'detailedContent', 'topicsDetailed'
+          'detailedContent', 'topicsDetailed',
+          'recalledAt', 'recalledBy', 'hiddenAt', 'hiddenBy'
         ]) &&
         validString(data.title, 1, 300) &&
         validString(data.organizer, 1, 200) &&
@@ -382,7 +392,7 @@ service cloud.firestore {
         validString(data.deadline, 1, 50) &&
         validString(data.content, 1, 50000) &&
         data.sourceType in ['SPARK', 'ADMIN'] &&
-        data.status in ['published', 'archived'] &&
+        data.status in ['published', 'archived', 'hidden', 'recalled'] &&
         validString(data.createdBy, 1, 100) &&
         (validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
         (validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
@@ -409,6 +419,10 @@ service cloud.firestore {
         (!('discoveredAt' in data) || validString(data.discoveredAt, 0, 50)) &&
         (!('sheetStatus' in data) || validString(data.sheetStatus, 0, 100)) &&
         (!('candidateId' in data) || validString(data.candidateId, 0, 100)) &&
+        (!('recalledAt' in data) || validString(data.recalledAt, 0, 50) || data.recalledAt is timestamp) &&
+        (!('recalledBy' in data) || validString(data.recalledBy, 0, 100)) &&
+        (!('hiddenAt' in data) || validString(data.hiddenAt, 0, 50) || data.hiddenAt is timestamp) &&
+        (!('hiddenBy' in data) || validString(data.hiddenBy, 0, 100)) &&
         (!('updatedBy' in data) || validString(data.updatedBy, 0, 100)) &&
         (!('id' in data) || validString(data.id, 0, 100));
     }
@@ -429,7 +443,8 @@ service cloud.firestore {
           'sourceType', 'status', 'rejectionReason', 'reviewedBy', 'reviewedAt',
           'normalizedTitle', 'createdAt', 'updatedAt',
           'publicationFee', 'registrationFee', 'feeStatus', 'feeSourceUrl',
-          'detailedContent', 'topicsDetailed'
+          'detailedContent', 'topicsDetailed',
+          'publishedOpportunityId', 'recalledAt', 'recalledBy'
         ]) &&
         validString(data.title, 1, 300) &&
         validString(data.organizer, 1, 200) &&
@@ -474,6 +489,9 @@ service cloud.firestore {
         (!('rejectionReason' in data) || validString(data.rejectionReason, 0, 1000)) &&
         (!('reviewedBy' in data) || validString(data.reviewedBy, 0, 100)) &&
         (!('reviewedAt' in data) || validString(data.reviewedAt, 0, 50)) &&
+        (!('publishedOpportunityId' in data) || validString(data.publishedOpportunityId, 0, 100)) &&
+        (!('recalledAt' in data) || validString(data.recalledAt, 0, 50) || data.recalledAt is timestamp) &&
+        (!('recalledBy' in data) || validString(data.recalledBy, 0, 100)) &&
         (!('id' in data) || validString(data.id, 0, 100));
     }
 
@@ -583,7 +601,8 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'id', 'timestamp', 'createdAt', 'actorUid', 'actorEmail',
-          'actorRole', 'action', 'entityType', 'entityId', 'summary'
+          'actorRole', 'action', 'entityType', 'entityId', 'summary',
+          'oldStatus', 'newStatus', 'sourceCandidateId'
         ]) &&
         validString(data.timestamp, 1, 50) &&
         validString(data.actorUid, 1, 128) &&
@@ -594,6 +613,9 @@ service cloud.firestore {
         validString(data.entityId, 1, 128) &&
         validString(data.summary, 1, 1000) &&
         (!('createdAt' in data) || validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
+        (!('oldStatus' in data) || validString(data.oldStatus, 0, 50)) &&
+        (!('newStatus' in data) || validString(data.newStatus, 0, 50)) &&
+        (!('sourceCandidateId' in data) || validString(data.sourceCandidateId, 0, 100)) &&
         (!('id' in data) || validString(data.id, 0, 100));
     }
 

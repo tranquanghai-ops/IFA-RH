@@ -41,7 +41,7 @@ export type OpportunityLevel =
 
 export type OpportunitySourceType = "SPARK" | "ADMIN";
 
-export type OpportunityStatus = "published" | "archived";
+export type OpportunityStatus = "published" | "archived" | "hidden" | "recalled";
 
 export type OpportunityFeeStatus = "SPECIFIED" | "UNKNOWN" | "FREE";
 
@@ -82,6 +82,10 @@ export interface Opportunity {
   sourceType: OpportunitySourceType;
   status: OpportunityStatus;
   candidateId?: string;
+  recalledAt?: string;
+  recalledBy?: string;
+  hiddenAt?: string;
+  hiddenBy?: string;
   createdAt: string;
   updatedAt: string;
   createdBy: string;
@@ -129,6 +133,9 @@ export interface OpportunityCandidate {
   rejectionReason?: string;
   reviewedBy?: string;
   reviewedAt?: string;
+  publishedOpportunityId?: string;
+  recalledAt?: string;
+  recalledBy?: string;
   normalizedTitle: string;
   createdAt: string;
   updatedAt: string;

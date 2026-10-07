@@ -13,6 +13,8 @@ import {
   addDoc,
   limit,
   writeBatch,
+  onSnapshot,
+  type DocumentReference,
 } from "firebase/firestore";
 import { firestore } from "./config";
 import type {
@@ -471,6 +473,161 @@ export async function deleteOpportunity(
   );
 }
 
+export async function hideOpportunity(
+  id: string,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  const now = new Date().toISOString();
+  const oppRef = doc(firestore, "opportunities", id);
+  await updateDoc(oppRef, {
+    status: "hidden",
+    hiddenAt: now,
+    hiddenBy: actor.email,
+    updatedAt: now,
+    updatedBy: actor.email,
+  });
+
+  await logAudit(
+    actor,
+    "HIDE_OPPORTUNITY",
+    "opportunity",
+    id,
+    `Ẩn cơ hội NCKH khỏi trang công khai (ID: ${id})`
+  );
+}
+
+export async function republishOpportunity(
+  id: string,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  const now = new Date().toISOString();
+  const oppRef = doc(firestore, "opportunities", id);
+  await updateDoc(oppRef, {
+    status: "published",
+    updatedAt: now,
+    updatedBy: actor.email,
+  });
+
+  await logAudit(
+    actor,
+    "REPUBLISH_OPPORTUNITY",
+    "opportunity",
+    id,
+    `Công bố lại cơ hội NCKH lên trang công khai (ID: ${id})`
+  );
+}
+
+export async function recallOpportunityToCandidateQueue(
+  opp: Opportunity,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  if (opp.sourceType !== "SPARK") {
+    throw new Error("Chỉ có thể thu hồi các cơ hội được tạo từ hệ thống AI / Spark.");
+  }
+  const now = new Date().toISOString();
+  const batch = writeBatch(firestore);
+
+  // 1. Mark opportunity status as recalled
+  const oppRef = doc(firestore, "opportunities", opp.id);
+  batch.update(oppRef, {
+    status: "recalled",
+    recalledAt: now,
+    recalledBy: actor.email,
+    updatedAt: now,
+    updatedBy: actor.email,
+  });
+
+  // 2. Identify or reconstruct candidate doc
+  let candRef: DocumentReference;
+  if (opp.candidateId) {
+    candRef = doc(firestore, "opportunityCandidates", opp.candidateId);
+    batch.update(candRef, {
+      status: "pending",
+      publishedOpportunityId: opp.id,
+      recalledAt: now,
+      recalledBy: actor.email,
+      updatedAt: now,
+    });
+  } else {
+    const norm = normalizeText(opp.title);
+    const existingSnap = await getDocs(
+      query(
+        collection(firestore, "opportunityCandidates"),
+        where("normalizedTitle", "==", norm),
+        limit(1)
+      )
+    );
+    if (!existingSnap.empty) {
+      candRef = existingSnap.docs[0].ref;
+      batch.update(candRef, {
+        status: "pending",
+        publishedOpportunityId: opp.id,
+        recalledAt: now,
+        recalledBy: actor.email,
+        updatedAt: now,
+      });
+      batch.update(oppRef, { candidateId: candRef.id });
+    } else {
+      candRef = doc(collection(firestore, "opportunityCandidates"));
+      const candData: any = {
+        title: opp.title,
+        organizer: opp.organizer,
+        country: opp.country || "Việt Nam",
+        type: opp.type,
+        level: opp.level,
+        topic: opp.topic || "",
+        field: opp.field || "",
+        tags: opp.tags || [],
+        deadline: opp.deadline,
+        content: opp.content || "",
+        sourceType: "SPARK",
+        status: "pending",
+        publishedOpportunityId: opp.id,
+        recalledAt: now,
+        recalledBy: actor.email,
+        normalizedTitle: norm,
+        createdAt: opp.createdAt || now,
+        updatedAt: now,
+      };
+      if (opp.abstractDeadline) candData.abstractDeadline = opp.abstractDeadline;
+      if (opp.fullPaperDeadline) candData.fullPaperDeadline = opp.fullPaperDeadline;
+      if (opp.registrationDeadline) candData.registrationDeadline = opp.registrationDeadline;
+      if (opp.eventDate) candData.eventDate = opp.eventDate;
+      if (opp.location) candData.location = opp.location;
+      if (opp.fee) candData.fee = opp.fee;
+      if (opp.publicationFee) candData.publicationFee = opp.publicationFee;
+      if (opp.registrationFee) candData.registrationFee = opp.registrationFee;
+      if (opp.feeStatus) candData.feeStatus = opp.feeStatus;
+      if (opp.feeSourceUrl) candData.feeSourceUrl = opp.feeSourceUrl;
+      if (opp.detailedContent) candData.detailedContent = opp.detailedContent;
+      if (opp.topicsDetailed) candData.topicsDetailed = opp.topicsDetailed;
+      if (opp.publicationFormat) candData.publicationFormat = opp.publicationFormat;
+      if (opp.indexing) candData.indexing = opp.indexing;
+      if (opp.submissionUrl) candData.submissionUrl = opp.submissionUrl;
+      if (opp.sourceUrl) candData.sourceUrl = opp.sourceUrl;
+      if (opp.directions) candData.directions = opp.directions;
+      if (opp.suitability) candData.suitability = opp.suitability;
+      if (opp.notes) candData.notes = opp.notes;
+      if (opp.runId) candData.runId = opp.runId;
+      if (opp.discoveredAt) candData.discoveredAt = opp.discoveredAt;
+      if (opp.sheetStatus) candData.sheetStatus = opp.sheetStatus;
+
+      batch.set(candRef, candData);
+      batch.update(oppRef, { candidateId: candRef.id });
+    }
+  }
+
+  await batch.commit();
+
+  await logAudit(
+    actor,
+    "RECALL_OPPORTUNITY",
+    "opportunity",
+    opp.id,
+    `Thu hồi cơ hội Spark về hàng chờ AI duyệt: "${opp.title}" (Candidate: ${candRef.id})`
+  );
+}
+
 // ======================== OPPORTUNITY CANDIDATES (SPARK) ========================
 export async function fetchOpportunityCandidates(): Promise<OpportunityCandidate[]> {
   const snap = await getDocs(collection(firestore, "opportunityCandidates"));
@@ -586,6 +743,7 @@ export async function approveCandidate(
     status: "approved",
     reviewedBy: actor.email,
     reviewedAt: now,
+    publishedOpportunityId: oppRef.id,
     updatedAt: now,
   });
   await batch.commit();
@@ -637,6 +795,34 @@ export async function deleteCandidate(
     candidateId,
     `Xóa ứng viên cơ hội: "${candidateTitle}"`
   );
+}
+
+export function subscribePendingCandidatesCount(
+  callback: (count: number) => void
+): () => void {
+  const q = query(
+    collection(firestore, "opportunityCandidates"),
+    where("status", "==", "pending")
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      callback(snap.size);
+    },
+    (error) => {
+      console.error("Lỗi khi theo dõi số lượng tin AI chờ duyệt:", error);
+      callback(0);
+    }
+  );
+}
+
+export async function fetchPendingCandidatesCount(): Promise<number> {
+  const q = query(
+    collection(firestore, "opportunityCandidates"),
+    where("status", "==", "pending")
+  );
+  const snap = await getDocs(q);
+  return snap.size;
 }
 
 // ======================== RESEARCH WORKS (TIẾN ĐỘ NCKH) ========================

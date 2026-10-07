@@ -24,7 +24,7 @@ describe("LAYOUT & Role Navigation Verification (SCImago & IFAA Admin Standards)
     if (isAdmin) {
       groups.push({
         title: "QUẢN TRỊ",
-        items: ["Hàng chờ Spark", "Giảng viên", "Import dữ liệu"],
+        items: ["Dữ liệu AI tìm", "Giảng viên", "Import dữ liệu"],
       });
     }
 
@@ -61,7 +61,7 @@ describe("LAYOUT & Role Navigation Verification (SCImago & IFAA Admin Standards)
     expect(allItems).toContain("Hướng dẫn sử dụng");
 
     // Prohibited items for Lecturer
-    expect(allItems).not.toContain("Hàng chờ Spark");
+    expect(allItems).not.toContain("Dữ liệu AI tìm");
     expect(allItems).not.toContain("Giảng viên");
     expect(allItems).not.toContain("Import dữ liệu");
     expect(allItems).not.toContain("Khu vực Owner");
@@ -77,7 +77,7 @@ describe("LAYOUT & Role Navigation Verification (SCImago & IFAA Admin Standards)
 
     expect(allItems).toContain("Tổng quan");
     expect(allItems).toContain("Cơ hội NCKH");
-    expect(allItems).toContain("Hàng chờ Spark");
+    expect(allItems).toContain("Dữ liệu AI tìm");
     expect(allItems).toContain("Giảng viên");
     expect(allItems).toContain("Import dữ liệu");
     expect(allItems).toContain("Thống kê NCKH");
@@ -98,7 +98,7 @@ describe("LAYOUT & Role Navigation Verification (SCImago & IFAA Admin Standards)
     expect(allItems).toContain("Cơ hội NCKH");
     expect(allItems).toContain("Tiến độ NCKH");
     expect(allItems).toContain("Hồ sơ nghiên cứu");
-    expect(allItems).toContain("Hàng chờ Spark");
+    expect(allItems).toContain("Dữ liệu AI tìm");
     expect(allItems).toContain("Giảng viên");
     expect(allItems).toContain("Import dữ liệu");
     expect(allItems).toContain("Thống kê NCKH");

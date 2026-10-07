@@ -478,12 +478,12 @@ export const AdminDashboard: React.FC = () => {
           </p>
         </div>
 
-        {/* Widget 2: Hàng chờ Spark pending */}
+        {/* Widget 2: Dữ liệu AI tìm pending */}
         <div className="card">
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
             <Sparkles size={18} color="#9333ea" />
             <span style={{ fontWeight: 700, fontSize: "0.9rem", color: "var(--primary)" }}>
-              Hàng chờ Spark AI
+              Dữ liệu AI tìm
             </span>
           </div>
           <div style={{ fontSize: "1.4rem", fontWeight: 800, color: "#9333ea", marginBottom: 4 }}>
@@ -492,7 +492,7 @@ export const AdminDashboard: React.FC = () => {
           <p style={{ fontSize: "0.8rem", color: "var(--muted)", margin: 0 }}>
             {pendingSparkCount > 0
               ? "Cần duyệt sơ bộ trước khi công bố giảng viên"
-              : "Không có đề xuất Spark nào đang chờ duyệt"}
+              : "Không có tin AI nào đang chờ duyệt"}
           </p>
         </div>
 
