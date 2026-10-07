@@ -228,53 +228,67 @@ a:hover {
   overflow: hidden;
 }
 
-/* Brand Area inside Sidebar (Compact IFA-SSR Style) */
+/* Brand Area inside Sidebar (Centered, Clean Academic Branding) */
 .sidebar-brand-container {
   flex: 0 0 auto;
-  padding: 14px 16px 10px;
+  padding: 18px 16px 14px;
   border-bottom: 1px solid var(--line);
   background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  position: relative;
 }
 
-.sidebar-brand-top {
+.sidebar-brand-cluster {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
+  text-align: center;
+  width: 100%;
 }
 
 .sidebar-logos {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 8px;
 }
 
 .sidebar-logo-tdtu {
-  height: 26px;
+  height: 38px;
   width: auto;
+  max-width: 95px;
   object-fit: contain;
 }
 
 .sidebar-logo-sep {
   width: 1px;
-  height: 18px;
+  height: 24px;
   background-color: var(--line-strong);
 }
 
 .sidebar-logo-ifa {
-  height: 26px;
+  height: 38px;
   width: auto;
+  max-width: 95px;
   object-fit: contain;
 }
 
 .sidebar-mobile-close {
   display: none;
+  position: absolute;
+  top: 10px;
+  right: 10px;
   background: transparent;
   border: none;
   cursor: pointer;
   color: var(--muted);
-  padding: 4px;
+  padding: 6px;
   border-radius: 4px;
+  z-index: 2;
 }
 .sidebar-mobile-close:hover {
   background: #f1f5f9;
@@ -284,40 +298,28 @@ a:hover {
 .sidebar-brand-text {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  text-align: center;
 }
 
 .sidebar-brand-title {
-  font-size: 1.15rem;
+  font-size: 1.25rem;
   font-weight: 800;
   color: var(--primary);
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
   letter-spacing: -0.01em;
-}
-
-.sidebar-badge-academic {
-  font-size: 0.65rem;
-  background-color: #e0f2fe;
-  color: #0369a1;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
+  line-height: 1.2;
 }
 
 .sidebar-brand-en {
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   font-weight: 600;
   color: var(--teal);
-  margin-top: 1px;
-}
-
-.sidebar-brand-vn {
-  font-size: 0.72rem;
-  color: var(--muted);
-  line-height: 1.3;
-  margin-top: 2px;
+  margin-top: 3px;
+  letter-spacing: 0.01em;
+  text-align: center;
 }
 
 /* Nav Item Scrollable Area */
@@ -1217,5 +1219,40 @@ a:hover {
   .page-header-block {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+/* IFAA+ Style Research Opportunities Grid & Card Actions */
+.opportunity-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+  margin-bottom: 32px;
+}
+
+@media (max-width: 1439px) {
+  .opportunity-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .opportunity-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
+.card-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+@media (max-width: 480px) {
+  .card-actions-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

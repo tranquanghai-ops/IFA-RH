@@ -13,6 +13,7 @@ import {
   DollarSign,
   Tag,
   Clock,
+  Sparkles,
 } from "lucide-react";
 
 interface OpportunityDetailModalProps {
@@ -54,11 +55,11 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
             {opportunity.submissionUrl && (
               <a
                 href={opportunity.submissionUrl}
-                target="_blank"
+                target={opportunity.submissionUrl.startsWith("mailto:") ? undefined : "_blank"}
                 rel="noopener noreferrer"
                 className="btn btn-primary btn-sm"
               >
-                Cổng nộp bài (Submission)
+                {opportunity.submissionUrl.startsWith("mailto:") ? "Gửi email nộp bài" : "Cổng nộp bài (Submission)"}
                 <ExternalLink size={14} />
               </a>
             )}
@@ -198,6 +199,17 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
         </div>
 
         {/* Suitability for MTCN Faculty */}
+        {opportunity.suitability && (
+          <div style={{ background: "#ecfdf5", border: "1px solid #a7f3d0", padding: "12px 16px", borderRadius: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, color: "#065f46", marginBottom: 4 }}>
+              <Sparkles size={18} />
+              Mức độ phù hợp với Khoa Mỹ thuật Công nghiệp:
+            </div>
+            <div style={{ color: "#047857", fontSize: "0.95rem", fontWeight: 600 }}>{opportunity.suitability}</div>
+          </div>
+        )}
+
+        {/* Field of MTCN */}
         {opportunity.field && (
           <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: "12px 16px", borderRadius: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, color: "#166534", marginBottom: 4 }}>
@@ -232,6 +244,18 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
             </div>
             <div style={{ color: "#0c4a6e", fontSize: "0.9rem", lineHeight: 1.6, whiteSpace: "pre-line" }}>
               {opportunity.directions}
+            </div>
+          </div>
+        )}
+
+        {/* Editorial / Curator Notes */}
+        {opportunity.notes && (
+          <div style={{ background: "#fffbeb", border: "1px solid #fde68a", padding: "14px 16px", borderRadius: 8 }}>
+            <div style={{ fontWeight: 700, color: "#92400e", marginBottom: 4, fontSize: "0.85rem" }}>
+              Ghi chú của chuyên gia tổng hợp:
+            </div>
+            <div style={{ color: "#78350f", fontSize: "0.875rem", lineHeight: 1.5 }}>
+              {opportunity.notes}
             </div>
           </div>
         )}

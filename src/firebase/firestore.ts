@@ -368,10 +368,19 @@ export async function addCandidate(
   actor?: { uid: string; email: string; role: UserRole }
 ): Promise<string> {
   const now = new Date().toISOString();
+  
+  // Clean undefined properties for Firestore safety
+  const cleanData: any = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (v !== undefined) {
+      cleanData[k] = v;
+    }
+  }
+
   const ref = await addDoc(collection(firestore, "opportunityCandidates"), {
-    ...data,
+    ...cleanData,
     normalizedTitle: normalizeText(data.title),
-    createdAt: now,
+    createdAt: cleanData.createdAt || now,
     updatedAt: now,
   });
 
@@ -394,33 +403,39 @@ export async function approveCandidate(
   const now = new Date().toISOString();
 
   // 1. Create published opportunity
-  const oppData: Omit<Opportunity, "id" | "createdAt" | "updatedAt"> = {
+  const oppData: any = {
     title: candidate.title,
     organizer: candidate.organizer,
-    country: candidate.country,
+    country: candidate.country || "Việt Nam",
     type: candidate.type,
     level: candidate.level,
-    topic: candidate.topic,
-    field: candidate.field,
+    topic: candidate.topic || "",
+    field: candidate.field || "",
     tags: candidate.tags || [],
     deadline: candidate.deadline,
-    abstractDeadline: candidate.abstractDeadline,
-    fullPaperDeadline: candidate.fullPaperDeadline,
-    registrationDeadline: candidate.registrationDeadline,
-    eventDate: candidate.eventDate,
-    location: candidate.location,
-    fee: candidate.fee,
-    publicationFormat: candidate.publicationFormat,
-    indexing: candidate.indexing,
-    content: candidate.content,
-    submissionUrl: candidate.submissionUrl,
-    sourceUrl: candidate.sourceUrl,
-    directions: candidate.directions,
+    content: candidate.content || "",
     sourceType: "SPARK",
     status: "published",
     candidateId: candidate.id,
     createdBy: actor.email,
   };
+
+  if (candidate.abstractDeadline) oppData.abstractDeadline = candidate.abstractDeadline;
+  if (candidate.fullPaperDeadline) oppData.fullPaperDeadline = candidate.fullPaperDeadline;
+  if (candidate.registrationDeadline) oppData.registrationDeadline = candidate.registrationDeadline;
+  if (candidate.eventDate) oppData.eventDate = candidate.eventDate;
+  if (candidate.location) oppData.location = candidate.location;
+  if (candidate.fee) oppData.fee = candidate.fee;
+  if (candidate.publicationFormat) oppData.publicationFormat = candidate.publicationFormat;
+  if (candidate.indexing) oppData.indexing = candidate.indexing;
+  if (candidate.submissionUrl) oppData.submissionUrl = candidate.submissionUrl;
+  if (candidate.sourceUrl) oppData.sourceUrl = candidate.sourceUrl;
+  if (candidate.directions) oppData.directions = candidate.directions;
+  if (candidate.suitability) oppData.suitability = candidate.suitability;
+  if (candidate.notes) oppData.notes = candidate.notes;
+  if (candidate.runId) oppData.runId = candidate.runId;
+  if (candidate.discoveredAt) oppData.discoveredAt = candidate.discoveredAt;
+  if (candidate.sheetStatus) oppData.sheetStatus = candidate.sheetStatus;
 
   const oppRef = await addDoc(collection(firestore, "opportunities"), {
     ...oppData,

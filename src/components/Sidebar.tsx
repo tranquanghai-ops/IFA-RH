@@ -183,9 +183,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
         className={`workspace-sidebar ${isOpenMobile ? "drawer-open" : ""}`}
         aria-label="Thanh điều hướng chính"
       >
-        {/* Brand Header */}
+        {/* Brand Header (Centered, Clean Academic Branding) */}
         <div className="sidebar-brand-container">
-          <div className="sidebar-brand-top">
+          {/* Mobile close button */}
+          <button
+            type="button"
+            className="sidebar-mobile-close"
+            onClick={onCloseMobile}
+            aria-label="Đóng menu"
+          >
+            <X size={20} />
+          </button>
+
+          <div className="sidebar-brand-cluster">
             <div className="sidebar-logos">
               <img
                 src="/tdtu-logo.png"
@@ -199,24 +209,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 className="sidebar-logo-ifa"
               />
             </div>
-            {/* Mobile close button */}
-            <button
-              type="button"
-              className="sidebar-mobile-close"
-              onClick={onCloseMobile}
-              aria-label="Đóng menu"
-            >
-              <X size={20} />
-            </button>
-          </div>
 
-          <div className="sidebar-brand-text">
-            <div className="sidebar-brand-title">
-              IFA-RH
-              <span className="sidebar-badge-academic">HUB</span>
+            <div className="sidebar-brand-text">
+              <div className="sidebar-brand-title">IFA-RH</div>
+              <div className="sidebar-brand-en">IFA Research Hub</div>
             </div>
-            <div className="sidebar-brand-en">IFA Research Hub</div>
-            <div className="sidebar-brand-vn">Hệ thống Nghiên cứu Khoa học Giảng viên</div>
           </div>
         </div>
 

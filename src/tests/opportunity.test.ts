@@ -62,6 +62,25 @@ describe("OPPORTUNITY & Candidate Deduplication", () => {
     expect(result.isDuplicate).toBe(false);
   });
 
+  it("should detect duplicates by matching submission/registration URL", () => {
+    const candidate = {
+      title: "Hội thảo ICISN 2027",
+      submissionUrl: "https://www.icisn.com/for-attendees",
+      organizer: "ĐH Hải Dương",
+    };
+    const existing = [
+      {
+        title: "International Conference on Intelligent Systems and Networks 2027",
+        submissionUrl: "https://www.icisn.com/for-attendees",
+        organizer: "Đại học Hải Dương & Sở KHCN Hải Phòng",
+      },
+    ];
+
+    const result = isDuplicateOpportunity(candidate, existing);
+    expect(result.isDuplicate).toBe(true);
+    expect(result.matchReason).toContain("Trùng link nộp bài / đăng ký");
+  });
+
   it("should compute deadline badge statuses accurately", () => {
     const now = new Date();
     // 3 days in future -> SẮP HẾT HẠN
@@ -78,5 +97,48 @@ describe("OPPORTUNITY & Candidate Deduplication", () => {
     const far = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
     const badgeFar = getDeadlineBadge(far.toISOString());
     expect(badgeFar.variant).toBe("success");
+  });
+});
+
+describe("DATE FORMATTING & SHEET DATA PIPELINE", () => {
+  it("should safely format date ranges, ISO dates, and ignore 'Chưa xác minh'", async () => {
+    const { formatDateVN } = await import("../utils/date");
+    expect(formatDateVN("03/12/2026 - 04/12/2026")).toBe("03/12/2026 - 04/12/2026");
+    expect(formatDateVN("Chưa xác minh")).toBe("");
+    expect(formatDateVN("2026-10-30T00:00:00.000Z")).toBe("30/10/2026");
+    expect(formatDateVN("")).toBe("");
+    expect(formatDateVN(null)).toBe("");
+  });
+
+  it("should map all 8 records from official sheet correctly without errors", async () => {
+    const { OFFICIAL_FACULTY_RESEARCH_RECORDS, mapRowToCandidate } = await import(
+      "../services/facultyResearchData"
+    );
+    expect(OFFICIAL_FACULTY_RESEARCH_RECORDS.length).toBe(8);
+
+    const candidates = OFFICIAL_FACULTY_RESEARCH_RECORDS.map((row, idx) =>
+      mapRowToCandidate(row, idx)
+    );
+
+    // Verify all candidates have valid fields
+    for (const c of candidates) {
+      expect(c.title).toBeTruthy();
+      expect(c.organizer).toBeTruthy();
+      expect(c.sourceType).toBe("SPARK");
+      expect(c.status).toBe("pending");
+      expect(c.suitability).toBeTruthy();
+      // No NaN in titles or content
+      expect(c.title).not.toContain("NaN");
+      expect(c.content).not.toContain("NaN");
+    }
+
+    // Verify specific records
+    expect(candidates[0].title).toContain("9th CIEMB 2026");
+    expect(candidates[0].suitability).toBe("Phù hợp");
+    expect(candidates[2].title).toContain("ICISN 2027");
+    expect(candidates[2].indexing).toContain("Scopus");
+    expect(candidates[2].suitability).toBe("Rất phù hợp");
+    expect(candidates[7].title).toContain("RTD 2026");
+    expect(candidates[7].sheetStatus).toBe("HẾT HẠN");
   });
 });

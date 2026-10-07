@@ -10,6 +10,7 @@ import {
 } from "../firebase/firestore";
 import type { OpportunityCandidate, Opportunity } from "../types";
 import { CandidateReviewModal } from "../components/CandidateReviewModal";
+import { FacultyResearchSyncModal } from "../components/FacultyResearchSyncModal";
 import { formatDateVN } from "../utils/date";
 import { isDuplicateOpportunity } from "../utils/dedupe";
 import {
@@ -35,8 +36,10 @@ export const AdminCandidatesPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<"pending" | "approved" | "rejected" | "all">("pending");
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Modal
+  // Modals & Actions
   const [selectedCandidate, setSelectedCandidate] = useState<OpportunityCandidate | null>(null);
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [bulkApproving, setBulkApproving] = useState(false);
 
   const loadData = async () => {
     setLoading(true);
@@ -59,6 +62,36 @@ export const AdminCandidatesPage: React.FC = () => {
   }, []);
 
   if (!profile) return null;
+
+  const handleBulkApproveOpen = async () => {
+    const openPending = candidates.filter(
+      (c) => c.status === "pending" && c.sheetStatus !== "HẾT HẠN"
+    );
+    if (openPending.length === 0) return;
+    if (
+      !window.confirm(
+        `Duyệt và xuất bản ${openPending.length} cơ hội đang mở sang Cổng NCKH công khai?`
+      )
+    )
+      return;
+
+    setBulkApproving(true);
+    try {
+      for (const cand of openPending) {
+        await approveCandidate(cand, {
+          uid: profile.uid,
+          email: profile.email,
+          role: profile.role,
+        });
+      }
+      await loadData();
+    } catch (err) {
+      console.error(err);
+      alert("Lỗi khi duyệt hàng loạt: " + err);
+    } finally {
+      setBulkApproving(false);
+    }
+  };
 
   const filteredCandidates = candidates.filter((c) => {
     const matchStatus = statusFilter === "all" ? true : c.status === statusFilter;
@@ -98,6 +131,28 @@ export const AdminCandidatesPage: React.FC = () => {
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => setIsSyncModalOpen(true)}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+          >
+            <Sparkles size={14} /> Đồng bộ từ IFA Faculty Research
+          </button>
+
+          {candidates.some((c) => c.status === "pending" && c.sheetStatus !== "HẾT HẠN") && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={handleBulkApproveOpen}
+              disabled={bulkApproving}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--teal)" }}
+            >
+              <CheckCircle size={14} />
+              {bulkApproving ? "Đang xuất bản..." : "Duyệt tất cả đang mở"}
+            </button>
+          )}
+
           <a
             href="#admin_import"
             className="btn btn-secondary btn-sm"
@@ -376,6 +431,17 @@ export const AdminCandidatesPage: React.FC = () => {
             candTitle,
             { uid: profile.uid, email: profile.email, role: profile.role }
           );
+          await loadData();
+        }}
+      />
+
+      {/* Sync from IFA Faculty Research (Spark) Modal */}
+      <FacultyResearchSyncModal
+        isOpen={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+        existingCandidates={candidates}
+        publishedOpportunities={publishedOpps}
+        onSuccess={async () => {
           await loadData();
         }}
       />

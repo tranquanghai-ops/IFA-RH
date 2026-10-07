@@ -53,7 +53,7 @@ export interface Opportunity {
   topic: string;
   field: string; // Ngành MTCN phù hợp
   tags: string[];
-  deadline: string; // yyyy-mm-dd
+  deadline: string; // yyyy-mm-dd or dd/mm/yyyy
   abstractDeadline?: string;
   fullPaperDeadline?: string;
   registrationDeadline?: string;
@@ -66,6 +66,11 @@ export interface Opportunity {
   submissionUrl?: string;
   sourceUrl?: string;
   directions?: string; // Gợi ý hướng bài cho GV MTCN
+  suitability?: string; // Mức độ phù hợp MTCN: Rất phù hợp, Phù hợp, Tham khảo
+  notes?: string;
+  runId?: string;
+  discoveredAt?: string;
+  sheetStatus?: string;
   sourceType: OpportunitySourceType;
   status: OpportunityStatus;
   candidateId?: string;
@@ -100,6 +105,11 @@ export interface OpportunityCandidate {
   submissionUrl?: string;
   sourceUrl?: string;
   directions?: string;
+  suitability?: string;
+  notes?: string;
+  runId?: string;
+  discoveredAt?: string;
+  sheetStatus?: string;
   sourceType: "SPARK";
   status: CandidateStatus;
   rejectionReason?: string;

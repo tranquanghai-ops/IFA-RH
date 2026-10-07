@@ -19,6 +19,8 @@ export function isDuplicateOpportunity(
   candidate: {
     title: string;
     sourceUrl?: string;
+    submissionUrl?: string;
+    registrationUrl?: string;
     organizer?: string;
     deadline?: string;
     eventDate?: string;
@@ -26,26 +28,39 @@ export function isDuplicateOpportunity(
   existingList: Array<{
     title: string;
     sourceUrl?: string;
+    submissionUrl?: string;
+    registrationUrl?: string;
     organizer?: string;
     deadline?: string;
     eventDate?: string;
   }>
 ): { isDuplicate: boolean; matchedTitle?: string; matchReason?: string } {
   const normTitle = normalizeText(candidate.title);
-  const normUrl = (candidate.sourceUrl || "").trim().toLowerCase();
+  const normSourceUrl = (candidate.sourceUrl || "").trim().toLowerCase();
+  const candSubUrl = (candidate.submissionUrl || candidate.registrationUrl || "").trim().toLowerCase();
   const normOrg = normalizeText(candidate.organizer);
 
   for (const existing of existingList) {
     const exTitle = normalizeText(existing.title);
-    const exUrl = (existing.sourceUrl || "").trim().toLowerCase();
+    const exSourceUrl = (existing.sourceUrl || "").trim().toLowerCase();
+    const exSubUrl = (existing.submissionUrl || existing.registrationUrl || "").trim().toLowerCase();
     const exOrg = normalizeText(existing.organizer);
 
-    // Exact or high url match
-    if (normUrl && exUrl && normUrl === exUrl) {
+    // Exact or high source url match
+    if (normSourceUrl && exSourceUrl && normSourceUrl === exSourceUrl) {
       return {
         isDuplicate: true,
         matchedTitle: existing.title,
-        matchReason: `Trùng link nguồn chính thức: ${normUrl}`,
+        matchReason: `Trùng link nguồn chính thức: ${normSourceUrl}`,
+      };
+    }
+
+    // Exact submission url match (excluding generic mailto if any, but matching web portals)
+    if (candSubUrl && exSubUrl && candSubUrl === exSubUrl && candSubUrl.length > 10) {
+      return {
+        isDuplicate: true,
+        matchedTitle: existing.title,
+        matchReason: `Trùng link nộp bài / đăng ký: ${candSubUrl}`,
       };
     }
 
