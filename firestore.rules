@@ -355,6 +355,7 @@ service cloud.firestore {
           'field', 'tags', 'deadline', 'abstractDeadline', 'fullPaperDeadline',
           'registrationDeadline', 'eventDate', 'location', 'fee', 'publicationFormat',
           'indexing', 'content', 'submissionUrl', 'sourceUrl', 'directions',
+          'suitability', 'notes', 'runId', 'discoveredAt', 'sheetStatus',
           'sourceType', 'status', 'candidateId', 'createdAt', 'updatedAt',
           'createdBy', 'updatedBy'
         ]) &&
@@ -387,6 +388,11 @@ service cloud.firestore {
         (!('submissionUrl' in data) || validString(data.submissionUrl, 0, 500)) &&
         (!('sourceUrl' in data) || validString(data.sourceUrl, 0, 500)) &&
         (!('directions' in data) || validString(data.directions, 0, 2000)) &&
+        (!('suitability' in data) || validString(data.suitability, 0, 100)) &&
+        (!('notes' in data) || validString(data.notes, 0, 2000)) &&
+        (!('runId' in data) || validString(data.runId, 0, 100)) &&
+        (!('discoveredAt' in data) || validString(data.discoveredAt, 0, 50)) &&
+        (!('sheetStatus' in data) || validString(data.sheetStatus, 0, 100)) &&
         (!('candidateId' in data) || validString(data.candidateId, 0, 100)) &&
         (!('updatedBy' in data) || validString(data.updatedBy, 0, 100)) &&
         (!('id' in data) || validString(data.id, 0, 100));
@@ -404,6 +410,7 @@ service cloud.firestore {
           'field', 'tags', 'deadline', 'abstractDeadline', 'fullPaperDeadline',
           'registrationDeadline', 'eventDate', 'location', 'fee', 'publicationFormat',
           'indexing', 'content', 'submissionUrl', 'sourceUrl', 'directions',
+          'suitability', 'notes', 'runId', 'discoveredAt', 'sheetStatus',
           'sourceType', 'status', 'rejectionReason', 'reviewedBy', 'reviewedAt',
           'normalizedTitle', 'createdAt', 'updatedAt'
         ]) &&
@@ -436,6 +443,11 @@ service cloud.firestore {
         (!('submissionUrl' in data) || validString(data.submissionUrl, 0, 500)) &&
         (!('sourceUrl' in data) || validString(data.sourceUrl, 0, 500)) &&
         (!('directions' in data) || validString(data.directions, 0, 2000)) &&
+        (!('suitability' in data) || validString(data.suitability, 0, 100)) &&
+        (!('notes' in data) || validString(data.notes, 0, 2000)) &&
+        (!('runId' in data) || validString(data.runId, 0, 100)) &&
+        (!('discoveredAt' in data) || validString(data.discoveredAt, 0, 50)) &&
+        (!('sheetStatus' in data) || validString(data.sheetStatus, 0, 100)) &&
         (!('rejectionReason' in data) || validString(data.rejectionReason, 0, 1000)) &&
         (!('reviewedBy' in data) || validString(data.reviewedBy, 0, 100)) &&
         (!('reviewedAt' in data) || validString(data.reviewedAt, 0, 50)) &&

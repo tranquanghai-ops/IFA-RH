@@ -519,6 +519,14 @@ export async function approveCandidate(
 ) {
   const now = new Date().toISOString();
 
+  const requiredText = [
+    ["tiêu đề", candidate.title], ["đơn vị tổ chức", candidate.organizer],
+    ["chủ đề", candidate.topic], ["ngành phù hợp", candidate.field],
+    ["hạn nộp", candidate.deadline], ["mô tả", candidate.content],
+  ] as const;
+  const missing = requiredText.find(([, value]) => !String(value || "").trim());
+  if (missing) throw new Error(`Chưa thể công bố: thiếu ${missing[0]}. Vui lòng bổ sung thông tin trước khi duyệt.`);
+
   // 1. Create published opportunity
   const oppData: any = {
     title: candidate.title,
@@ -554,20 +562,27 @@ export async function approveCandidate(
   if (candidate.discoveredAt) oppData.discoveredAt = candidate.discoveredAt;
   if (candidate.sheetStatus) oppData.sheetStatus = candidate.sheetStatus;
 
-  const oppRef = await addDoc(collection(firestore, "opportunities"), {
-    ...oppData,
-    createdAt: now,
-    updatedAt: now,
-  });
-
-  // 2. Mark candidate as approved
+  // A previous attempt may have published the opportunity before failing to
+  // mark its candidate. Reuse that document instead of creating a duplicate.
+  const previous = await getDocs(query(
+    collection(firestore, "opportunities"),
+    where("candidateId", "==", candidate.id),
+    limit(1)
+  ));
+  if (!previous.empty && previous.docs[0].data().status !== "published") {
+    throw new Error("Cơ hội này đã có bản công bố được lưu trữ. Vui lòng kiểm tra trước khi duyệt lại.");
+  }
+  const oppRef = previous.empty ? doc(collection(firestore, "opportunities")) : previous.docs[0].ref;
   const candRef = doc(firestore, "opportunityCandidates", candidate.id);
-  await updateDoc(candRef, {
+  const batch = writeBatch(firestore);
+  if (previous.empty) batch.set(oppRef, { ...oppData, createdAt: now, updatedAt: now });
+  batch.update(candRef, {
     status: "approved",
     reviewedBy: actor.email,
     reviewedAt: now,
     updatedAt: now,
   });
+  await batch.commit();
 
   await logAudit(
     actor,
