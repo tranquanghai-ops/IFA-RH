@@ -151,5 +151,39 @@ describe("RULES Logic & Role Permissions Verification", () => {
     const canDeleteSettings = () => false;
     expect(canDeleteSettings()).toBe(false);
   });
+
+  it("should validate enhanced opportunity fields: publicationFee, registrationFee, feeStatus, feeSourceUrl, detailedContent, topicsDetailed", () => {
+    const isValidEnhancedFields = (data: Record<string, any>) => {
+      if ('publicationFee' in data && (typeof data.publicationFee !== 'string' || data.publicationFee.length > 500)) return false;
+      if ('registrationFee' in data && (typeof data.registrationFee !== 'string' || data.registrationFee.length > 500)) return false;
+      if ('feeStatus' in data && !['SPECIFIED', 'UNKNOWN', 'FREE'].includes(data.feeStatus)) return false;
+      if ('feeSourceUrl' in data && (typeof data.feeSourceUrl !== 'string' || data.feeSourceUrl.length > 1000)) return false;
+      if ('detailedContent' in data && (typeof data.detailedContent !== 'string' || data.detailedContent.length > 50000)) return false;
+      if ('topicsDetailed' in data && (!Array.isArray(data.topicsDetailed) || data.topicsDetailed.length > 50)) return false;
+      return true;
+    };
+
+    // Valid cases
+    expect(isValidEnhancedFields({})).toBe(true);
+    expect(isValidEnhancedFields({
+      publicationFee: "5,000,000 VND",
+      registrationFee: "Miễn phí",
+      feeStatus: "SPECIFIED",
+      feeSourceUrl: "https://example.com/fees",
+      detailedContent: "Chi tiết thể lệ...",
+      topicsDetailed: ["AI in Graphic Design", "Industrial Design"]
+    })).toBe(true);
+    expect(isValidEnhancedFields({ feeStatus: "FREE" })).toBe(true);
+    expect(isValidEnhancedFields({ feeStatus: "UNKNOWN" })).toBe(true);
+
+    // Invalid cases
+    expect(isValidEnhancedFields({ feeStatus: "PAID" })).toBe(false);
+    expect(isValidEnhancedFields({ publicationFee: "x".repeat(501) })).toBe(false);
+    expect(isValidEnhancedFields({ registrationFee: "x".repeat(501) })).toBe(false);
+    expect(isValidEnhancedFields({ feeSourceUrl: "x".repeat(1001) })).toBe(false);
+    expect(isValidEnhancedFields({ detailedContent: "x".repeat(50001) })).toBe(false);
+    expect(isValidEnhancedFields({ topicsDetailed: new Array(51).fill("Topic") })).toBe(false);
+    expect(isValidEnhancedFields({ topicsDetailed: "Not a list" as any })).toBe(false);
+  });
 });
 

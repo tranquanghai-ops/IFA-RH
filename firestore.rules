@@ -51,9 +51,15 @@ rules_version = '2';
 //   - eventDate: string (optional, max 50 chars)
 //   - location: string (optional, max 200 chars)
 //   - fee: string (optional, max 100 chars)
+//   - publicationFee: string (optional, max 500 chars) - Fee for publication
+//   - registrationFee: string (optional, max 500 chars) - Fee for attendance/registration
+//   - feeStatus: string (optional, 'SPECIFIED' | 'UNKNOWN' | 'FREE')
+//   - feeSourceUrl: string (optional, max 1000 chars) - Official fee URL
 //   - publicationFormat: string (optional, max 100 chars)
 //   - indexing: string (optional, max 100 chars) - Scopus, WoS, etc.
 //   - content: string (required, 1-50000 chars) - Full markdown/html description
+//   - detailedContent: string (optional, max 50000 chars) - In-depth content analysis
+//   - topicsDetailed: list (optional, max 50 items) - Detailed tracks / topics
 //   - submissionUrl: string (optional, max 500 chars)
 //   - sourceUrl: string (optional, max 500 chars)
 //   - directions: string (optional, max 2000 chars) - Faculty writing guidance
@@ -70,7 +76,8 @@ rules_version = '2';
 // Fields:
 //   - Similar to opportunities, with status in ['pending', 'approved', 'rejected'],
 //     sourceType == 'SPARK', normalizedTitle: string (required, 1-500 chars),
-//     rejectionReason: string (optional, max 1000 chars), reviewedBy: string (optional).
+//     rejectionReason: string (optional, max 1000 chars), reviewedBy: string (optional),
+//     detailedContent, topicsDetailed, publicationFee, registrationFee, feeStatus, feeSourceUrl.
 //
 // Collection: researchWorks
 // Document ID: workId (auto-generated)
@@ -357,7 +364,9 @@ service cloud.firestore {
           'indexing', 'content', 'submissionUrl', 'sourceUrl', 'directions',
           'suitability', 'notes', 'runId', 'discoveredAt', 'sheetStatus',
           'sourceType', 'status', 'candidateId', 'createdAt', 'updatedAt',
-          'createdBy', 'updatedBy'
+          'createdBy', 'updatedBy',
+          'publicationFee', 'registrationFee', 'feeStatus', 'feeSourceUrl',
+          'detailedContent', 'topicsDetailed'
         ]) &&
         validString(data.title, 1, 300) &&
         validString(data.organizer, 1, 200) &&
@@ -383,6 +392,12 @@ service cloud.firestore {
         (!('eventDate' in data) || validString(data.eventDate, 0, 50)) &&
         (!('location' in data) || validString(data.location, 0, 200)) &&
         (!('fee' in data) || validString(data.fee, 0, 100)) &&
+        (!('publicationFee' in data) || validString(data.publicationFee, 0, 500)) &&
+        (!('registrationFee' in data) || validString(data.registrationFee, 0, 500)) &&
+        (!('feeStatus' in data) || data.feeStatus in ['SPECIFIED', 'UNKNOWN', 'FREE']) &&
+        (!('feeSourceUrl' in data) || validString(data.feeSourceUrl, 0, 1000)) &&
+        (!('detailedContent' in data) || validString(data.detailedContent, 0, 50000)) &&
+        (!('topicsDetailed' in data) || validList(data.topicsDetailed, 50)) &&
         (!('publicationFormat' in data) || validString(data.publicationFormat, 0, 100)) &&
         (!('indexing' in data) || validString(data.indexing, 0, 100)) &&
         (!('submissionUrl' in data) || validString(data.submissionUrl, 0, 500)) &&
@@ -412,7 +427,9 @@ service cloud.firestore {
           'indexing', 'content', 'submissionUrl', 'sourceUrl', 'directions',
           'suitability', 'notes', 'runId', 'discoveredAt', 'sheetStatus',
           'sourceType', 'status', 'rejectionReason', 'reviewedBy', 'reviewedAt',
-          'normalizedTitle', 'createdAt', 'updatedAt'
+          'normalizedTitle', 'createdAt', 'updatedAt',
+          'publicationFee', 'registrationFee', 'feeStatus', 'feeSourceUrl',
+          'detailedContent', 'topicsDetailed'
         ]) &&
         validString(data.title, 1, 300) &&
         validString(data.organizer, 1, 200) &&
@@ -438,6 +455,12 @@ service cloud.firestore {
         (!('eventDate' in data) || validString(data.eventDate, 0, 50)) &&
         (!('location' in data) || validString(data.location, 0, 200)) &&
         (!('fee' in data) || validString(data.fee, 0, 100)) &&
+        (!('publicationFee' in data) || validString(data.publicationFee, 0, 500)) &&
+        (!('registrationFee' in data) || validString(data.registrationFee, 0, 500)) &&
+        (!('feeStatus' in data) || data.feeStatus in ['SPECIFIED', 'UNKNOWN', 'FREE']) &&
+        (!('feeSourceUrl' in data) || validString(data.feeSourceUrl, 0, 1000)) &&
+        (!('detailedContent' in data) || validString(data.detailedContent, 0, 50000)) &&
+        (!('topicsDetailed' in data) || validList(data.topicsDetailed, 50)) &&
         (!('publicationFormat' in data) || validString(data.publicationFormat, 0, 100)) &&
         (!('indexing' in data) || validString(data.indexing, 0, 100)) &&
         (!('submissionUrl' in data) || validString(data.submissionUrl, 0, 500)) &&

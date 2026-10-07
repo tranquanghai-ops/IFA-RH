@@ -31,29 +31,22 @@ export const App: React.FC = () => {
   useEffect(() => {
     const parseUrlRoute = () => {
       const pathname = window.location.pathname;
-      const hash = window.location.hash.replace("#", "");
+      const cleanHash = window.location.hash.replace(/^#\/?/, "").trim();
 
-      if (pathname === "/own" || hash === "own") {
+      if (pathname === "/own" || cleanHash === "own") {
         setCurrentTab("owner");
         return;
       }
 
-      if (hash) {
-        setCurrentTab(hash);
+      // If specific non-public hash is provided, navigate to that workspace tab
+      if (cleanHash && cleanHash !== "public") {
+        setCurrentTab(cleanHash);
         return;
       }
 
-      // Root path
-      if (profile) {
-        // Default home for authenticated users
-        if (profile.role === "admin" || profile.role === "owner") {
-          setCurrentTab("admin_dashboard");
-        } else {
-          setCurrentTab("lecturer_dashboard");
-        }
-      } else {
-        setCurrentTab("public");
-      }
+      // Root path ('/' or '#public' or '#/public'):
+      // MUST ALWAYS stay on public home, regardless of whether user is authenticated or not!
+      setCurrentTab("public");
     };
 
     if (!loading) {
@@ -63,7 +56,7 @@ export const App: React.FC = () => {
     const handlePopState = () => parseUrlRoute();
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [profile, loading]);
+  }, [loading]);
 
   const handleSelectTab = (tab: string) => {
     setCurrentTab(tab);
