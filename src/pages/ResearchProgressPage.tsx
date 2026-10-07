@@ -77,12 +77,12 @@ export const ResearchProgressPage: React.FC = () => {
     if (!profile) return;
     setLoading(true);
     try {
-      const targetUid = isStaff
+      const targetIdentifier = isStaff
         ? selectedLecturerId === "all"
           ? undefined
           : selectedLecturerId
         : profile.uid;
-      const data = await fetchResearchWorks(targetUid);
+      const data = await fetchResearchWorks(targetIdentifier, isStaff);
       setWorks(data);
     } catch (err: any) {
       console.error(err);
@@ -274,7 +274,7 @@ export const ResearchProgressPage: React.FC = () => {
               >
                 <option value="all">Toàn bộ khoa ({activeLecturers.length} GV)</option>
                 {activeLecturers.map((l) => (
-                  <option key={l.id} value={l.uid || l.id}>
+                  <option key={l.id} value={l.email || l.uid || l.id}>
                     {l.name} ({l.email})
                   </option>
                 ))}
@@ -307,9 +307,15 @@ export const ResearchProgressPage: React.FC = () => {
       ) : filteredWorks.length === 0 ? (
         <div className="card" style={{ textAlign: "center", padding: 48, color: "var(--muted)" }}>
           <Layers size={36} color="var(--muted)" style={{ margin: "0 auto 12px" }} />
-          <h3 style={{ color: "var(--primary)", marginBottom: 6 }}>Chưa có công trình NCKH nào</h3>
+          <h3 style={{ color: "var(--primary)", marginBottom: 6 }}>
+            {isStaff && selectedLecturerId !== "all"
+              ? "Chưa có tiến độ NCKH cho giảng viên này"
+              : "Chưa có công trình NCKH nào"}
+          </h3>
           <p style={{ fontSize: "0.9rem", maxWidth: 450, margin: "0 auto 16px" }}>
-            Bạn chưa tạo đề tài hoặc bài báo nào trong tiến độ. Bấm vào nút bên dưới để bắt đầu quản lý.
+            {isStaff && selectedLecturerId !== "all"
+              ? "Giảng viên được chọn hiện chưa có đề tài, bài báo hoặc dự án nào đang theo dõi tiến độ."
+              : "Bạn chưa tạo đề tài hoặc bài báo nào trong tiến độ. Bấm vào nút bên dưới để bắt đầu quản lý."}
           </p>
           <button
             type="button"

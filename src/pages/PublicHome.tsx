@@ -6,7 +6,7 @@ import { OpportunityDetailModal } from "../components/OpportunityDetailModal";
 import {
   Search,
   Filter,
-  Sparkles,
+  Award,
   AlertCircle,
   RefreshCw,
 } from "lucide-react";
@@ -116,7 +116,7 @@ export const PublicHome: React.FC = () => {
               textTransform: "uppercase",
             }}
           >
-            <Sparkles size={14} />
+            <Award size={14} />
             CỔNG NCKH GIẢNG VIÊN KHOA MỸ THUẬT CÔNG NGHIỆP
           </div>
           <h1

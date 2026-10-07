@@ -121,12 +121,88 @@ export async function fetchAllUsers(): Promise<UserProfile[]> {
 }
 
 export async function fetchActiveLecturers(): Promise<UserProfile[]> {
-  const snap = await getDocs(collection(firestore, "users"));
-  const rawList = snap.docs
-    .map((d) => ({ id: d.id, ...d.data() } as UserProfile))
-    .filter((u) => u.active === true);
-  const deduplicated = deduplicateUsers(rawList);
-  return deduplicated.sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  try {
+    const [sharedList, usersList, settingsMap] = await Promise.all([
+      fetchSharedPersonnel(),
+      fetchAllUsers(),
+      fetchResearchPersonnelSettings(),
+    ]);
+
+    const usersMap = new Map<string, UserProfile>();
+    usersList.forEach((u) => {
+      if (u.email) usersMap.set(u.email.toLowerCase().trim(), u);
+    });
+
+    const activeList: UserProfile[] = [];
+    const seenEmails = new Set<string>();
+
+    if (sharedList.length > 0) {
+      sharedList.forEach((p) => {
+        const emailNorm = p.emailNormalized.toLowerCase().trim();
+        if (!emailNorm || seenEmails.has(emailNorm)) return;
+
+        const setting = settingsMap.get(emailNorm);
+        const researchTrackingStatus: ResearchTrackingStatus =
+          setting?.researchTrackingStatus || "ACTIVE";
+
+        // Exclude archived from research tracking or inactive personnel
+        if (researchTrackingStatus === "ARCHIVED" || p.active === false) {
+          return;
+        }
+
+        seenEmails.add(emailNorm);
+        const user = usersMap.get(emailNorm);
+
+        activeList.push({
+          id: user?.id || emailNorm,
+          uid: user?.uid || user?.id || emailNorm,
+          email: p.emailNormalized,
+          name: user?.name || p.displayName,
+          department: user?.department || p.departmentName || "Chưa phân ngành",
+          academicDegree: user?.academicDegree || p.academicDegree || "",
+          active: true,
+          role: user?.role || "lecturer",
+          photoURL: user?.photoURL,
+          orcid: user?.orcid,
+          googleScholar: user?.googleScholar,
+          researchGate: user?.researchGate,
+          website: user?.website,
+          createdAt: user?.createdAt || p.sourceUpdatedAt || p.sharedUpdatedAt,
+          updatedAt: user?.updatedAt || p.sharedUpdatedAt,
+        });
+      });
+    }
+
+    // Also include any active users from users collection not present in sharedPersonnel
+    usersList.forEach((u) => {
+      const emailNorm = (u.email || "").toLowerCase().trim();
+      if (!emailNorm || seenEmails.has(emailNorm)) return;
+
+      const setting = settingsMap.get(emailNorm);
+      const researchTrackingStatus: ResearchTrackingStatus =
+        setting?.researchTrackingStatus || "ACTIVE";
+
+      if (researchTrackingStatus === "ARCHIVED" || u.active === false) {
+        return;
+      }
+
+      seenEmails.add(emailNorm);
+      activeList.push(u);
+    });
+
+    return deduplicateUsers(activeList).sort((a, b) =>
+      (a.name || "").localeCompare(b.name || "", "vi")
+    );
+  } catch (err) {
+    console.warn("fetchActiveLecturers error, falling back to users collection:", err);
+    const snap = await getDocs(collection(firestore, "users"));
+    const rawList = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() } as UserProfile))
+      .filter((u) => u.active === true);
+    return deduplicateUsers(rawList).sort((a, b) =>
+      (a.name || "").localeCompare(b.name || "", "vi")
+    );
+  }
 }
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {
@@ -543,13 +619,25 @@ export async function deleteCandidate(
 }
 
 // ======================== RESEARCH WORKS (TIẾN ĐỘ NCKH) ========================
-export async function fetchResearchWorks(userId?: string): Promise<ResearchWork[]> {
+export async function fetchResearchWorks(
+  targetIdentifier?: string,
+  isStaff = false
+): Promise<ResearchWork[]> {
   let q = query(collection(firestore, "researchWorks"));
-  if (userId) {
-    q = query(collection(firestore, "researchWorks"), where("userId", "==", userId));
+  if (targetIdentifier && !isStaff) {
+    q = query(collection(firestore, "researchWorks"), where("userId", "==", targetIdentifier));
   }
   const snap = await getDocs(q);
-  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ResearchWork));
+  let list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ResearchWork));
+
+  if (isStaff && targetIdentifier && targetIdentifier !== "all") {
+    const term = targetIdentifier.trim().toLowerCase();
+    list = list.filter((w) =>
+      (w.userId && w.userId.toLowerCase() === term) ||
+      (w.userEmail && w.userEmail.toLowerCase() === term)
+    );
+  }
+
   return list.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
 }
 
@@ -698,13 +786,25 @@ export async function fetchResearchProgressHistory(
 }
 
 // ======================== PUBLICATIONS (HỒ SƠ NGHIÊN CỨU) ========================
-export async function fetchPublications(userId?: string): Promise<Publication[]> {
+export async function fetchPublications(
+  targetIdentifier?: string,
+  isStaff = false
+): Promise<Publication[]> {
   let q = query(collection(firestore, "publications"));
-  if (userId) {
-    q = query(collection(firestore, "publications"), where("userId", "==", userId));
+  if (targetIdentifier && !isStaff) {
+    q = query(collection(firestore, "publications"), where("userId", "==", targetIdentifier));
   }
   const snap = await getDocs(q);
-  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Publication));
+  let list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Publication));
+
+  if (isStaff && targetIdentifier && targetIdentifier !== "all") {
+    const term = targetIdentifier.trim().toLowerCase();
+    list = list.filter((p) =>
+      (p.userId && p.userId.toLowerCase() === term) ||
+      (p.userEmail && p.userEmail.toLowerCase() === term)
+    );
+  }
+
   return list.sort((a, b) => (b.year || 0) - (a.year || 0));
 }
 

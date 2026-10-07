@@ -1,12 +1,11 @@
 import React from "react";
 import type { Opportunity } from "../types";
-import { formatDateVN, getDeadlineBadge } from "../utils/date";
+import { formatDateVN, getOpportunityDeadlineInfo } from "../utils/date";
 import {
   Calendar,
   Building,
   MapPin,
   Clock,
-  Sparkles,
   BookOpen,
   Award,
 } from "lucide-react";
@@ -20,10 +19,7 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
   opportunity,
   onViewDetail,
 }) => {
-  const badgeInfo = getDeadlineBadge(
-    opportunity.fullPaperDeadline || opportunity.deadline,
-    opportunity.createdAt || opportunity.discoveredAt
-  );
+  const deadlineInfo = getOpportunityDeadlineInfo(opportunity);
 
   // Parse suitability badge
   const getSuitabilityBadge = () => {
@@ -38,7 +34,8 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
             color: "#047857",
             border: "1px solid #a7f3d0",
             fontWeight: 700,
-            fontSize: "0.72rem",
+            fontSize: "0.7rem",
+            padding: "2px 6px",
           }}
         >
           ★ {suit}
@@ -54,7 +51,8 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
             color: "#1d4ed8",
             border: "1px solid #bfdbfe",
             fontWeight: 600,
-            fontSize: "0.72rem",
+            fontSize: "0.7rem",
+            padding: "2px 6px",
           }}
         >
           {suit}
@@ -68,7 +66,8 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
           backgroundColor: "#f8fafc",
           color: "#475569",
           border: "1px solid #e2e8f0",
-          fontSize: "0.72rem",
+          fontSize: "0.7rem",
+          padding: "2px 6px",
         }}
       >
         {suit}
@@ -92,72 +91,76 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
       : "Đến trang đăng ký ↗"
     : "Đến nguồn ↗";
 
-  const formattedDeadline = formatDateVN(
+  // Formatted dates in priority order: 1. Abstract -> 2. Full paper -> 3. Registration -> 4. Event
+  const formattedAbstract = formatDateVN(opportunity.abstractDeadline);
+  const formattedFullPaper = formatDateVN(
     opportunity.fullPaperDeadline || opportunity.deadline
   );
-  const formattedAbstract = formatDateVN(opportunity.abstractDeadline);
   const formattedRegistration = formatDateVN(opportunity.registrationDeadline);
   const formattedEvent = formatDateVN(opportunity.eventDate);
 
+  const isUrgent = deadlineInfo.isUrgent;
+
   return (
     <article
-      className="card card-hover"
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        padding: "20px 20px 18px",
-        borderRadius: 10,
-        border: "1px solid var(--line-strong)",
-        background: "#ffffff",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-        transition: "transform 0.15s ease, box-shadow 0.15s ease",
-      }}
+      className={`card-opportunity ${isUrgent ? "card-opportunity-urgent" : ""}`}
     >
-      {/* 1. Top Badges Header */}
+      {/* 1. Top Badges Header - Organized in max 2 rows */}
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
           alignItems: "flex-start",
-          gap: 8,
-          marginBottom: 12,
-          flexWrap: "wrap",
+          gap: 6,
+          marginBottom: 10,
         }}
       >
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 5,
+            flexWrap: "wrap",
+            alignItems: "center",
+            maxWidth: "calc(100% - 110px)",
+          }}
+        >
           {opportunity.type && (
-            <span className="badge badge-neutral" style={{ fontWeight: 700, fontSize: "0.74rem" }}>
+            <span
+              className="badge badge-neutral"
+              style={{ fontWeight: 700, fontSize: "0.72rem", padding: "2px 7px" }}
+            >
               {opportunity.type}
             </span>
           )}
           {opportunity.level && (
-            <span className="badge badge-neutral" style={{ fontSize: "0.74rem" }}>
-              {opportunity.level}
-            </span>
-          )}
-          {opportunity.sourceType === "SPARK" && (
             <span
-              className="badge"
-              style={{
-                backgroundColor: "#f3e8ff",
-                color: "#6b21a8",
-                border: "1px solid #e9d5ff",
-                fontSize: "0.72rem",
-                fontWeight: 700,
-              }}
-              title="Tổng hợp tự động bởi AI Spark"
+              className="badge badge-neutral"
+              style={{ fontSize: "0.72rem", padding: "2px 7px" }}
             >
-              <Sparkles size={11} style={{ marginRight: 3 }} />
-              SPARK AI
+              {opportunity.level}
             </span>
           )}
           {getSuitabilityBadge()}
         </div>
 
-        <span className={`badge badge-${badgeInfo.variant}`} style={{ fontSize: "0.74rem" }}>
-          <Clock size={11} style={{ marginRight: 3 }} />
-          {badgeInfo.text}
+        <span
+          className={`badge badge-${deadlineInfo.statusBadge.variant}`}
+          style={{
+            fontSize: "0.72rem",
+            padding: "3px 8px",
+            fontWeight: 700,
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+            backgroundColor: deadlineInfo.statusBadge.bg,
+            color: deadlineInfo.statusBadge.color,
+            borderColor: deadlineInfo.statusBadge.border,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+          }}
+        >
+          <Clock size={11} style={{ flexShrink: 0 }} />
+          {deadlineInfo.statusBadge.text}
         </span>
       </div>
 
@@ -166,7 +169,7 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
         style={{
           fontSize: "1.08rem",
           fontWeight: 700,
-          color: "var(--primary)",
+          color: isUrgent ? "#991b1b" : "var(--primary)",
           marginBottom: 10,
           lineHeight: 1.45,
           display: "-webkit-box",
@@ -278,12 +281,12 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
         </div>
       )}
 
-      {/* 7. Deadlines & Schedule box */}
+      {/* 7. Deadlines & Schedule box (Priority: Abstract -> Full Paper -> Registration -> Event) */}
       <div
         style={{
-          background: "#f8fafc",
-          border: "1px solid var(--line)",
-          borderRadius: 6,
+          background: isUrgent ? "#fff8f8" : "#f8fafc",
+          border: isUrgent ? "1px solid #fecaca" : "1px solid var(--line)",
+          borderRadius: 8,
           padding: "10px 12px",
           marginBottom: 16,
           marginTop: "auto",
@@ -293,36 +296,175 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
           gap: 5,
         }}
       >
-        {formattedDeadline && (
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        {/* Hạn nộp tóm tắt (Priority 1) */}
+        {formattedAbstract && (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: deadlineInfo.nearestDeadlineType === "abstract" ? "2px 6px" : undefined,
+              borderRadius: 4,
+              background:
+                deadlineInfo.nearestDeadlineType === "abstract" && isUrgent
+                  ? "#fee2e2"
+                  : undefined,
+            }}
+          >
             <span style={{ color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
-              <Calendar size={13} />
+              <Calendar
+                size={13}
+                color={
+                  deadlineInfo.nearestDeadlineType === "abstract" && isUrgent
+                    ? "#dc2626"
+                    : undefined
+                }
+              />
+              Hạn nộp tóm tắt:
+            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <strong
+                style={{
+                  color:
+                    deadlineInfo.nearestDeadlineType === "abstract" && isUrgent
+                      ? "#b91c1c"
+                      : "var(--text-main)",
+                  fontWeight: 700,
+                }}
+              >
+                {formattedAbstract}
+              </strong>
+              {deadlineInfo.nearestDeadlineType === "abstract" && (
+                <span
+                  style={{
+                    fontSize: "0.68rem",
+                    padding: "1px 5px",
+                    borderRadius: 3,
+                    background: isUrgent ? "#dc2626" : "#0284c7",
+                    color: "#ffffff",
+                    fontWeight: 700,
+                  }}
+                >
+                  {deadlineInfo.countdownText}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Hạn nộp toàn văn (Priority 2) */}
+        {formattedFullPaper && (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: deadlineInfo.nearestDeadlineType === "fullPaper" ? "2px 6px" : undefined,
+              borderRadius: 4,
+              background:
+                deadlineInfo.nearestDeadlineType === "fullPaper" && isUrgent
+                  ? "#fee2e2"
+                  : undefined,
+            }}
+          >
+            <span style={{ color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
+              <Calendar
+                size={13}
+                color={
+                  deadlineInfo.nearestDeadlineType === "fullPaper" && isUrgent
+                    ? "#dc2626"
+                    : undefined
+                }
+              />
               Hạn nộp toàn văn:
             </span>
-            <strong style={{ color: "var(--danger)", fontWeight: 700 }}>{formattedDeadline}</strong>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <strong
+                style={{
+                  color:
+                    deadlineInfo.nearestDeadlineType === "fullPaper" && isUrgent
+                      ? "#b91c1c"
+                      : "var(--danger)",
+                  fontWeight: 700,
+                }}
+              >
+                {formattedFullPaper}
+              </strong>
+              {deadlineInfo.nearestDeadlineType === "fullPaper" && (
+                <span
+                  style={{
+                    fontSize: "0.68rem",
+                    padding: "1px 5px",
+                    borderRadius: 3,
+                    background: isUrgent ? "#dc2626" : "#0284c7",
+                    color: "#ffffff",
+                    fontWeight: 700,
+                  }}
+                >
+                  {deadlineInfo.countdownText}
+                </span>
+              )}
+            </div>
           </div>
         )}
 
-        {formattedAbstract && (
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
-              <Calendar size={13} />
-              Hạn tóm tắt:
-            </span>
-            <span style={{ color: "var(--text-main)", fontWeight: 600 }}>{formattedAbstract}</span>
-          </div>
-        )}
-
+        {/* Hạn đăng ký (Priority 3) */}
         {formattedRegistration && (
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: deadlineInfo.nearestDeadlineType === "registration" ? "2px 6px" : undefined,
+              borderRadius: 4,
+              background:
+                deadlineInfo.nearestDeadlineType === "registration" && isUrgent
+                  ? "#fee2e2"
+                  : undefined,
+            }}
+          >
             <span style={{ color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
-              <Calendar size={13} />
+              <Calendar
+                size={13}
+                color={
+                  deadlineInfo.nearestDeadlineType === "registration" && isUrgent
+                    ? "#dc2626"
+                    : undefined
+                }
+              />
               Hạn đăng ký:
             </span>
-            <span style={{ color: "var(--text-main)", fontWeight: 600 }}>{formattedRegistration}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span
+                style={{
+                  color:
+                    deadlineInfo.nearestDeadlineType === "registration" && isUrgent
+                      ? "#b91c1c"
+                      : "var(--text-main)",
+                  fontWeight: 600,
+                }}
+              >
+                {formattedRegistration}
+              </span>
+              {deadlineInfo.nearestDeadlineType === "registration" && (
+                <span
+                  style={{
+                    fontSize: "0.68rem",
+                    padding: "1px 5px",
+                    borderRadius: 3,
+                    background: isUrgent ? "#dc2626" : "#0284c7",
+                    color: "#ffffff",
+                    fontWeight: 700,
+                  }}
+                >
+                  {deadlineInfo.countdownText}
+                </span>
+              )}
+            </div>
           </div>
         )}
 
+        {/* Ngày tổ chức */}
         {formattedEvent && (
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ color: "var(--muted)", display: "flex", alignItems: "center", gap: 4 }}>
@@ -334,7 +476,7 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
         )}
       </div>
 
-      {/* 8. Action Buttons (IFAA Style: Dual CTAs) */}
+      {/* 8. Action Buttons (Dual CTAs) */}
       <div className="card-actions-row">
         <button
           type="button"

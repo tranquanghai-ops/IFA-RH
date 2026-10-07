@@ -57,12 +57,12 @@ export const PublicationHistoryPage: React.FC = () => {
     setLoading(true);
     try {
       if (isStaff) {
-        const targetUid = selectedLecturerId === "all" ? undefined : selectedLecturerId;
-        const data = await fetchPublications(targetUid);
+        const targetIdentifier = selectedLecturerId === "all" ? undefined : selectedLecturerId;
+        const data = await fetchPublications(targetIdentifier, isStaff);
         setPublications(data);
       } else {
         const targetUid = viewScope === "personal" ? profile.uid : undefined;
-        const data = await fetchPublications(targetUid);
+        const data = await fetchPublications(targetUid, false);
         setPublications(data);
       }
     } catch (err: any) {
@@ -268,7 +268,7 @@ export const PublicationHistoryPage: React.FC = () => {
               >
                 <option value="all">Toàn bộ khoa ({activeLecturers.length} GV)</option>
                 {activeLecturers.map((l) => (
-                  <option key={l.id} value={l.uid || l.id}>
+                  <option key={l.id} value={l.email || l.uid || l.id}>
                     {l.name} ({l.email})
                   </option>
                 ))}
@@ -339,9 +339,15 @@ export const PublicationHistoryPage: React.FC = () => {
       ) : filteredPublications.length === 0 ? (
         <div className="card" style={{ textAlign: "center", padding: 48, color: "var(--muted)" }}>
           <BookOpen size={36} color="var(--muted)" style={{ margin: "0 auto 12px" }} />
-          <h3 style={{ color: "var(--primary)", marginBottom: 6 }}>Chưa có công trình nào trong hồ sơ</h3>
+          <h3 style={{ color: "var(--primary)", marginBottom: 6 }}>
+            {isStaff && selectedLecturerId !== "all"
+              ? "Chưa có công trình nào trong hồ sơ của giảng viên này"
+              : "Chưa có công trình nào trong hồ sơ"}
+          </h3>
           <p style={{ fontSize: "0.9rem", maxWidth: 450, margin: "0 auto 16px" }}>
-            Bạn có thể nhập các công trình đã công bố trước đây hoặc chuyển từ mục Tiến độ NCKH khi công trình được xuất bản.
+            {isStaff && selectedLecturerId !== "all"
+              ? "Giảng viên được chọn hiện chưa có bài báo, đề tài hoặc sản phẩm khoa học nào được ghi nhận."
+              : "Bạn có thể nhập các công trình đã công bố trước đây hoặc chuyển từ mục Tiến độ NCKH khi công trình được xuất bản."}
           </p>
           <button
             type="button"

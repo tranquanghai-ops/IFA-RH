@@ -1,7 +1,7 @@
 import React from "react";
 import type { Opportunity } from "../types";
 import { Modal } from "./Modal";
-import { formatDateVN, getDeadlineBadge } from "../utils/date";
+import { formatDateVN, getOpportunityDeadlineInfo } from "../utils/date";
 import {
   ExternalLink,
   Calendar,
@@ -13,7 +13,7 @@ import {
   DollarSign,
   Tag,
   Clock,
-  Sparkles,
+  Award,
 } from "lucide-react";
 
 interface OpportunityDetailModalProps {
@@ -27,7 +27,7 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
 }) => {
   if (!opportunity) return null;
 
-  const badgeInfo = getDeadlineBadge(opportunity.deadline, opportunity.createdAt);
+  const deadlineInfo = getOpportunityDeadlineInfo(opportunity);
 
   return (
     <Modal
@@ -38,7 +38,7 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
       footer={
         <div style={{ display: "flex", gap: 10, width: "100%", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ fontSize: "0.8125rem", color: "var(--muted)" }}>
-            Nguồn: <strong style={{ color: "var(--text-main)" }}>{opportunity.sourceType === "SPARK" ? "AI Spark" : "Quản trị viên đăng"}</strong>
+            Nguồn: <strong style={{ color: "var(--text-main)" }}>Ban biên tập NCKH MTCN</strong>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             {opportunity.sourceUrl && (
@@ -80,9 +80,17 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
             <span className="badge badge-neutral">
               {opportunity.level}
             </span>
-            <span className={`badge badge-${badgeInfo.variant}`}>
+            <span
+              className={`badge badge-${deadlineInfo.statusBadge.variant}`}
+              style={{
+                backgroundColor: deadlineInfo.statusBadge.bg,
+                color: deadlineInfo.statusBadge.color,
+                borderColor: deadlineInfo.statusBadge.border,
+                fontWeight: 700,
+              }}
+            >
               <Clock size={12} style={{ marginRight: 2 }} />
-              {badgeInfo.text}
+              {deadlineInfo.statusBadge.text}
             </span>
           </div>
 
@@ -110,7 +118,7 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
           </div>
         </div>
 
-        {/* Highlight Metadata Grid */}
+        {/* Highlight Metadata Grid - Priority Order of Deadlines */}
         <div
           style={{
             display: "grid",
@@ -122,43 +130,67 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
             border: "1px solid var(--line)",
           }}
         >
-          <div>
-            <div style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase", fontWeight: 700 }}>
-              Hạn nộp bài chính (Deadline)
-            </div>
-            <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--danger)", marginTop: 2 }}>
-              {formatDateVN(opportunity.deadline) || "Chưa công bố"}
-            </div>
-          </div>
-
+          {/* Priority 1: Hạn nộp tóm tắt */}
           {opportunity.abstractDeadline && (
-            <div>
+            <div
+              style={{
+                background: deadlineInfo.nearestDeadlineType === "abstract" && deadlineInfo.isUrgent ? "#fee2e2" : undefined,
+                padding: deadlineInfo.nearestDeadlineType === "abstract" && deadlineInfo.isUrgent ? "6px 10px" : undefined,
+                borderRadius: 6,
+              }}
+            >
               <div style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase", fontWeight: 700 }}>
                 Hạn nộp tóm tắt (Abstract)
               </div>
-              <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>
+              <div style={{ fontSize: "0.95rem", fontWeight: 700, color: deadlineInfo.nearestDeadlineType === "abstract" && deadlineInfo.isUrgent ? "#b91c1c" : "var(--text-main)", marginTop: 2 }}>
                 {formatDateVN(opportunity.abstractDeadline)}
               </div>
             </div>
           )}
 
-          {opportunity.fullPaperDeadline && (
-            <div>
+          {/* Priority 2: Hạn nộp toàn văn */}
+          {(opportunity.fullPaperDeadline || opportunity.deadline) && (
+            <div
+              style={{
+                background: deadlineInfo.nearestDeadlineType === "fullPaper" && deadlineInfo.isUrgent ? "#fee2e2" : undefined,
+                padding: deadlineInfo.nearestDeadlineType === "fullPaper" && deadlineInfo.isUrgent ? "6px 10px" : undefined,
+                borderRadius: 6,
+              }}
+            >
               <div style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase", fontWeight: 700 }}>
-                Hạn toàn văn (Full paper)
+                Hạn nộp toàn văn (Full paper)
               </div>
-              <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>
-                {formatDateVN(opportunity.fullPaperDeadline)}
+              <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--danger)", marginTop: 2 }}>
+                {formatDateVN(opportunity.fullPaperDeadline || opportunity.deadline) || "Chưa công bố"}
               </div>
             </div>
           )}
 
+          {/* Priority 3: Hạn đăng ký */}
+          {opportunity.registrationDeadline && (
+            <div
+              style={{
+                background: deadlineInfo.nearestDeadlineType === "registration" && deadlineInfo.isUrgent ? "#fee2e2" : undefined,
+                padding: deadlineInfo.nearestDeadlineType === "registration" && deadlineInfo.isUrgent ? "6px 10px" : undefined,
+                borderRadius: 6,
+              }}
+            >
+              <div style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase", fontWeight: 700 }}>
+                Hạn đăng ký (Registration)
+              </div>
+              <div style={{ fontSize: "0.95rem", fontWeight: 600, color: deadlineInfo.nearestDeadlineType === "registration" && deadlineInfo.isUrgent ? "#b91c1c" : "var(--text-main)", marginTop: 2 }}>
+                {formatDateVN(opportunity.registrationDeadline)}
+              </div>
+            </div>
+          )}
+
+          {/* Priority 4: Thời gian tổ chức */}
           {opportunity.eventDate && (
             <div>
               <div style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase", fontWeight: 700 }}>
                 Thời gian tổ chức
               </div>
-              <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--text-main)", marginTop: 2 }}>
+              <div style={{ fontSize: "0.95rem", fontWeight: 600, color: "var(--teal)", marginTop: 2 }}>
                 {formatDateVN(opportunity.eventDate)}
               </div>
             </div>
@@ -202,7 +234,7 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
         {opportunity.suitability && (
           <div style={{ background: "#ecfdf5", border: "1px solid #a7f3d0", padding: "12px 16px", borderRadius: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, color: "#065f46", marginBottom: 4 }}>
-              <Sparkles size={18} />
+              <Award size={18} />
               Mức độ phù hợp với Khoa Mỹ thuật Công nghiệp:
             </div>
             <div style={{ color: "#047857", fontSize: "0.95rem", fontWeight: 600 }}>{opportunity.suitability}</div>

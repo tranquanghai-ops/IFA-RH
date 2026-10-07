@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { normalizeText, isDuplicateOpportunity } from "../utils/dedupe";
-import { getDeadlineBadge } from "../utils/date";
+import { getDeadlineBadge, getOpportunityDeadlineInfo } from "../utils/date";
 
 describe("OPPORTUNITY & Candidate Deduplication", () => {
   it("should normalize titles and text accurately across accents and casing", () => {
@@ -81,12 +81,17 @@ describe("OPPORTUNITY & Candidate Deduplication", () => {
     expect(result.matchReason).toContain("Trùng link nộp bài / đăng ký");
   });
 
-  it("should compute deadline badge statuses accurately", () => {
+  it("should compute deadline badge statuses accurately with <=7 days urgent and <=14 days warning", () => {
     const now = new Date();
-    // 3 days in future -> SẮP HẾT HẠN
+    // 3 days in future -> CẤP BÁCH (<= 7 ngày)
     const near = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
     const badgeNear = getDeadlineBadge(near.toISOString());
-    expect(badgeNear.variant).toBe("warning");
+    expect(badgeNear.variant).toBe("urgent");
+
+    // 10 days in future -> CẢNH BÁO (<= 14 ngày)
+    const warningDate = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1000);
+    const badgeWarning = getDeadlineBadge(warningDate.toISOString());
+    expect(badgeWarning.variant).toBe("warning");
 
     // Past date -> HẾT HẠN
     const past = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
@@ -97,6 +102,22 @@ describe("OPPORTUNITY & Candidate Deduplication", () => {
     const far = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
     const badgeFar = getDeadlineBadge(far.toISOString());
     expect(badgeFar.variant).toBe("success");
+  });
+
+  it("should prioritize abstract deadline over full paper deadline in getOpportunityDeadlineInfo", () => {
+    const now = new Date();
+    const abstractDate = new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000);
+    const fullPaperDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    const info = getOpportunityDeadlineInfo({
+      abstractDeadline: abstractDate.toISOString(),
+      fullPaperDeadline: fullPaperDate.toISOString(),
+    });
+
+    expect(info.nearestDeadlineType).toBe("abstract");
+    expect(info.nearestDeadlineLabel).toBe("Hạn nộp tóm tắt");
+    expect(info.isUrgent).toBe(true);
+    expect(info.countdownText).toBe("Còn 5 ngày");
   });
 });
 

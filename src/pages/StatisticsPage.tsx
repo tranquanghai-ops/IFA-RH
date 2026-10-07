@@ -43,7 +43,7 @@ export const StatisticsPage: React.FC = () => {
         const [pubs, works, u] = await Promise.all([
           fetchPublications(),
           fetchResearchWorks(),
-          fetchAllUsers(),
+          fetchActiveLecturers(),
         ]);
         setPublications(pubs);
         setResearchWorks(works);
@@ -86,8 +86,9 @@ export const StatisticsPage: React.FC = () => {
     const matchYear = selectedYear === "Tất cả" || String(p.year) === selectedYear;
     const matchLecturer =
       selectedLecturer === "Tất cả" ||
-      p.userName === selectedLecturer ||
-      p.userEmail === selectedLecturer;
+      (p.userName && p.userName.trim().toLowerCase() === selectedLecturer.trim().toLowerCase()) ||
+      (p.userEmail && p.userEmail.trim().toLowerCase() === selectedLecturer.trim().toLowerCase()) ||
+      p.userId === selectedLecturer;
     const matchType = selectedType === "Tất cả" || p.type === selectedType;
     return matchYear && matchLecturer && matchType;
   });
@@ -98,8 +99,9 @@ export const StatisticsPage: React.FC = () => {
     const matchYear = selectedYear === "Tất cả" || String(workYear) === selectedYear;
     const matchLecturer =
       selectedLecturer === "Tất cả" ||
-      w.userName === selectedLecturer ||
-      w.userEmail === selectedLecturer;
+      (w.userName && w.userName.trim().toLowerCase() === selectedLecturer.trim().toLowerCase()) ||
+      (w.userEmail && w.userEmail.trim().toLowerCase() === selectedLecturer.trim().toLowerCase()) ||
+      w.userId === selectedLecturer;
     const matchType = selectedType === "Tất cả" || w.category === selectedType;
     const matchStatus = selectedStatus === "Tất cả" || w.status === selectedStatus;
     return matchYear && matchLecturer && matchType && matchStatus;
@@ -236,7 +238,7 @@ export const StatisticsPage: React.FC = () => {
               value={selectedLecturer}
               onChange={(e) => setSelectedLecturer(e.target.value)}
             >
-              <option value="Tất cả">Tất cả giảng viên</option>
+              <option value="Tất cả">Tất cả giảng viên ({users.length} GV)</option>
               {users.map((u) => (
                 <option key={u.id} value={u.name}>
                   {u.name} ({u.department || u.email})

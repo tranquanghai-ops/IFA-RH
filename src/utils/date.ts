@@ -52,51 +52,309 @@ export function toInputDate(dateStr?: string | null): string {
 }
 
 /**
- * Determine deadline badge: MỚI, SẮP HẾT HẠN, CÒN HẠN, HẾT HẠN
+ * Safely parse date from various formats (ISO string, YYYY-MM-DD, DD/MM/YYYY, Date object)
  */
-export function getDeadlineBadge(
-  deadlineStr?: string | null,
-  createdAtStr?: string | null
-): { text: string; variant: "new" | "warning" | "success" | "neutral" } {
-  if (!deadlineStr || deadlineStr === "Chưa xác minh") {
-    return { text: "CÒN HẠN", variant: "neutral" };
+export function parseDateSafe(dateInput?: string | Date | null): Date | null {
+  if (!dateInput) return null;
+  if (dateInput instanceof Date) {
+    return isNaN(dateInput.getTime()) ? null : dateInput;
+  }
+  const str = String(dateInput).trim();
+  if (!str) return null;
+  const lower = str.toLowerCase();
+  if (
+    lower === "chưa xác minh" ||
+    lower === "chua xac minh" ||
+    lower === "n/a" ||
+    lower === "unknown"
+  ) {
+    return null;
   }
 
+  // If dd/mm/yyyy
+  const dmyMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dmyMatch) {
+    const [, d, m, y] = dmyMatch;
+    const date = new Date(Number(y), Number(m) - 1, Number(d));
+    return isNaN(date.getTime()) ? null : date;
+  }
+
+  // Try standard Date parsing (ISO 8601, YYYY-MM-DD)
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    return d;
+  }
+
+  return null;
+}
+
+export interface OpportunityDeadlineInfo {
+  nearestDeadlineType: "abstract" | "fullPaper" | "registration" | "none";
+  nearestDeadlineLabel: string;
+  nearestDateFormatted: string;
+  diffDays: number | null;
+  countdownText: string;
+  statusBadge: {
+    text: string;
+    variant: "urgent" | "warning" | "success" | "expired" | "new" | "neutral";
+    bg: string;
+    color: string;
+    border: string;
+  };
+  isUrgent: boolean;
+  isWarning: boolean;
+  isExpired: boolean;
+}
+
+/**
+ * Calculates priority countdown and deadline status for an opportunity.
+ * Priority order:
+ * 1. Hạn nộp tóm tắt (abstractDeadline)
+ * 2. Hạn nộp toàn văn (fullPaperDeadline || deadline)
+ * 3. Hạn đăng ký (registrationDeadline)
+ * Thresholds:
+ * - <= 7 days: Đỏ nổi bật (SẮP HẾT HẠN)
+ * - <= 14 days: Vàng / Cam (CÒN X NGÀY)
+ * - > 14 days: Xanh lá (CÒN X NGÀY)
+ * - Đã qua: Xám (HẾT HẠN)
+ */
+export function getOpportunityDeadlineInfo(opp: {
+  abstractDeadline?: string | null;
+  fullPaperDeadline?: string | null;
+  deadline?: string | null;
+  registrationDeadline?: string | null;
+  createdAt?: string | null;
+  discoveredAt?: string | null;
+}): OpportunityDeadlineInfo {
   const now = new Date();
   now.setHours(0, 0, 0, 0);
 
-  let deadline = new Date(deadlineStr);
-  if (isNaN(deadline.getTime())) {
-    const match = deadlineStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (match) {
-      deadline = new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+  interface Milestone {
+    type: "abstract" | "fullPaper" | "registration";
+    label: string;
+    dateObj: Date;
+    formatted: string;
+    diffDays: number;
+  }
+
+  const milestones: Milestone[] = [];
+
+  // 1. Abstract deadline
+  if (opp.abstractDeadline) {
+    const d = parseDateSafe(opp.abstractDeadline);
+    if (d) {
+      d.setHours(0, 0, 0, 0);
+      milestones.push({
+        type: "abstract",
+        label: "Hạn nộp tóm tắt",
+        dateObj: d,
+        formatted: formatDateVN(d),
+        diffDays: Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)),
+      });
     }
   }
 
-  if (isNaN(deadline.getTime())) {
-    return { text: "CÒN HẠN", variant: "neutral" };
+  // 2. Full paper deadline (or general deadline)
+  const fullPaperRaw = opp.fullPaperDeadline || opp.deadline;
+  if (fullPaperRaw) {
+    const d = parseDateSafe(fullPaperRaw);
+    if (d) {
+      d.setHours(0, 0, 0, 0);
+      milestones.push({
+        type: "fullPaper",
+        label: "Hạn nộp toàn văn",
+        dateObj: d,
+        formatted: formatDateVN(d),
+        diffDays: Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)),
+      });
+    }
   }
 
-  const diffDays = Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-
-  if (diffDays < 0) {
-    return { text: "HẾT HẠN", variant: "neutral" };
+  // 3. Registration deadline
+  if (opp.registrationDeadline) {
+    const d = parseDateSafe(opp.registrationDeadline);
+    if (d) {
+      d.setHours(0, 0, 0, 0);
+      milestones.push({
+        type: "registration",
+        label: "Hạn đăng ký",
+        dateObj: d,
+        formatted: formatDateVN(d),
+        diffDays: Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)),
+      });
+    }
   }
 
-  // Check if created in past 7 days -> MỚI
-  if (createdAtStr) {
-    const created = new Date(createdAtStr);
-    if (!isNaN(created.getTime())) {
-      const createdDaysAgo = (now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24);
-      if (createdDaysAgo <= 7 && diffDays > 7) {
-        return { text: "MỚI", variant: "new" };
+  // If no milestones at all
+  if (milestones.length === 0) {
+    return {
+      nearestDeadlineType: "none",
+      nearestDeadlineLabel: "Hạn nộp",
+      nearestDateFormatted: "",
+      diffDays: null,
+      countdownText: "Chưa công bố",
+      statusBadge: {
+        text: "CHƯA CÔNG BỐ",
+        variant: "neutral",
+        bg: "#f1f5f9",
+        color: "#64748b",
+        border: "#e2e8f0",
+      },
+      isUrgent: false,
+      isWarning: false,
+      isExpired: false,
+    };
+  }
+
+  // Find upcoming milestones (diffDays >= 0)
+  const upcoming = milestones.filter((m) => m.diffDays >= 0);
+
+  // Check if created recently (<= 7 days ago)
+  const creationStr = opp.createdAt || opp.discoveredAt;
+  let isCreatedRecently = false;
+  if (creationStr) {
+    const createdDate = parseDateSafe(creationStr);
+    if (createdDate) {
+      const daysSinceCreated = (now.getTime() - createdDate.getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSinceCreated <= 7) {
+        isCreatedRecently = true;
       }
     }
   }
 
-  if (diffDays <= 7) {
-    return { text: `SẮP HẾT HẠN (${diffDays} ngày)`, variant: "warning" };
+  if (upcoming.length > 0) {
+    // Pick the earliest upcoming deadline
+    upcoming.sort((a, b) => a.diffDays - b.diffDays);
+    const nearest = upcoming[0];
+    const diff = nearest.diffDays;
+
+    if (diff === 0) {
+      return {
+        nearestDeadlineType: nearest.type,
+        nearestDeadlineLabel: nearest.label,
+        nearestDateFormatted: nearest.formatted,
+        diffDays: 0,
+        countdownText: "Hôm nay hết hạn",
+        statusBadge: {
+          text: "HÔM NAY HẾT HẠN",
+          variant: "urgent",
+          bg: "#fef2f2",
+          color: "#b91c1c",
+          border: "#fca5a5",
+        },
+        isUrgent: true,
+        isWarning: false,
+        isExpired: false,
+      };
+    }
+
+    if (diff <= 7) {
+      return {
+        nearestDeadlineType: nearest.type,
+        nearestDeadlineLabel: nearest.label,
+        nearestDateFormatted: nearest.formatted,
+        diffDays: diff,
+        countdownText: `Còn ${diff} ngày`,
+        statusBadge: {
+          text: `SẮP HẾT HẠN (${diff} ngày)`,
+          variant: "urgent",
+          bg: "#fef2f2",
+          color: "#b91c1c",
+          border: "#fca5a5",
+        },
+        isUrgent: true,
+        isWarning: false,
+        isExpired: false,
+      };
+    }
+
+    if (diff <= 14) {
+      return {
+        nearestDeadlineType: nearest.type,
+        nearestDeadlineLabel: nearest.label,
+        nearestDateFormatted: nearest.formatted,
+        diffDays: diff,
+        countdownText: `Còn ${diff} ngày`,
+        statusBadge: {
+          text: `CÒN ${diff} NGÀY`,
+          variant: "warning",
+          bg: "#fffbeb",
+          color: "#b45309",
+          border: "#fde68a",
+        },
+        isUrgent: false,
+        isWarning: true,
+        isExpired: false,
+      };
+    }
+
+    // > 14 days
+    const badgeText = isCreatedRecently ? `MỚI · Còn ${diff} ngày` : `CÒN ${diff} NGÀY`;
+    return {
+      nearestDeadlineType: nearest.type,
+      nearestDeadlineLabel: nearest.label,
+      nearestDateFormatted: nearest.formatted,
+      diffDays: diff,
+      countdownText: `Còn ${diff} ngày`,
+      statusBadge: {
+        text: badgeText,
+        variant: isCreatedRecently ? "new" : "success",
+        bg: isCreatedRecently ? "#eff6ff" : "#f0fdf4",
+        color: isCreatedRecently ? "#1d4ed8" : "#166534",
+        border: isCreatedRecently ? "#bfdbfe" : "#bbf7d0",
+      },
+      isUrgent: false,
+      isWarning: false,
+      isExpired: false,
+    };
   }
 
-  return { text: "CÒN HẠN", variant: "success" };
+  // If all milestones passed (diffDays < 0)
+  milestones.sort((a, b) => b.diffDays - a.diffDays);
+  const lastPassed = milestones[0];
+  return {
+    nearestDeadlineType: lastPassed.type,
+    nearestDeadlineLabel: lastPassed.label,
+    nearestDateFormatted: lastPassed.formatted,
+    diffDays: lastPassed.diffDays,
+    countdownText: "Hết hạn",
+    statusBadge: {
+      text: "HẾT HẠN",
+      variant: "expired",
+      bg: "#f1f5f9",
+      color: "#64748b",
+      border: "#e2e8f0",
+    },
+    isUrgent: false,
+    isWarning: false,
+    isExpired: true,
+  };
 }
+
+/**
+ * Determine deadline badge (legacy wrapper for backward compatibility)
+ */
+export function getDeadlineBadge(
+  deadlineStr?: string | null,
+  createdAtStr?: string | null
+): { text: string; variant: "new" | "warning" | "success" | "neutral" | "urgent" } {
+  const info = getOpportunityDeadlineInfo({
+    deadline: deadlineStr,
+    createdAt: createdAtStr,
+  });
+
+  const variantMap: Record<string, "new" | "warning" | "success" | "neutral" | "urgent"> = {
+    urgent: "urgent",
+    warning: "warning",
+    success: "success",
+    new: "new",
+    expired: "neutral",
+    neutral: "neutral",
+  };
+
+  return {
+    text: info.statusBadge.text,
+    variant: variantMap[info.statusBadge.variant] || "neutral",
+  };
+}
+
