@@ -226,4 +226,73 @@ describe('Personnel Synchronization Logic (IFA-WORK -> IFA-RH)', () => {
       expect(emailRegex.test(email)).toBe(false);
     }
   });
+
+  it('deduplicates duplicate users prioritizing canonical ID and retaining admin role', async () => {
+    const { deduplicateUsers } = await import('../firebase/firestore');
+
+    const duplicateList: any[] = [
+      {
+        id: 'prov_nguyenthithuyha1_tdtu_edu_vn',
+        uid: 'prov_nguyenthithuyha1_tdtu_edu_vn',
+        email: 'nguyenthithuyha1@tdtu.edu.vn',
+        name: 'Nguyễn Thị Thúy Hà',
+        role: 'admin',
+        active: true,
+        department: 'Bộ môn Thiết kế Nội thất',
+      },
+      {
+        id: 'prov_nguyenthithuyha1@tdtu.edu.vn',
+        uid: 'prov_nguyenthithuyha1@tdtu.edu.vn',
+        email: 'nguyenthithuyha1@tdtu.edu.vn',
+        name: 'Nguyễn Thị Thúy Hà',
+        role: 'admin',
+        active: true,
+        department: 'Bộ môn Thiết kế Nội thất',
+      },
+      {
+        id: 'Buu7P7X5ZyNTfR5Dqq3rtiwFwXG2',
+        uid: 'Buu7P7X5ZyNTfR5Dqq3rtiwFwXG2',
+        email: 'tranquanghai@tdtu.edu.vn',
+        name: 'Trần Quang Hải',
+        role: 'owner',
+        active: true,
+        department: 'Khoa Mỹ thuật Công nghiệp',
+      },
+    ];
+
+    const deduplicated = deduplicateUsers(duplicateList);
+    expect(deduplicated.length).toBe(2);
+
+    const haProfile = deduplicated.find(
+      (u) => u.email === 'nguyenthithuyha1@tdtu.edu.vn'
+    );
+    expect(haProfile).toBeDefined();
+    expect(haProfile?.role).toBe('admin');
+    expect(haProfile?.id).toBe('prov_nguyenthithuyha1@tdtu.edu.vn');
+  });
+
+  it('rejects syncSharedPersonnelBatch when actor is not Owner', async () => {
+    const { syncSharedPersonnelBatch } = await import('../firebase/firestore');
+
+    const adminActor = {
+      uid: 'admin_uid',
+      email: 'admin@tdtu.edu.vn',
+      role: 'admin' as const,
+    };
+
+    await expect(
+      syncSharedPersonnelBatch([], 'test.json', adminActor)
+    ).rejects.toThrow('Chỉ Owner mới có quyền cập nhật danh bạ');
+
+    const lecturerActor = {
+      uid: 'lecturer_uid',
+      email: 'lecturer@tdtu.edu.vn',
+      role: 'lecturer' as const,
+    };
+
+    await expect(
+      syncSharedPersonnelBatch([], 'test.json', lecturerActor)
+    ).rejects.toThrow('Chỉ Owner mới có quyền cập nhật danh bạ');
+  });
 });
+

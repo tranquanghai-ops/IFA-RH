@@ -65,17 +65,66 @@ export async function fetchAuditLogs(limitCount = 100): Promise<AuditLog[]> {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() } as AuditLog));
 }
 
+export function deduplicateUsers(users: UserProfile[]): UserProfile[] {
+  const map = new Map<string, UserProfile>();
+
+  for (const u of users) {
+    const rawData = u as any;
+    // Skip documents explicitly marked migrated or inactive duplicate
+    if (rawData.status === "migrated" || rawData.migratedTo) {
+      continue;
+    }
+    const emailNorm = (u.email || "").trim().toLowerCase();
+    if (!emailNorm) continue;
+
+    const existing = map.get(emailNorm);
+    if (!existing) {
+      map.set(emailNorm, u);
+      continue;
+    }
+
+    // Determine canonical priority:
+    // Priority 1: Real authenticated account with Google UID (!id.startsWith('prov_'))
+    // Priority 2: Standard provisioned id (id === 'prov_' + emailNorm)
+    // Priority 3: Retain admin or owner role if conflicting with lecturer
+    const isUReal = !u.id.startsWith("prov_");
+    const isExReal = !existing.id.startsWith("prov_");
+    if (isUReal && !isExReal) {
+      map.set(emailNorm, { ...existing, ...u });
+    } else if (!isUReal && isExReal) {
+      map.set(emailNorm, { ...u, ...existing });
+    } else {
+      const isUStandard = u.id === `prov_${emailNorm}`;
+      const isExStandard = existing.id === `prov_${emailNorm}`;
+      if (isUStandard && !isExStandard) {
+        map.set(emailNorm, { ...existing, ...u });
+      } else if (!isUStandard && isExStandard) {
+        map.set(emailNorm, { ...u, ...existing });
+      } else {
+        if ((u.role === "admin" || u.role === "owner") && existing.role === "lecturer") {
+          map.set(emailNorm, u);
+        }
+      }
+    }
+  }
+
+  return Array.from(map.values());
+}
+
 // ======================== USERS & ROLES ========================
 export async function fetchAllUsers(): Promise<UserProfile[]> {
   const snap = await getDocs(collection(firestore, "users"));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as UserProfile));
+  const rawList = snap.docs.map((d) => ({ id: d.id, ...d.data() } as UserProfile));
+  return deduplicateUsers(rawList);
 }
 
 export async function fetchActiveLecturers(): Promise<UserProfile[]> {
-  const q = query(collection(firestore, "users"), where("active", "==", true));
-  const snap = await getDocs(q);
-  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as UserProfile));
-  return list.sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  const snap = await getDocs(collection(firestore, "users"));
+  const rawList = snap.docs
+    .map((d) => ({ id: d.id, ...d.data() } as UserProfile))
+    .filter((u) => u.active === true);
+  const deduplicated = deduplicateUsers(rawList);
+  return deduplicated.sort((a, b) => a.name.localeCompare(b.name, "vi"));
 }
 
 export async function getUserProfile(uid: string): Promise<UserProfile | null> {
@@ -258,16 +307,6 @@ export async function createOrProvisionUser(
     updatedAt: now,
   };
   await setDoc(doc(firestore, "users", id), provPayload);
-
-  // Also write legacy sanitized doc ID if different for backward compatibility
-  const legacyId = `prov_${normalizedEmail.replace(/[^a-zA-Z0-9]/g, "_")}`;
-  if (legacyId !== id) {
-    await setDoc(doc(firestore, "users", legacyId), {
-      ...provPayload,
-      id: legacyId,
-      uid: legacyId,
-    }).catch(() => {});
-  }
 
   await logAudit(
     actor,
@@ -866,6 +905,9 @@ export async function syncSharedPersonnelBatch(
   sourceFile: string,
   actor: { uid: string; email: string; role: UserRole }
 ): Promise<PersonnelSyncLog> {
+  if (actor.role !== "owner") {
+    throw new Error("Chỉ Owner mới có quyền cập nhật danh bạ từ IFA-WORK.");
+  }
   const startTime = Date.now();
   const existingRecords = await fetchSharedPersonnel();
   const existingMap = new Map<string, SharedPersonnelRecord>();

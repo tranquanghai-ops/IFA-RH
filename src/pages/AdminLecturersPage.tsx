@@ -79,10 +79,12 @@ export const AdminLecturersPage: React.FC = () => {
       });
 
       if (sharedList.length > 0) {
-        const combined: LecturerViewItem[] = sharedList.map((p) => {
+        const itemMap = new Map<string, LecturerViewItem>();
+        sharedList.forEach((p) => {
           const emailNorm = p.emailNormalized.toLowerCase().trim();
+          if (!emailNorm) return;
           const user = usersMap.get(emailNorm);
-          return {
+          itemMap.set(emailNorm, {
             email: p.emailNormalized,
             name: p.displayName,
             department: p.departmentName || "Chưa phân ngành",
@@ -93,22 +95,46 @@ export const AdminLecturersPage: React.FC = () => {
             role: user?.role || "lecturer",
             userId: user?.id,
             sharedUpdatedAt: p.sharedUpdatedAt,
-          };
+          });
         });
-        setItems(combined.sort((a, b) => a.name.localeCompare(b.name, "vi")));
+        setItems(Array.from(itemMap.values()).sort((a, b) => a.name.localeCompare(b.name, "vi")));
       } else {
         // Fallback to existing users collection if sharedPersonnel hasn't been synced yet
-        const fallback: LecturerViewItem[] = usersList.map((u) => ({
-          email: u.email,
-          name: u.name,
-          department: u.department || "Chưa phân ngành",
-          academicDegree: u.academicDegree || "",
-          lecturerType: "lecturer",
-          active: u.active !== false,
-          role: u.role || "lecturer",
-          userId: u.id,
-        }));
-        setItems(fallback.sort((a, b) => a.name.localeCompare(b.name, "vi")));
+        const itemMap = new Map<string, LecturerViewItem>();
+        usersList.forEach((u) => {
+          const emailNorm = (u.email || "").toLowerCase().trim();
+          if (!emailNorm) return;
+          const existing = itemMap.get(emailNorm);
+          if (!existing) {
+            itemMap.set(emailNorm, {
+              email: u.email,
+              name: u.name,
+              department: u.department || "Chưa phân ngành",
+              academicDegree: u.academicDegree || "",
+              lecturerType: "lecturer",
+              active: u.active !== false,
+              role: u.role || "lecturer",
+              userId: u.id,
+            });
+          } else {
+            const isUReal = !u.id.startsWith("prov_");
+            const isExReal = !existing.userId?.startsWith("prov_");
+            if (isUReal && !isExReal) {
+              itemMap.set(emailNorm, {
+                ...existing,
+                userId: u.id,
+                role: u.role === "admin" || u.role === "owner" ? u.role : existing.role,
+                active: u.active !== false,
+              });
+            } else if ((u.role === "admin" || u.role === "owner") && existing.role === "lecturer") {
+              itemMap.set(emailNorm, {
+                ...existing,
+                role: u.role,
+              });
+            }
+          }
+        });
+        setItems(Array.from(itemMap.values()).sort((a, b) => a.name.localeCompare(b.name, "vi")));
       }
     } catch (err: any) {
       console.error("Error loading lecturer data:", err);
@@ -142,7 +168,10 @@ export const AdminLecturersPage: React.FC = () => {
     return matchDept && matchSearch && matchStatus;
   });
 
+  const isOwner = profile?.role === "owner";
+
   const handleExportExcel = async () => {
+    if (!isOwner) return;
     const cols = [
       { header: "Họ và tên", key: "name", width: 25 },
       { header: "Email TDTU", key: "email", width: 28 },
@@ -162,6 +191,7 @@ export const AdminLecturersPage: React.FC = () => {
   };
 
   const handleExportCsv = () => {
+    if (!isOwner) return;
     const cols = [
       { header: "Họ và tên", key: "name" },
       { header: "Email TDTU", key: "email" },
@@ -201,22 +231,26 @@ export const AdminLecturersPage: React.FC = () => {
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm"
-            onClick={handleExportExcel}
-            title="Xuất danh sách ra file Excel"
-          >
-            <FileSpreadsheet size={15} /> Xuất Excel
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm"
-            onClick={handleExportCsv}
-            title="Xuất danh sách ra file CSV"
-          >
-            <Download size={15} /> Xuất CSV
-          </button>
+          {isOwner && (
+            <>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={handleExportExcel}
+                title="Xuất danh sách ra file Excel (Chỉ Owner)"
+              >
+                <FileSpreadsheet size={15} /> Xuất Excel
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={handleExportCsv}
+                title="Xuất danh sách ra file CSV (Chỉ Owner)"
+              >
+                <Download size={15} /> Xuất CSV
+              </button>
+            </>
+          )}
           <a
             href="https://ifa-work.web.app/personnel"
             target="_blank"
@@ -227,14 +261,17 @@ export const AdminLecturersPage: React.FC = () => {
           >
             <ExternalLink size={14} /> Mở IFA-WORK
           </a>
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            onClick={() => setIsSyncModalOpen(true)}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-          >
-            <RefreshCw size={14} /> Cập nhật từ IFA-WORK (JSON)
-          </button>
+          {isOwner && (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => setIsSyncModalOpen(true)}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+              title="Cập nhật danh bạ từ tệp JSON IFA-WORK (Chỉ Owner)"
+            >
+              <RefreshCw size={14} /> Cập nhật từ IFA-WORK (JSON)
+            </button>
+          )}
         </div>
       </div>
 
@@ -438,16 +475,18 @@ export const AdminLecturersPage: React.FC = () => {
         </div>
       )}
 
-      {/* JSON Sync Modal */}
-      <PersonnelJsonSyncModal
-        isOpen={isSyncModalOpen}
-        onClose={() => setIsSyncModalOpen(false)}
-        onSuccess={async () => {
-          await loadData();
-        }}
-        existingPersonnel={rawShared}
-        actor={{ uid: profile.uid, email: profile.email, role: profile.role }}
-      />
+      {/* JSON Sync Modal - Owner only */}
+      {isOwner && (
+        <PersonnelJsonSyncModal
+          isOpen={isSyncModalOpen}
+          onClose={() => setIsSyncModalOpen(false)}
+          onSuccess={async () => {
+            await loadData();
+          }}
+          existingPersonnel={rawShared}
+          actor={{ uid: profile.uid, email: profile.email, role: profile.role }}
+        />
+      )}
     </div>
   );
 };
