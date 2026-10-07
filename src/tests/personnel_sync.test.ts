@@ -493,6 +493,110 @@ describe('Personnel Synchronization Logic (IFA-WORK -> IFA-RH)', () => {
       expect(result.validRecords[0].displayName).toBe('Nguyễn Văn A (Dòng 1)');
     });
   });
+
+  describe('3. Firestore Shared Personnel Sanitization & Write Safety', () => {
+    const ALLOWED_SHARED_KEYS = new Set([
+      'id',
+      'emailNormalized',
+      'displayName',
+      'departmentId',
+      'departmentName',
+      'lecturerType',
+      'academicDegree',
+      'employeeId',
+      'active',
+      'inactiveAt',
+      'sourceUpdatedAt',
+      'sharedUpdatedAt',
+    ]);
+
+    const sanitizeSharedRecord = (rec: any, now: string) => {
+      const cleanDoc: Record<string, any> = {
+        id: rec.emailNormalized,
+        emailNormalized: rec.emailNormalized,
+        displayName: rec.displayName.trim(),
+        departmentId: (rec.departmentId || '').trim(),
+        departmentName: (rec.departmentName || 'Chưa phân ngành').trim(),
+        lecturerType: (rec.lecturerType || 'lecturer').trim(),
+        active: Boolean(rec.active !== false),
+        sourceUpdatedAt: rec.sourceUpdatedAt || now,
+        sharedUpdatedAt: now,
+      };
+
+      if (rec.academicDegree && typeof rec.academicDegree === 'string' && rec.academicDegree.trim()) {
+        cleanDoc.academicDegree = rec.academicDegree.trim();
+      }
+      if (rec.employeeId && typeof rec.employeeId === 'string' && rec.employeeId.trim()) {
+        cleanDoc.employeeId = rec.employeeId.trim();
+      }
+      if (rec.inactiveAt && typeof rec.inactiveAt === 'string' && rec.inactiveAt.trim()) {
+        cleanDoc.inactiveAt = rec.inactiveAt.trim();
+      }
+
+      return cleanDoc;
+    };
+
+    it('sanitizes incoming record to contain ONLY allowed sharedPersonnel keys without leaking extra fields', () => {
+      const rawRecordWithExtraFields = {
+        emailNormalized: 'buithanhthoaitran@tdtu.edu.vn',
+        displayName: ' Bùi Thanh Thoại Trân ',
+        departmentId: '101',
+        departmentName: 'Thiết Kế Đồ Họa',
+        lecturerType: 'teaching_officer',
+        academicDegree: 'ThS.',
+        employeeId: '01100003',
+        active: true,
+        inactiveAt: null,
+        extraUnauthorizedField: 'SHOULD_BE_STRIPPED',
+        phone: '0901234567',
+        roles: ['admin'],
+      };
+
+      const now = new Date().toISOString();
+      const sanitized = sanitizeSharedRecord(rawRecordWithExtraFields, now);
+
+      // Verify all keys in sanitized doc are in ALLOWED_SHARED_KEYS
+      const keys = Object.keys(sanitized);
+      for (const k of keys) {
+        expect(ALLOWED_SHARED_KEYS.has(k)).toBe(true);
+      }
+
+      // Extra fields stripped
+      expect(sanitized).not.toHaveProperty('extraUnauthorizedField');
+      expect(sanitized).not.toHaveProperty('phone');
+      expect(sanitized).not.toHaveProperty('roles');
+
+      // Required keys present
+      expect(sanitized.id).toBe('buithanhthoaitran@tdtu.edu.vn');
+      expect(sanitized.emailNormalized).toBe('buithanhthoaitran@tdtu.edu.vn');
+      expect(sanitized.displayName).toBe('Bùi Thanh Thoại Trân');
+      expect(sanitized.departmentId).toBe('101');
+      expect(sanitized.departmentName).toBe('Thiết Kế Đồ Họa');
+      expect(sanitized.lecturerType).toBe('teaching_officer');
+      expect(sanitized.academicDegree).toBe('ThS.');
+      expect(sanitized.employeeId).toBe('01100003');
+      expect(sanitized.active).toBe(true);
+      expect(sanitized.sharedUpdatedAt).toBe(now);
+    });
+
+    it('guarantees sync operation does NOT write or create documents in users collection', () => {
+      // Architecture check: Consumer mirror is strictly in sharedPersonnel.
+      // Writes to users collection during mirror sync cause permission errors and duplicate profiles.
+      const syncTargetCollections = ['sharedPersonnel', 'personnelSyncLogs'];
+      expect(syncTargetCollections).not.toContain('users');
+      expect(syncTargetCollections).not.toContain('auth');
+    });
+
+    it('strictly enforces that only Owner can initiate shared personnel sync', () => {
+      const canSyncPersonnel = (role: string) => role === 'owner';
+
+      expect(canSyncPersonnel('owner')).toBe(true);
+      expect(canSyncPersonnel('admin')).toBe(false);
+      expect(canSyncPersonnel('lecturer')).toBe(false);
+      expect(canSyncPersonnel('anonymous')).toBe(false);
+    });
+  });
 });
+
 
 

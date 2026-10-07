@@ -1005,25 +1005,30 @@ export async function syncSharedPersonnelBatch(
     const chunk = toWrite.slice(i, i + chunkSize);
     const batch = writeBatch(firestore);
     for (const rec of chunk) {
-      const docRef = doc(firestore, "sharedPersonnel", rec.emailNormalized);
-      batch.set(docRef, rec, { merge: true });
+      const cleanDoc: Record<string, any> = {
+        id: rec.emailNormalized,
+        emailNormalized: rec.emailNormalized,
+        displayName: rec.displayName.trim(),
+        departmentId: (rec.departmentId || "").trim(),
+        departmentName: (rec.departmentName || "Chưa phân ngành").trim(),
+        lecturerType: (rec.lecturerType || "lecturer").trim(),
+        active: Boolean(rec.active !== false),
+        sourceUpdatedAt: rec.sourceUpdatedAt || now,
+        sharedUpdatedAt: now,
+      };
 
-      // If user profile doc exists with provisioned/matching email, keep profile synced while preserving role
-      const userRef = doc(firestore, "users", `prov_${rec.emailNormalized}`);
-      batch.set(
-        userRef,
-        {
-          id: `prov_${rec.emailNormalized}`,
-          uid: `prov_${rec.emailNormalized}`,
-          email: rec.emailNormalized,
-          name: rec.displayName,
-          department: rec.departmentName,
-          academicDegree: rec.academicDegree,
-          active: rec.active,
-          updatedAt: now,
-        },
-        { merge: true }
-      );
+      if (rec.academicDegree && typeof rec.academicDegree === "string" && rec.academicDegree.trim()) {
+        cleanDoc.academicDegree = rec.academicDegree.trim();
+      }
+      if (rec.employeeId && typeof rec.employeeId === "string" && rec.employeeId.trim()) {
+        cleanDoc.employeeId = rec.employeeId.trim();
+      }
+      if (rec.inactiveAt && typeof rec.inactiveAt === "string" && rec.inactiveAt.trim()) {
+        cleanDoc.inactiveAt = rec.inactiveAt.trim();
+      }
+
+      const docRef = doc(firestore, "sharedPersonnel", rec.emailNormalized);
+      batch.set(docRef, cleanDoc);
     }
     await batch.commit();
   }

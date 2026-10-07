@@ -302,7 +302,11 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
       );
       setResultLog(log);
       setStep("done");
-      await onSuccess(log);
+      try {
+        await onSuccess(log);
+      } catch (refreshErr) {
+        console.error("Lỗi khi làm mới danh sách sau đồng bộ:", refreshErr);
+      }
     } catch (err: any) {
       console.error("Sync error:", err);
       setErrorMsg(err.message || "Lỗi khi đồng bộ dữ liệu vào Firestore.");
@@ -460,6 +464,28 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
       {/* STEP 2: DIFF PREVIEW */}
       {step === "preview" && payload && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Error Banner if sync failed */}
+          {errorMsg && (
+            <div
+              style={{
+                background: "#fef2f2",
+                border: "1px solid #fecaca",
+                borderRadius: 8,
+                padding: "12px 16px",
+                color: "#991b1b",
+                fontSize: "0.875rem",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <XCircle size={18} style={{ flexShrink: 0 }} />
+              <div>
+                <strong>Đồng bộ thất bại:</strong> {errorMsg}
+              </div>
+            </div>
+          )}
+
           {/* Metadata Card */}
           <div
             style={{
