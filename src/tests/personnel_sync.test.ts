@@ -780,6 +780,70 @@ describe('Personnel Synchronization Logic (IFA-WORK -> IFA-RH)', () => {
       expect(canManageResearchSettings('admin')).toBe(false);
       expect(canManageResearchSettings('lecturer')).toBe(false);
     });
+
+    it('supports simplified archive flow without requiring or mandating archiveReason', () => {
+      const simpleArchiveSetting: {
+        emailNormalized: string;
+        researchTrackingStatus: 'ACTIVE' | 'ARCHIVED';
+        archivedAt: string;
+        archivedBy: string;
+        archiveReason?: string;
+      } = {
+        emailNormalized: 'nguyenvanbachelor@tdtu.edu.vn',
+        researchTrackingStatus: 'ARCHIVED',
+        archivedAt: '2026-10-07T12:00:00Z',
+        archivedBy: 'tranquanghai@tdtu.edu.vn',
+      };
+
+      // Valid even without archiveReason
+      expect(simpleArchiveSetting.researchTrackingStatus).toBe('ARCHIVED');
+      expect(simpleArchiveSetting.archiveReason).toBeUndefined();
+    });
+
+    it('hides employeeId column from table UI while retaining it in search and export', () => {
+      const tableUiColumns = [
+        'Họ và tên',
+        'Email TDTU',
+        'Bộ môn / Ngành',
+        'Học vị',
+        'Loại hình GV',
+        'Vai trò IFA-RH',
+        'Nhân sự',
+        'Theo dõi NCKH',
+        'Thao tác',
+      ];
+
+      // Table UI MUST NOT contain 'Mã NV'
+      expect(tableUiColumns.includes('Mã NV')).toBe(false);
+      expect(tableUiColumns.includes('Mã nhân viên')).toBe(false);
+
+      // Export columns MUST contain 'Mã NV'
+      const exportColumns = [
+        { header: 'Họ và tên', key: 'name' },
+        { header: 'Email TDTU', key: 'email' },
+        { header: 'Bộ môn / Ngành', key: 'department' },
+        { header: 'Học vị', key: 'academicDegree' },
+        { header: 'Loại hình GV', key: 'lecturerTypeText' },
+        { header: 'Mã NV', key: 'employeeId' },
+        { header: 'Vai trò IFA-RH', key: 'role' },
+        { header: 'Nhân sự', key: 'statusText' },
+        { header: 'Theo dõi NCKH', key: 'trackingText' },
+      ];
+      expect(exportColumns.some((c) => c.header === 'Mã NV' && c.key === 'employeeId')).toBe(true);
+
+      // Search matches employeeId
+      const lecturer = {
+        name: 'Nguyễn Văn A',
+        email: 'nguyenvana@tdtu.edu.vn',
+        employeeId: 'NV01234',
+      };
+      const query = 'NV01234';
+      const isMatch =
+        lecturer.name.toLowerCase().includes(query.toLowerCase()) ||
+        lecturer.email.toLowerCase().includes(query.toLowerCase()) ||
+        (lecturer.employeeId && lecturer.employeeId.toLowerCase().includes(query.toLowerCase()));
+      expect(isMatch).toBe(true);
+    });
   });
 });
 

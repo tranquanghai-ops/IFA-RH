@@ -78,8 +78,6 @@ export const AdminLecturersPage: React.FC = () => {
   // Research Tracking Archival Tabs and Actions
   const [trackingTab, setTrackingTab] = useState<ResearchTrackingStatus>("ACTIVE");
   const [archiveTarget, setArchiveTarget] = useState<LecturerViewItem | null>(null);
-  const [archiveReasonType, setArchiveReasonType] = useState<string>("Chỉ có trình độ Cử nhân");
-  const [archiveCustomReason, setArchiveCustomReason] = useState<string>("");
   const [restoreTarget, setRestoreTarget] = useState<LecturerViewItem | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -253,18 +251,12 @@ export const AdminLecturersPage: React.FC = () => {
     setActionLoading(true);
     setActionError(null);
     try {
-      const finalReason =
-        archiveReasonType === "Khác"
-          ? (archiveCustomReason.trim() || "Trường hợp đặc thù khác")
-          : archiveReasonType;
       await setResearchTrackingStatus(
         archiveTarget.email,
         "ARCHIVED",
-        { uid: profile.uid, email: profile.email, role: profile.role },
-        finalReason
+        { uid: profile.uid, email: profile.email, role: profile.role }
       );
       setArchiveTarget(null);
-      setArchiveCustomReason("");
       await loadData();
     } catch (err: any) {
       console.error("Error archiving lecturer:", err);
@@ -306,14 +298,12 @@ export const AdminLecturersPage: React.FC = () => {
       { header: "Vai trò IFA-RH", key: "role", width: 14 },
       { header: "Nhân sự", key: "statusText", width: 16 },
       { header: "Theo dõi NCKH", key: "trackingText", width: 20 },
-      { header: "Lý do lưu trữ", key: "archiveReason", width: 25 },
     ];
     const data = filteredItems.map((u) => ({
       ...u,
       lecturerTypeText: lecturerTypeMap[u.lecturerType] || u.lecturerType,
       statusText: u.active ? "Đang công tác" : "Ngừng công tác",
       trackingText: u.researchTrackingStatus === "ARCHIVED" ? "Lưu trữ NCKH" : "Đang theo dõi",
-      archiveReason: u.archiveReason || "",
     }));
     await exportToExcel("Danh-sach-giang-vien-MTCN", "Giảng viên", cols, data);
   };
@@ -330,20 +320,18 @@ export const AdminLecturersPage: React.FC = () => {
       { header: "Vai trò IFA-RH", key: "role" },
       { header: "Nhân sự", key: "statusText" },
       { header: "Theo dõi NCKH", key: "trackingText" },
-      { header: "Lý do lưu trữ", key: "archiveReason" },
     ];
     const data = filteredItems.map((u) => ({
       ...u,
       lecturerTypeText: lecturerTypeMap[u.lecturerType] || u.lecturerType,
       statusText: u.active ? "Đang công tác" : "Ngừng công tác",
       trackingText: u.researchTrackingStatus === "ARCHIVED" ? "Lưu trữ NCKH" : "Đang theo dõi",
-      archiveReason: u.archiveReason || "",
     }));
     exportToCsv("Danh-sach-giang-vien-MTCN", cols, data);
   };
 
   return (
-    <div className="app-container">
+    <div className="app-container" style={{ maxWidth: "100%", paddingLeft: 0, paddingRight: 0 }}>
       {/* Page Header */}
       <div
         style={{
@@ -583,124 +571,135 @@ export const AdminLecturersPage: React.FC = () => {
           </p>
         </div>
       ) : (
-        <div className="table-container">
-          <table className="table">
+        <div className="table-container" style={{ overflowX: "auto" }}>
+          <table className="table-compact">
             <thead>
               <tr>
                 <th>Họ và tên</th>
-                <th>Mã NV</th>
                 <th>Email TDTU</th>
                 <th>Bộ môn / Ngành</th>
                 <th>Học vị</th>
                 <th>Loại hình GV</th>
                 <th>Vai trò IFA-RH</th>
                 <th>Nhân sự</th>
-                {trackingTab === "ARCHIVED" ? <th>Lý do lưu trữ</th> : <th>Theo dõi NCKH</th>}
+                <th>Theo dõi NCKH</th>
                 {isOwner && <th style={{ textAlign: "right" }}>Thao tác</th>}
               </tr>
             </thead>
             <tbody>
               {filteredItems.map((lecturer) => {
-                let roleBadge = <span className="badge badge-secondary">Giảng viên</span>;
+                let roleBadge = (
+                  <span className="badge badge-secondary" style={{ fontSize: "0.72rem", padding: "2px 6px" }}>
+                    Giảng viên
+                  </span>
+                );
                 if (lecturer.role === "owner") {
-                  roleBadge = <span className="badge badge-primary">Chủ sở hữu</span>;
+                  roleBadge = (
+                    <span className="badge badge-primary" style={{ fontSize: "0.72rem", padding: "2px 6px" }}>
+                      Chủ sở hữu
+                    </span>
+                  );
                 } else if (lecturer.role === "admin") {
-                  roleBadge = <span className="badge badge-info">Admin</span>;
+                  roleBadge = (
+                    <span className="badge badge-info" style={{ fontSize: "0.72rem", padding: "2px 6px" }}>
+                      Admin
+                    </span>
+                  );
                 }
 
                 const isSuggested = isSuggestedForArchive(lecturer);
 
                 return (
                   <tr key={lecturer.email} style={{ opacity: lecturer.active ? 1 : 0.65 }}>
-                    <td>
-                      <div style={{ fontWeight: 600, color: "var(--foreground)" }}>
+                    <td style={{ minWidth: 140, maxWidth: 180 }}>
+                      <div style={{ fontWeight: 600, color: "var(--foreground)", lineHeight: 1.3 }}>
                         {lecturer.name}
                       </div>
                     </td>
-                    <td style={{ fontFamily: "monospace", fontSize: "0.85rem", color: "var(--muted)" }}>
-                      {lecturer.employeeId || "—"}
-                    </td>
-                    <td>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.875rem" }}>
-                        <Mail size={13} color="var(--muted)" />
+                    <td style={{ minWidth: 170, whiteSpace: "nowrap" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: "0.78rem" }}>
+                        <Mail size={12} color="var(--muted)" style={{ flexShrink: 0 }} />
                         <span style={{ fontFamily: "monospace" }}>{lecturer.email}</span>
                       </div>
                     </td>
-                    <td>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <Building size={13} color="var(--muted)" />
+                    <td style={{ minWidth: 120, maxWidth: 145 }}>
+                      <div style={{ display: "flex", alignItems: "flex-start", gap: 5, fontSize: "0.78rem", lineHeight: 1.3 }}>
+                        <Building size={12} color="var(--muted)" style={{ flexShrink: 0, marginTop: 2 }} />
                         <span>{lecturer.department}</span>
                       </div>
                     </td>
-                    <td>
+                    <td style={{ minWidth: 65, maxWidth: 90 }}>
                       {lecturer.academicDegree ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <GraduationCap size={13} color="var(--muted)" />
+                        <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.78rem" }}>
+                          <GraduationCap size={12} color="var(--muted)" style={{ flexShrink: 0 }} />
                           <span>{lecturer.academicDegree}</span>
                         </div>
                       ) : (
-                        "—"
+                        <span style={{ color: "var(--muted)" }}>—</span>
                       )}
                     </td>
-                    <td>
-                      <span className="badge badge-secondary" style={{ fontSize: "0.75rem" }}>
+                    <td style={{ minWidth: 100, maxWidth: 130 }}>
+                      <span className="badge badge-secondary" style={{ fontSize: "0.72rem", padding: "2px 6px", whiteSpace: "normal", lineHeight: 1.25 }}>
                         {lecturerTypeMap[lecturer.lecturerType] || lecturer.lecturerType}
                       </span>
                     </td>
-                    <td>{roleBadge}</td>
-                    <td>
+                    <td style={{ minWidth: 80, whiteSpace: "nowrap" }}>
+                      {roleBadge}
+                    </td>
+                    <td style={{ minWidth: 95, whiteSpace: "nowrap" }}>
                       {lecturer.active ? (
-                        <span className="badge badge-success" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                          <CheckCircle2 size={12} /> Đang công tác
+                        <span className="badge badge-success" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: "0.72rem", padding: "2px 6px" }}>
+                          <CheckCircle2 size={11} /> Đang CT
                         </span>
                       ) : (
-                        <span className="badge badge-danger" style={{ display: "inline-flex", alignItems: "center", gap: 4 }} title="Lịch sử NCKH luôn được bảo lưu">
-                          <XCircle size={12} /> Ngừng công tác
+                        <span className="badge badge-danger" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: "0.72rem", padding: "2px 6px" }} title="Lịch sử NCKH luôn được bảo lưu">
+                          <XCircle size={11} /> Ngừng CT
                         </span>
                       )}
                     </td>
-                    <td>
+                    <td style={{ minWidth: 100 }}>
                       {trackingTab === "ARCHIVED" ? (
                         <div>
                           <span
                             className="badge badge-secondary"
-                            style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}
+                            style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", fontSize: "0.72rem", padding: "2px 6px" }}
                           >
-                            {lecturer.archiveReason || "Miễn NCKH"}
+                            Lưu trữ NCKH
                           </span>
                           {lecturer.archivedAt && (
-                            <div style={{ fontSize: "0.72rem", color: "var(--muted)", marginTop: 4 }}>
+                            <div style={{ fontSize: "0.68rem", color: "var(--muted)", marginTop: 2 }}>
                               {formatDateVN(lecturer.archivedAt)}
                             </div>
                           )}
                         </div>
                       ) : (
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                          <span className="badge badge-info" style={{ fontSize: "0.75rem" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                          <span className="badge badge-info" style={{ fontSize: "0.72rem", padding: "2px 6px" }}>
                             Đang theo dõi
                           </span>
                           {isSuggested && (
                             <span
                               className="badge badge-warning"
                               style={{
-                                fontSize: "0.7rem",
+                                fontSize: "0.68rem",
                                 background: "#fffbeb",
                                 color: "#b45309",
                                 border: "1px solid #fde68a",
                                 display: "inline-flex",
                                 alignItems: "center",
-                                gap: 3,
+                                gap: 2,
+                                padding: "1px 4px",
                               }}
                               title="Gợi ý: Cử nhân, Cơ hữu 2 hoặc Thỉnh giảng có thể không thuộc diện theo dõi NCKH"
                             >
-                              <HelpCircle size={11} /> Gợi ý lưu trữ
+                              <HelpCircle size={10} /> Gợi ý
                             </span>
                           )}
                         </div>
                       )}
                     </td>
                     {isOwner && (
-                      <td style={{ textAlign: "right" }}>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap", minWidth: 75 }}>
                         {trackingTab === "ACTIVE" ? (
                           <button
                             type="button"
@@ -708,25 +707,11 @@ export const AdminLecturersPage: React.FC = () => {
                             onClick={() => {
                               setArchiveTarget(lecturer);
                               setActionError(null);
-                              // Auto select default reason based on lecturer profile
-                              if (lecturer.lecturerType === "core_2") {
-                                setArchiveReasonType("Giảng viên cơ hữu 2");
-                              } else if (lecturer.lecturerType === "visiting") {
-                                setArchiveReasonType("Giảng viên thỉnh giảng");
-                              } else if (
-                                lecturer.academicDegree &&
-                                (lecturer.academicDegree.toLowerCase().includes("cử nhân") ||
-                                  lecturer.academicDegree.toLowerCase().includes("kỹ sư"))
-                              ) {
-                                setArchiveReasonType("Chỉ có trình độ Cử nhân");
-                              } else {
-                                setArchiveReasonType("Chỉ có trình độ Cử nhân");
-                              }
                             }}
-                            style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.8rem", padding: "4px 8px" }}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: "0.75rem", padding: "3px 7px" }}
                             title="Đưa vào diện lưu trữ NCKH (Chỉ Owner)"
                           >
-                            <Archive size={13} /> Lưu trữ
+                            <Archive size={12} /> Lưu trữ
                           </button>
                         ) : (
                           <button
@@ -736,10 +721,10 @@ export const AdminLecturersPage: React.FC = () => {
                               setRestoreTarget(lecturer);
                               setActionError(null);
                             }}
-                            style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.8rem", padding: "4px 8px" }}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: "0.75rem", padding: "3px 7px" }}
                             title="Khôi phục vào diện theo dõi NCKH (Chỉ Owner)"
                           >
-                            <RotateCcw size={13} /> Khôi phục
+                            <RotateCcw size={12} /> Khôi phục
                           </button>
                         )}
                       </td>
@@ -762,7 +747,7 @@ export const AdminLecturersPage: React.FC = () => {
               setActionError(null);
             }
           }}
-          title="Đưa Giảng viên vào diện Lưu trữ NCKH"
+          title="Xác nhận Lưu trữ NCKH Giảng viên"
           footer={
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, width: "100%" }}>
               <button
@@ -829,40 +814,6 @@ export const AdminLecturersPage: React.FC = () => {
               <div><strong>Loại hình:</strong> {lecturerTypeMap[archiveTarget.lecturerType] || archiveTarget.lecturerType}</div>
             </div>
 
-            <div>
-              <label style={{ display: "block", fontWeight: 600, fontSize: "0.875rem", marginBottom: 6 }}>
-                Lý do lưu trữ NCKH:
-              </label>
-              <select
-                className="form-control"
-                value={archiveReasonType}
-                onChange={(e) => setArchiveReasonType(e.target.value)}
-                disabled={actionLoading}
-              >
-                <option value="Chỉ có trình độ Cử nhân">Chỉ có trình độ Cử nhân (không bắt buộc NCKH)</option>
-                <option value="Giảng viên cơ hữu 2">Giảng viên cơ hữu 2 (hợp đồng chuyên môn giảng dạy)</option>
-                <option value="Giảng viên thỉnh giảng">Giảng viên thỉnh giảng</option>
-                <option value="Giảng viên lớn tuổi / miễn NCKH">Giảng viên lớn tuổi / miễn nhiệm vụ NCKH</option>
-                <option value="Khác">Trường hợp đặc thù khác (tự nhập lý do)</option>
-              </select>
-            </div>
-
-            {archiveReasonType === "Khác" && (
-              <div>
-                <label style={{ display: "block", fontWeight: 600, fontSize: "0.85rem", marginBottom: 4 }}>
-                  Nhập lý do chi tiết:
-                </label>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="Ví dụ: Giảng viên kiêm nhiệm hành chính, diện hợp đồng đặc biệt..."
-                  value={archiveCustomReason}
-                  onChange={(e) => setArchiveCustomReason(e.target.value)}
-                  disabled={actionLoading}
-                />
-              </div>
-            )}
-
             <div
               style={{
                 background: "#f0f9ff",
@@ -880,10 +831,9 @@ export const AdminLecturersPage: React.FC = () => {
               <div>
                 <strong>Chính sách an toàn & Bảo toàn dữ liệu:</strong>
                 <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
-                  <li>Giảng viên <strong>vẫn được giữ nguyên</strong> trong danh bạ nhân sự IFA-WORK và IFA-RH.</li>
-                  <li><strong>Không xóa</strong> bất kỳ hồ sơ bài báo hay lịch sử NCKH nào đã công bố.</li>
-                  <li>Chỉ ẩn khỏi các báo cáo tiến độ và chỉ tiêu KPI NCKH đang hoạt động.</li>
-                  <li>Owner có thể <strong>khôi phục lại bất kỳ lúc nào</strong> từ tab "Lưu trữ NCKH".</li>
+                  <li>Giảng viên sẽ được chuyển sang tab <strong>"Lưu trữ NCKH"</strong> và miễn theo dõi KPI nghiên cứu.</li>
+                  <li><strong>Không xóa dữ liệu:</strong> Hồ sơ nhân sự và toàn bộ công trình NCKH đã có vẫn được bảo lưu trọn vẹn.</li>
+                  <li>Chủ sở hữu (Owner) có thể <strong>khôi phục lại bất kỳ lúc nào</strong>.</li>
                 </ul>
               </div>
             </div>
@@ -901,7 +851,7 @@ export const AdminLecturersPage: React.FC = () => {
               setActionError(null);
             }
           }}
-          title="Khôi phục Giảng viên vào diện Theo dõi NCKH"
+          title="Xác nhận Khôi phục Theo dõi NCKH"
           footer={
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, width: "100%" }}>
               <button
@@ -964,7 +914,6 @@ export const AdminLecturersPage: React.FC = () => {
               <div><strong>Họ và tên:</strong> {restoreTarget.name}</div>
               <div><strong>Email TDTU:</strong> <code>{restoreTarget.email}</code></div>
               <div><strong>Đơn vị / Ngành:</strong> {restoreTarget.department}</div>
-              <div><strong>Lý do đã lưu trữ:</strong> <span className="badge badge-warning">{restoreTarget.archiveReason || "Miễn NCKH"}</span></div>
             </div>
 
             <div

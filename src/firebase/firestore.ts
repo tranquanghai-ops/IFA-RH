@@ -1142,8 +1142,12 @@ export async function setResearchTrackingStatus(
     updatedAt: now,
     archivedAt: trackingStatus === "ARCHIVED" ? (before?.archivedAt || now) : null,
     archivedBy: trackingStatus === "ARCHIVED" ? actor.email : null,
-    archiveReason: trackingStatus === "ARCHIVED" ? (archiveReason?.trim() || before?.archiveReason || "Không thuộc diện NCKH") : null,
   };
+  if (archiveReason && archiveReason.trim()) {
+    settings.archiveReason = archiveReason.trim();
+  } else if (before?.archiveReason) {
+    settings.archiveReason = before.archiveReason;
+  }
 
   const cleanDoc: Record<string, any> = {
     emailNormalized: settings.emailNormalized,
@@ -1158,7 +1162,7 @@ export async function setResearchTrackingStatus(
 
   const actionName = trackingStatus === "ARCHIVED" ? "LECTURER_RESEARCH_ARCHIVED" : "LECTURER_RESEARCH_RESTORED";
   const summary = trackingStatus === "ARCHIVED"
-    ? `Lưu trữ NCKH giảng viên ${cleanEmail} (trước đó: ${oldStatus})${cleanDoc.archiveReason ? ` - Lý do: ${cleanDoc.archiveReason}` : ""}.`
+    ? `Lưu trữ NCKH giảng viên ${cleanEmail} (trước đó: ${oldStatus}).`
     : `Khôi phục theo dõi NCKH giảng viên ${cleanEmail} (trước đó: ${oldStatus}).`;
 
   await logAudit(actor, actionName, "user", cleanEmail, summary);

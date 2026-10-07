@@ -862,6 +862,41 @@ a:hover {
   background-color: #f8fafc;
 }
 
+/* Compact Table for High-density Directories (Lecturers) */
+.table-compact {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+.table-compact th {
+  background-color: #f8fafc;
+  color: var(--primary);
+  font-weight: 700;
+  padding: 8px 8px;
+  font-size: 0.775rem;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.table-compact td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-main);
+  vertical-align: middle;
+  font-size: 0.8125rem;
+}
+
+.table-compact tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table-compact tbody tr:hover {
+  background-color: #f8fafc;
+}
+
 /* Forms */
 .form-group {
   display: flex;
