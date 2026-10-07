@@ -1289,21 +1289,15 @@ a:hover {
   }
 }
 
-/* IFAA+ Style Research Opportunities Grid & Card Actions */
+/* IFAA+ Style Research Opportunities Grid & Card Actions - Strictly 2 cards per row on desktop */
 .opportunity-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
   margin-bottom: 32px;
 }
 
-@media (max-width: 1439px) {
-  .opportunity-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 768px) {
+@media (max-width: 860px) {
   .opportunity-grid {
     grid-template-columns: 1fr;
     gap: 16px;
