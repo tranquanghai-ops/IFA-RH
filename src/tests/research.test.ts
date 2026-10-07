@@ -185,4 +185,25 @@ describe("RESEARCH & Progress Workflow", () => {
     expect(matchedByUid.length).toBe(1);
     expect(matchedByUid[0].id).toBe("w1");
   });
+
+  it("should process batch emails for research tracking accurately", () => {
+    const rawEmails = [
+      "gv1@tdtu.edu.vn",
+      "GV1@tdtu.edu.vn",
+      "gv2@tdtu.edu.vn",
+      "",
+      "invalid@gmail.com",
+    ];
+
+    const validEmails = Array.from(
+      new Set(
+        rawEmails
+          .map((e) => (e || "").toLowerCase().trim())
+          .filter((e) => e && e.endsWith("@tdtu.edu.vn"))
+      )
+    );
+
+    expect(validEmails).toEqual(["gv1@tdtu.edu.vn", "gv2@tdtu.edu.vn"]);
+  });
 });
+

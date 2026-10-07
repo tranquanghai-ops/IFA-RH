@@ -1270,4 +1270,62 @@ export async function setResearchTrackingStatus(
   return settings;
 }
 
+export async function setResearchTrackingStatusBatch(
+  emailsNormalized: string[],
+  trackingStatus: ResearchTrackingStatus,
+  actor: { uid: string; email: string; role: UserRole },
+  archiveReason?: string
+): Promise<number> {
+  if (actor.role !== "owner") {
+    throw new Error("Chỉ Owner mới có quyền thay đổi trạng thái theo dõi NCKH của giảng viên.");
+  }
+  const now = new Date().toISOString();
+  const validEmails = Array.from(
+    new Set(
+      emailsNormalized
+        .map((e) => (e || "").toLowerCase().trim())
+        .filter((e) => e && e.endsWith("@tdtu.edu.vn"))
+    )
+  );
+
+  if (validEmails.length === 0) return 0;
+
+  const chunkSize = 400;
+  for (let i = 0; i < validEmails.length; i += chunkSize) {
+    const chunk = validEmails.slice(i, i + chunkSize);
+    const batch = writeBatch(firestore);
+
+    for (const email of chunk) {
+      const docRef = doc(firestore, "researchPersonnelSettings", email);
+      const cleanDoc: Record<string, any> = {
+        emailNormalized: email,
+        researchTrackingStatus: trackingStatus,
+        updatedAt: now,
+      };
+      if (trackingStatus === "ARCHIVED") {
+        cleanDoc.archivedAt = now;
+        cleanDoc.archivedBy = actor.email;
+        if (archiveReason && archiveReason.trim()) {
+          cleanDoc.archiveReason = archiveReason.trim();
+        }
+      } else {
+        cleanDoc.archivedAt = null;
+        cleanDoc.archivedBy = null;
+        cleanDoc.archiveReason = null;
+      }
+      batch.set(docRef, cleanDoc);
+    }
+
+    await batch.commit();
+  }
+
+  const actionName = trackingStatus === "ARCHIVED" ? "LECTURERS_RESEARCH_BATCH_ARCHIVED" : "LECTURERS_RESEARCH_BATCH_RESTORED";
+  const summary = trackingStatus === "ARCHIVED"
+    ? `Lưu trữ NCKH hàng loạt cho ${validEmails.length} giảng viên.`
+    : `Khôi phục theo dõi NCKH hàng loạt cho ${validEmails.length} giảng viên.`;
+
+  await logAudit(actor, actionName, "user", `${validEmails.length}_lecturers`, summary);
+
+  return validEmails.length;
+}
 

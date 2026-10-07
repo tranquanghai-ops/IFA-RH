@@ -6,6 +6,7 @@ import {
   fetchLatestPersonnelSyncLog,
   fetchResearchPersonnelSettings,
   setResearchTrackingStatus,
+  setResearchTrackingStatusBatch,
 } from "../firebase/firestore";
 import type {
   UserProfile,
@@ -37,6 +38,7 @@ import {
   RotateCcw,
   AlertTriangle,
   BookmarkCheck,
+  CheckSquare,
 } from "lucide-react";
 
 interface LecturerViewItem {
@@ -81,6 +83,10 @@ export const AdminLecturersPage: React.FC = () => {
   const [restoreTarget, setRestoreTarget] = useState<LecturerViewItem | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Bulk Selection for Archiving / Restoring
+  const [selectedEmails, setSelectedEmails] = useState<Set<string>>(new Set());
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
 
   // Modals
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
@@ -236,12 +242,7 @@ export const AdminLecturersPage: React.FC = () => {
       u.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (u.employeeId && u.employeeId.toLowerCase().includes(searchQuery.toLowerCase()));
 
-    const matchStatus =
-      statusFilter === "ALL" ||
-      (statusFilter === "ACTIVE" && u.active) ||
-      (statusFilter === "INACTIVE" && !u.active);
-
-    return matchTab && matchDept && matchSearch && matchStatus;
+    return matchTab && matchDept && matchSearch;
   });
 
   const isOwner = profile?.role === "owner";
@@ -261,6 +262,32 @@ export const AdminLecturersPage: React.FC = () => {
     } catch (err: any) {
       console.error("Error archiving lecturer:", err);
       setActionError(err.message || "Lỗi khi lưu trữ giảng viên.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+
+  const handleConfirmBatchAction = async () => {
+    if (!profile || !isOwner || selectedEmails.size === 0) return;
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      const targetStatus: ResearchTrackingStatus =
+        trackingTab === "ACTIVE" ? "ARCHIVED" : "ACTIVE";
+
+      await setResearchTrackingStatusBatch(
+        Array.from(selectedEmails),
+        targetStatus,
+        { uid: profile.uid, email: profile.email, role: profile.role }
+      );
+
+      setSelectedEmails(new Set());
+      setIsBatchModalOpen(false);
+      await loadData();
+    } catch (err: any) {
+      console.error("Error batch updating research tracking status:", err);
+      setActionError(err.message || "Lỗi khi xử lý hàng loạt.");
     } finally {
       setActionLoading(false);
     }
@@ -465,7 +492,7 @@ export const AdminLecturersPage: React.FC = () => {
         <button
           type="button"
           className={`btn ${trackingTab === "ACTIVE" ? "btn-primary" : "btn-secondary"}`}
-          onClick={() => setTrackingTab("ACTIVE")}
+          onClick={() => { setTrackingTab("ACTIVE"); setSelectedEmails(new Set()); }}
           style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 600 }}
         >
           <BookmarkCheck size={16} /> Đang theo dõi NCKH ({activeCount})
@@ -473,7 +500,7 @@ export const AdminLecturersPage: React.FC = () => {
         <button
           type="button"
           className={`btn ${trackingTab === "ARCHIVED" ? "btn-primary" : "btn-secondary"}`}
-          onClick={() => setTrackingTab("ARCHIVED")}
+          onClick={() => { setTrackingTab("ARCHIVED"); setSelectedEmails(new Set()); }}
           style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 600 }}
         >
           <Archive size={16} /> Lưu trữ NCKH ({archivedCount})
@@ -528,7 +555,7 @@ export const AdminLecturersPage: React.FC = () => {
               className="form-control"
               value={departmentFilter}
               onChange={(e) => setDepartmentFilter(e.target.value)}
-              style={{ width: "auto" }}
+              style={{ width: "auto", minWidth: 180 }}
             >
               <option value="Tất cả">Tất cả bộ môn</option>
               {departments.map((d) => (
@@ -536,23 +563,82 @@ export const AdminLecturersPage: React.FC = () => {
               ))}
             </select>
           </div>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: "0.85rem", color: "var(--muted)", fontWeight: 600 }}>Nhân sự:</span>
-            <select
-              className="form-control"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
-              style={{ width: "auto" }}
-            >
-              <option value="ALL">Tất cả ({items.length})</option>
-              <option value="ACTIVE">Đang công tác ({items.filter(i => i.active).length})</option>
-              <option value="INACTIVE">Ngừng công tác ({items.filter(i => !i.active).length})</option>
-            </select>
-          </div>
         </div>
       </div>
 
+      {/* Bulk Action Bar */}
+      {isOwner && selectedEmails.size > 0 && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            padding: "10px 16px",
+            marginBottom: 14,
+            background: "#eff6ff",
+            border: "1px solid #bfdbfe",
+            borderRadius: 8,
+            color: "#1e40af",
+            flexWrap: "wrap",
+            gap: 10,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <CheckSquare size={18} color="#2563eb" />
+            <span style={{ fontWeight: 600, fontSize: "0.875rem" }}>
+              Đã chọn <strong>{selectedEmails.size}</strong> giảng viên
+            </span>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setSelectedEmails(new Set())}
+              style={{ fontSize: "0.75rem", padding: "2px 8px" }}
+            >
+              Bỏ chọn tất cả
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            {trackingTab === "ACTIVE" ? (
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => {
+                  setActionError(null);
+                  setIsBatchModalOpen(true);
+                }}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  background: "#d97706",
+                  borderColor: "#b45309",
+                }}
+              >
+                <Archive size={15} /> Lưu trữ NCKH hàng loạt ({selectedEmails.size})
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => {
+                  setActionError(null);
+                  setIsBatchModalOpen(true);
+                }}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  background: "#059669",
+                  borderColor: "#047857",
+                }}
+              >
+                <RotateCcw size={15} /> Khôi phục theo dõi hàng loạt ({selectedEmails.size})
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {/* Lecturers Table */}
       {loading ? (
         <div style={{ textAlign: "center", padding: 48, color: "var(--muted)" }}>
@@ -575,43 +661,70 @@ export const AdminLecturersPage: React.FC = () => {
           <table className="table-compact">
             <thead>
               <tr>
+                {isOwner && (
+                  <th style={{ width: 38, textAlign: "center", paddingLeft: 10, paddingRight: 6 }}>
+                    <input
+                      type="checkbox"
+                      aria-label="Chọn tất cả giảng viên"
+                      checked={filteredItems.length > 0 && selectedEmails.size === filteredItems.length}
+                      ref={(el) => {
+                        if (el) {
+                          el.indeterminate =
+                            selectedEmails.size > 0 && selectedEmails.size < filteredItems.length;
+                        }
+                      }}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedEmails(new Set(filteredItems.map((i) => i.email)));
+                        } else {
+                          setSelectedEmails(new Set());
+                        }
+                      }}
+                      style={{ cursor: "pointer", width: 16, height: 16 }}
+                    />
+                  </th>
+                )}
                 <th>Họ và tên</th>
                 <th>Email TDTU</th>
                 <th>Bộ môn / Ngành</th>
                 <th>Học vị</th>
                 <th>Loại hình GV</th>
-                <th>Vai trò IFA-RH</th>
-                <th>Nhân sự</th>
-                <th>Theo dõi NCKH</th>
                 {isOwner && <th style={{ textAlign: "right" }}>Thao tác</th>}
               </tr>
             </thead>
             <tbody>
               {filteredItems.map((lecturer) => {
-                let roleBadge = (
-                  <span className="badge badge-secondary" style={{ fontSize: "0.72rem", padding: "2px 6px" }}>
-                    Giảng viên
-                  </span>
-                );
-                if (lecturer.role === "owner") {
-                  roleBadge = (
-                    <span className="badge badge-primary" style={{ fontSize: "0.72rem", padding: "2px 6px" }}>
-                      Chủ sở hữu
-                    </span>
-                  );
-                } else if (lecturer.role === "admin") {
-                  roleBadge = (
-                    <span className="badge badge-info" style={{ fontSize: "0.72rem", padding: "2px 6px" }}>
-                      Admin
-                    </span>
-                  );
-                }
-
                 const isSuggested = isSuggestedForArchive(lecturer);
+                const isSelected = selectedEmails.has(lecturer.email);
 
                 return (
-                  <tr key={lecturer.email} style={{ opacity: lecturer.active ? 1 : 0.65 }}>
-                    <td style={{ minWidth: 140, maxWidth: 180 }}>
+                  <tr
+                    key={lecturer.email}
+                    style={{
+                      opacity: lecturer.active ? 1 : 0.65,
+                      background: isSelected ? "rgba(37, 99, 235, 0.05)" : undefined,
+                    }}
+                  >
+                    {isOwner && (
+                      <td style={{ width: 38, textAlign: "center", paddingLeft: 10, paddingRight: 6 }}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Chọn ${lecturer.name}`}
+                          checked={isSelected}
+                          onChange={(e) => {
+                            const next = new Set(selectedEmails);
+                            if (e.target.checked) {
+                              next.add(lecturer.email);
+                            } else {
+                              next.delete(lecturer.email);
+                            }
+                            setSelectedEmails(next);
+                          }}
+                          style={{ cursor: "pointer", width: 16, height: 16 }}
+                        />
+                      </td>
+                    )}
+                    <td style={{ minWidth: 140, maxWidth: 200 }}>
                       <div style={{ fontWeight: 600, color: "var(--foreground)", lineHeight: 1.3 }}>
                         {lecturer.name}
                       </div>
@@ -622,13 +735,13 @@ export const AdminLecturersPage: React.FC = () => {
                         <span style={{ fontFamily: "monospace" }}>{lecturer.email}</span>
                       </div>
                     </td>
-                    <td style={{ minWidth: 120, maxWidth: 145 }}>
+                    <td style={{ minWidth: 120, maxWidth: 160 }}>
                       <div style={{ display: "flex", alignItems: "flex-start", gap: 5, fontSize: "0.78rem", lineHeight: 1.3 }}>
                         <Building size={12} color="var(--muted)" style={{ flexShrink: 0, marginTop: 2 }} />
                         <span>{lecturer.department}</span>
                       </div>
                     </td>
-                    <td style={{ minWidth: 65, maxWidth: 90 }}>
+                    <td style={{ minWidth: 70, maxWidth: 100 }}>
                       {lecturer.academicDegree ? (
                         <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "0.78rem" }}>
                           <GraduationCap size={12} color="var(--muted)" style={{ flexShrink: 0 }} />
@@ -638,65 +751,35 @@ export const AdminLecturersPage: React.FC = () => {
                         <span style={{ color: "var(--muted)" }}>—</span>
                       )}
                     </td>
-                    <td style={{ minWidth: 100, maxWidth: 130 }}>
-                      <span className="badge badge-secondary" style={{ fontSize: "0.72rem", padding: "2px 6px", whiteSpace: "normal", lineHeight: 1.25 }}>
-                        {lecturerTypeMap[lecturer.lecturerType] || lecturer.lecturerType}
-                      </span>
-                    </td>
-                    <td style={{ minWidth: 80, whiteSpace: "nowrap" }}>
-                      {roleBadge}
-                    </td>
-                    <td style={{ minWidth: 95, whiteSpace: "nowrap" }}>
-                      {lecturer.active ? (
-                        <span className="badge badge-success" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: "0.72rem", padding: "2px 6px" }}>
-                          <CheckCircle2 size={11} /> Đang CT
+                    <td style={{ minWidth: 110, maxWidth: 160 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <span className="badge badge-secondary" style={{ fontSize: "0.72rem", padding: "2px 6px", whiteSpace: "normal", lineHeight: 1.25 }}>
+                          {lecturerTypeMap[lecturer.lecturerType] || lecturer.lecturerType}
                         </span>
-                      ) : (
-                        <span className="badge badge-danger" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: "0.72rem", padding: "2px 6px" }} title="Lịch sử NCKH luôn được bảo lưu">
-                          <XCircle size={11} /> Ngừng CT
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ minWidth: 100 }}>
-                      {trackingTab === "ARCHIVED" ? (
-                        <div>
+                        {trackingTab === "ACTIVE" && isSuggested && (
                           <span
-                            className="badge badge-secondary"
-                            style={{ background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", fontSize: "0.72rem", padding: "2px 6px" }}
+                            className="badge badge-warning"
+                            style={{
+                              fontSize: "0.68rem",
+                              background: "#fffbeb",
+                              color: "#b45309",
+                              border: "1px solid #fde68a",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 2,
+                              padding: "1px 4px",
+                            }}
+                            title="Gợi ý: Cử nhân, Cơ hữu 2 hoặc Thỉnh giảng có thể không thuộc diện theo dõi NCKH"
                           >
-                            Lưu trữ NCKH
+                            <HelpCircle size={10} /> Gợi ý
                           </span>
-                          {lecturer.archivedAt && (
-                            <div style={{ fontSize: "0.68rem", color: "var(--muted)", marginTop: 2 }}>
-                              {formatDateVN(lecturer.archivedAt)}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-                          <span className="badge badge-info" style={{ fontSize: "0.72rem", padding: "2px 6px" }}>
-                            Đang theo dõi
+                        )}
+                        {trackingTab === "ARCHIVED" && lecturer.archivedAt && (
+                          <span style={{ fontSize: "0.68rem", color: "var(--muted)" }}>
+                            ({formatDateVN(lecturer.archivedAt)})
                           </span>
-                          {isSuggested && (
-                            <span
-                              className="badge badge-warning"
-                              style={{
-                                fontSize: "0.68rem",
-                                background: "#fffbeb",
-                                color: "#b45309",
-                                border: "1px solid #fde68a",
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: 2,
-                                padding: "1px 4px",
-                              }}
-                              title="Gợi ý: Cử nhân, Cơ hữu 2 hoặc Thỉnh giảng có thể không thuộc diện theo dõi NCKH"
-                            >
-                              <HelpCircle size={10} /> Gợi ý
-                            </span>
-                          )}
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </td>
                     {isOwner && (
                       <td style={{ textAlign: "right", whiteSpace: "nowrap", minWidth: 75 }}>
@@ -933,6 +1016,154 @@ export const AdminLecturersPage: React.FC = () => {
               <span>
                 Giảng viên sẽ được chuyển trở lại tab <strong>"Đang theo dõi NCKH"</strong> và đưa vào thống kê KPI giảng viên NCKH hiện hành.
               </span>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+
+      {/* Batch Archive / Restore Confirmation Modal - Owner Only */}
+      {isBatchModalOpen && (
+        <Modal
+          isOpen={true}
+          onClose={() => {
+            if (!actionLoading) {
+              setIsBatchModalOpen(false);
+              setActionError(null);
+            }
+          }}
+          title={
+            trackingTab === "ACTIVE"
+              ? `Xác nhận Lưu trữ NCKH hàng loạt (${selectedEmails.size} giảng viên)`
+              : `Xác nhận Khôi phục theo dõi NCKH hàng loạt (${selectedEmails.size} giảng viên)`
+          }
+          footer={
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, width: "100%" }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setIsBatchModalOpen(false);
+                  setActionError(null);
+                }}
+                disabled={actionLoading}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                className={`btn ${trackingTab === "ACTIVE" ? "btn-danger" : "btn-primary"}`}
+                onClick={handleConfirmBatchAction}
+                disabled={actionLoading}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+              >
+                {actionLoading ? (
+                  <>
+                    <RefreshCw size={15} className="spin-animate" /> Đang xử lý...
+                  </>
+                ) : trackingTab === "ACTIVE" ? (
+                  <>
+                    <Archive size={15} /> Xác nhận lưu trữ (${selectedEmails.size} GV)
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw size={15} /> Xác nhận khôi phục (${selectedEmails.size} GV)
+                  </>
+                )}
+              </button>
+            </div>
+          }
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {actionError && (
+              <div
+                style={{
+                  background: "#fef2f2",
+                  border: "1px solid #fecaca",
+                  borderRadius: 6,
+                  padding: 10,
+                  color: "#991b1b",
+                  fontSize: "0.85rem",
+                }}
+              >
+                {actionError}
+              </div>
+            )}
+
+            <p style={{ fontSize: "0.9rem", margin: 0 }}>
+              {trackingTab === "ACTIVE" ? (
+                <>
+                  Bạn đang chọn <strong>{selectedEmails.size} giảng viên</strong> để đưa vào diện <strong>Lưu trữ NCKH</strong>. Các giảng viên này sẽ được miễn chỉ tiêu theo dõi NCKH (tiến độ, hồ sơ, thống kê) trong IFA-RH.
+                </>
+              ) : (
+                <>
+                  Bạn đang chọn <strong>{selectedEmails.size} giảng viên</strong> để <strong>Khôi phục theo dõi NCKH</strong>. Các giảng viên này sẽ quay trở lại danh sách theo dõi tiến độ và báo cáo NCKH.
+                </>
+              )}
+            </p>
+
+            {/* List of Selected Lecturers */}
+            <div
+              style={{
+                maxHeight: 220,
+                overflowY: "auto",
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                padding: "8px 12px",
+                fontSize: "0.825rem",
+              }}
+            >
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {Array.from(selectedEmails).map((email, idx) => {
+                  const item = items.find((i) => i.email === email);
+                  return (
+                    <div
+                      key={email}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        borderBottom: idx < selectedEmails.size - 1 ? "1px solid #f1f5f9" : "none",
+                        paddingBottom: 4,
+                      }}
+                    >
+                      <div>
+                        <strong>{item?.name || email}</strong>
+                        <span style={{ color: "var(--muted)", marginLeft: 6, fontSize: "0.78rem" }}>
+                          ({email})
+                        </span>
+                      </div>
+                      <div style={{ color: "var(--muted)", fontSize: "0.78rem" }}>
+                        {item?.department || ""} · {item?.academicDegree || "—"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div
+              style={{
+                background: trackingTab === "ACTIVE" ? "#f0f9ff" : "#f0fdf4",
+                border: `1px solid ${trackingTab === "ACTIVE" ? "#bae6fd" : "#bbf7d0"}`,
+                borderRadius: 8,
+                padding: 12,
+                fontSize: "0.85rem",
+                color: trackingTab === "ACTIVE" ? "#0369a1" : "#166534",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 8,
+              }}
+            >
+              <Info size={18} style={{ flexShrink: 0, marginTop: 2 }} />
+              <div>
+                <strong>Chính sách an toàn & Bảo toàn dữ liệu:</strong>
+                <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
+                  <li><strong>Không xóa dữ liệu:</strong> Hồ sơ nhân sự và toàn bộ công trình NCKH đã có của các giảng viên vẫn được bảo lưu trọn vẹn.</li>
+                  <li>Chủ sở hữu (Owner) có thể <strong>khôi phục lại bất kỳ lúc nào</strong>.</li>
+                </ul>
+              </div>
             </div>
           </div>
         </Modal>
