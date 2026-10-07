@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import type { Opportunity } from "../types";
 import { fetchPublishedOpportunities } from "../firebase/firestore";
+import { getOpportunityDeadlineInfo } from "../utils/date";
 import { OpportunityCard } from "../components/OpportunityCard";
 import { OpportunityDetailModal } from "../components/OpportunityDetailModal";
 import {
@@ -9,6 +10,7 @@ import {
   Award,
   AlertCircle,
   RefreshCw,
+  Clock,
 } from "lucide-react";
 
 const FILTER_TAGS = [
@@ -23,6 +25,8 @@ const FILTER_TAGS = [
   "Quốc tế",
   "Trong nước",
 ];
+
+const EXPIRED_TAB = "Hết hạn";
 
 export const PublicHome: React.FC = () => {
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
@@ -51,7 +55,19 @@ export const PublicHome: React.FC = () => {
     loadData();
   }, []);
 
-  const filteredOpportunities = opportunities.filter((opp) => {
+  const isExpiredOpp = (opp: Opportunity) =>
+    getOpportunityDeadlineInfo(opp).isExpired;
+
+  // Split into active (not expired) and expired pools
+  const activeOpportunities = opportunities.filter((opp) => !isExpiredOpp(opp));
+  const expiredOpportunities = opportunities.filter((opp) => isExpiredOpp(opp));
+
+  const isInExpiredTab = selectedTag === EXPIRED_TAB;
+
+  // Pool to filter from based on current tab
+  const basePool = isInExpiredTab ? expiredOpportunities : activeOpportunities;
+
+  const filteredOpportunities = basePool.filter((opp) => {
     // Search query
     const matchQuery =
       searchQuery.trim() === "" ||
@@ -60,9 +76,11 @@ export const PublicHome: React.FC = () => {
       (opp.field && opp.field.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (opp.topic && opp.topic.toLowerCase().includes(searchQuery.toLowerCase()));
 
-    // Tag
+    // Tag (skip tag filter when in expired tab — show all expired)
     let matchTag = false;
-    if (selectedTag === "Tất cả") {
+    if (isInExpiredTab) {
+      matchTag = true;
+    } else if (selectedTag === "Tất cả") {
       matchTag = true;
     } else if (selectedTag === "Quốc tế") {
       matchTag = opp.level === "Quốc tế";
@@ -189,6 +207,58 @@ export const PublicHome: React.FC = () => {
               {tag}
             </button>
           ))}
+          {/* Divider */}
+          <span
+            style={{
+              width: 1,
+              height: 18,
+              background: "var(--line)",
+              alignSelf: "center",
+              flexShrink: 0,
+            }}
+            aria-hidden="true"
+          />
+          {/* Expired tab — visual separated from active filter tags */}
+          <button
+            type="button"
+            className={`chip ${selectedTag === EXPIRED_TAB ? "active" : ""}`}
+            onClick={() => setSelectedTag(EXPIRED_TAB)}
+            style={
+              selectedTag === EXPIRED_TAB
+                ? {
+                    background: "#64748b",
+                    color: "#ffffff",
+                    borderColor: "#475569",
+                  }
+                : {
+                    background: "#f1f5f9",
+                    color: "#64748b",
+                    borderColor: "#e2e8f0",
+                  }
+            }
+            aria-label={`Sự kiện hết hạn — ${expiredOpportunities.length} mục`}
+          >
+            <Clock size={12} style={{ flexShrink: 0 }} />
+            {EXPIRED_TAB}
+            {expiredOpportunities.length > 0 && (
+              <span
+                style={{
+                  marginLeft: 4,
+                  background:
+                    selectedTag === EXPIRED_TAB ? "rgba(255,255,255,0.25)" : "#e2e8f0",
+                  color:
+                    selectedTag === EXPIRED_TAB ? "#ffffff" : "#475569",
+                  fontSize: "0.68rem",
+                  fontWeight: 700,
+                  padding: "1px 5px",
+                  borderRadius: 9999,
+                  lineHeight: 1.4,
+                }}
+              >
+                {expiredOpportunities.length}
+              </span>
+            )}
+          </button>
         </div>
       </div>
 
@@ -267,20 +337,53 @@ export const PublicHome: React.FC = () => {
           }}
         >
           <div style={{ fontSize: "1.15rem", fontWeight: 700, color: "var(--primary)", marginBottom: 8 }}>
-            Chưa có dữ liệu NCKH phù hợp.
+            {isInExpiredTab
+              ? "Chưa có sự kiện nào hết hạn."
+              : "Chưa có dữ liệu NCKH phù hợp."}
           </div>
           <p style={{ maxWidth: 480, margin: "0 auto", fontSize: "0.875rem" }}>
-            Hãy thử tìm kiếm với từ khóa khác hoặc bấm &ldquo;Tất cả&rdquo; để xem toàn bộ danh mục hội thảo và công bố học thuật.
+            {isInExpiredTab
+              ? "Tất cả các sự kiện hiện tại vẫn còn hiệu lực."
+              : "Hãy thử tìm kiếm với từ khóa khác hoặc bấm &ldquo;Tất cả&rdquo; để xem toàn bộ danh mục hội thảo và công bố học thuật."}
           </p>
         </div>
       ) : (
         /* Pure Card Grid Presentation */
         <>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, fontSize: "0.85rem", color: "var(--muted)" }}>
-            <div>
-              Hiển thị <strong>{filteredOpportunities.length}</strong> công bố học thuật &amp; hội thảo phù hợp
+          {/* Expired tab contextual banner */}
+          {isInExpiredTab && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "#f8fafc",
+                border: "1px solid #e2e8f0",
+                borderRadius: 8,
+                padding: "10px 14px",
+                marginBottom: 14,
+                fontSize: "0.82rem",
+                color: "#64748b",
+              }}
+            >
+              <Clock size={14} style={{ flexShrink: 0, color: "#94a3b8" }} />
+              <span>
+                Hiển thị{" "}
+                <strong style={{ color: "#475569" }}>
+                  {filteredOpportunities.length}
+                </strong>{" "}
+                sự kiện đã hết hạn — Các sự kiện này không còn nhận bài / đăng ký nhưng vẫn được lưu lại để tham khảo.
+              </span>
             </div>
-          </div>
+          )}
+
+          {!isInExpiredTab && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, fontSize: "0.85rem", color: "var(--muted)" }}>
+              <div>
+                Hiển thị <strong>{filteredOpportunities.length}</strong> công bố học thuật &amp; hội thảo phù hợp
+              </div>
+            </div>
+          )}
 
           <div className="opportunity-grid">
             {filteredOpportunities.map((opp) => (

@@ -199,7 +199,7 @@ export const AdminOpportunitiesPage: React.FC = () => {
   };
 
   return (
-    <div className="app-container">
+    <div className="app-container" style={{ maxWidth: "100%", paddingLeft: 0, paddingRight: 0 }}>
       {/* Header */}
       <div
         style={{
@@ -304,77 +304,81 @@ export const AdminOpportunitiesPage: React.FC = () => {
           </button>
         </div>
       ) : (
-        <div className="table-container">
-          <table className="table">
+        <div className="table-container" style={{ overflowX: "auto" }}>
+          <table className="table-compact" style={{ width: "100%" }}>
             <thead>
               <tr>
-                <th>Tiêu đề hội thảo / Cơ hội</th>
-                <th>Đơn vị tổ chức</th>
-                <th>Loại hình</th>
-                <th>Cấp độ</th>
-                <th>Hạn nộp (Deadline)</th>
-                <th>Nguồn gốc</th>
-                <th>Trạng thái</th>
-                <th style={{ textAlign: "right" }}>Thao tác</th>
+                <th style={{ minWidth: 240 }}>Tiêu đề hội thảo / Cơ hội</th>
+                <th style={{ width: 170, minWidth: 150, maxWidth: 190 }}>Đơn vị tổ chức</th>
+                <th style={{ width: 75, textAlign: "center", whiteSpace: "nowrap" }}>Loại hình</th>
+                <th style={{ width: 70, textAlign: "center", whiteSpace: "nowrap" }}>Cấp độ</th>
+                <th style={{ width: 95, textAlign: "center", whiteSpace: "nowrap" }}>Hạn nộp</th>
+                <th style={{ width: 75, textAlign: "center", whiteSpace: "nowrap" }}>Nguồn gốc</th>
+                <th style={{ width: 90, textAlign: "center", whiteSpace: "nowrap" }}>Trạng thái</th>
+                <th style={{ width: 165, textAlign: "right", whiteSpace: "nowrap" }}>Thao tác</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((opp) => (
                 <tr key={opp.id}>
-                  <td>
-                    <div style={{ fontWeight: 600, color: "var(--primary)", marginBottom: 2 }}>
+                  <td style={{ minWidth: 240 }}>
+                    <div style={{ fontWeight: 600, color: "var(--primary)", fontSize: "0.82rem", lineHeight: 1.35, marginBottom: 2 }}>
                       {opp.title}
                     </div>
                     {opp.field && (
-                      <div style={{ fontSize: "0.75rem", color: "var(--teal)" }}>
+                      <div style={{ fontSize: "0.72rem", color: "var(--teal)", lineHeight: 1.3 }}>
                         Phù hợp: {opp.field}
                       </div>
                     )}
                   </td>
-                  <td>{opp.organizer}</td>
-                  <td>
-                    <span className="badge badge-neutral" style={{ fontWeight: 600 }}>{opp.type}</span>
+                  <td style={{ width: 170, minWidth: 150, maxWidth: 190, fontSize: "0.8rem", lineHeight: 1.35 }}>
+                    {opp.organizer}
                   </td>
-                  <td>{opp.level}</td>
-                  <td style={{ fontWeight: 700, color: "var(--danger)" }}>
+                  <td style={{ width: 75, textAlign: "center", whiteSpace: "nowrap" }}>
+                    <span className="badge badge-neutral" style={{ fontWeight: 600, fontSize: "0.72rem", padding: "2px 6px" }}>{opp.type}</span>
+                  </td>
+                  <td style={{ width: 70, textAlign: "center", whiteSpace: "nowrap", fontSize: "0.8rem" }}>
+                    {opp.level}
+                  </td>
+                  <td style={{ width: 95, textAlign: "center", whiteSpace: "nowrap", fontWeight: 700, color: "var(--danger)", fontSize: "0.8rem" }}>
                     {formatDateVN(opp.deadline) || "Chưa rõ"}
                   </td>
-                  <td>
+                  <td style={{ width: 75, textAlign: "center", whiteSpace: "nowrap" }}>
                     <span
                       className="badge"
                       style={
                         opp.sourceType === "SPARK"
-                          ? { background: "#f3e8ff", color: "#6b21a8" }
-                          : { background: "#e0f2fe", color: "#0369a1" }
+                          ? { background: "#f3e8ff", color: "#6b21a8", fontSize: "0.72rem", padding: "2px 6px", fontWeight: 600 }
+                          : { background: "#e0f2fe", color: "#0369a1", fontSize: "0.72rem", padding: "2px 6px", fontWeight: 600 }
                       }
                     >
                       {opp.sourceType}
                     </span>
                   </td>
-                  <td>
+                  <td style={{ width: 90, textAlign: "center", whiteSpace: "nowrap" }}>
                     {opp.status === "published" && (
-                      <span className="badge" style={{ background: "#dcfce7", color: "#15803d", fontWeight: 600 }}>
+                      <span className="badge" style={{ background: "#dcfce7", color: "#15803d", fontWeight: 600, fontSize: "0.72rem", padding: "2px 6px" }}>
                         Đã công bố
                       </span>
                     )}
                     {opp.status === "hidden" && (
-                      <span className="badge" style={{ background: "#fef3c7", color: "#b45309", fontWeight: 600 }}>
+                      <span className="badge" style={{ background: "#fef3c7", color: "#b45309", fontWeight: 600, fontSize: "0.72rem", padding: "2px 6px" }}>
                         Đã ẩn
                       </span>
                     )}
                     {opp.status === "recalled" && (
-                      <span className="badge" style={{ background: "#f3e8ff", color: "#7e22ce", fontWeight: 600 }}>
+                      <span className="badge" style={{ background: "#f3e8ff", color: "#7e22ce", fontWeight: 600, fontSize: "0.72rem", padding: "2px 6px" }}>
                         Đã thu hồi
                       </span>
                     )}
                     {opp.status === "archived" && (
-                      <span className="badge badge-neutral" style={{ fontWeight: 600 }}>
+                      <span className="badge badge-neutral" style={{ fontWeight: 600, fontSize: "0.72rem", padding: "2px 6px" }}>
                         Lưu trữ
                       </span>
                     )}
                   </td>
-                  <td style={{ textAlign: "right" }}>
-                    <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                  <td style={{ width: 165, textAlign: "right", whiteSpace: "nowrap" }}>
+                    <div style={{ display: "inline-flex", gap: 4, alignItems: "center", justifyContent: "flex-end" }}>
                       {/* Ẩn tin (áp dụng cho tin đang công bố) */}
                       {opp.status === "published" && (
                         <button
@@ -382,9 +386,9 @@ export const AdminOpportunitiesPage: React.FC = () => {
                           className="btn btn-secondary btn-sm"
                           onClick={() => setHidingOpp(opp)}
                           title="Ẩn tin khỏi trang công khai"
-                          style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 8px", fontSize: "0.78rem" }}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "3px 6px", fontSize: "0.74rem" }}
                         >
-                          <EyeOff size={13} /> Ẩn tin
+                          <EyeOff size={12} /> Ẩn tin
                         </button>
                       )}
 
@@ -395,9 +399,9 @@ export const AdminOpportunitiesPage: React.FC = () => {
                           className="btn btn-secondary btn-sm"
                           onClick={() => handleRepublish(opp)}
                           title="Công bố lại tin lên trang công khai"
-                          style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 8px", fontSize: "0.78rem", color: "var(--teal)" }}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "3px 6px", fontSize: "0.74rem", color: "var(--teal)" }}
                         >
-                          <Globe size={13} /> Công bố lại
+                          <Globe size={12} /> Công bố lại
                         </button>
                       )}
 
@@ -408,9 +412,9 @@ export const AdminOpportunitiesPage: React.FC = () => {
                           className="btn btn-secondary btn-sm"
                           onClick={() => setRecallingOpp(opp)}
                           title="Thu hồi tin này về danh sách Dữ liệu AI tìm để duyệt lại"
-                          style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 8px", fontSize: "0.78rem", color: "#7e22ce" }}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "3px 6px", fontSize: "0.74rem", color: "#7e22ce" }}
                         >
-                          <RotateCcw size={13} /> Thu hồi
+                          <RotateCcw size={12} /> Thu hồi
                         </button>
                       )}
 
@@ -419,24 +423,27 @@ export const AdminOpportunitiesPage: React.FC = () => {
                         className="btn btn-secondary btn-sm btn-icon"
                         onClick={() => setViewingOpp(opp)}
                         title="Xem chi tiết"
+                        style={{ width: 26, height: 26, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
                       >
-                        <Eye size={14} />
+                        <Eye size={13} />
                       </button>
                       <button
                         type="button"
                         className="btn btn-secondary btn-sm btn-icon"
                         onClick={() => setEditingOpp(opp)}
                         title="Sửa tin"
+                        style={{ width: 26, height: 26, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
                       >
-                        <Edit2 size={14} />
+                        <Edit2 size={13} />
                       </button>
                       <button
                         type="button"
                         className="btn btn-outline-danger btn-sm btn-icon"
                         onClick={() => handleDelete(opp)}
                         title="Xóa tin"
+                        style={{ width: 26, height: 26, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
                       >
-                        <Trash2 size={14} />
+                        <Trash2 size={13} />
                       </button>
                     </div>
                   </td>
