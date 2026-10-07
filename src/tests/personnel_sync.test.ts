@@ -294,5 +294,205 @@ describe('Personnel Synchronization Logic (IFA-WORK -> IFA-RH)', () => {
       syncSharedPersonnelBatch([], 'test.json', lecturerActor)
     ).rejects.toThrow('Chỉ Owner mới có quyền cập nhật danh bạ');
   });
+
+  describe('Row-Level Skip and File-Level Validation (CASE 1 - CASE 6)', () => {
+    it('CASE 1: 65 rows with 9 missing emails imports 56 valid records and skips 9 without blocking file', async () => {
+      const { parseAndClassifyPersonnelJson } = await import('../utils/personnelSync');
+
+      // Build payload matching real production data (56 valid + 9 missing emails)
+      const personnel: any[] = [];
+      for (let i = 1; i <= 56; i++) {
+        personnel.push({
+          displayName: `Giảng viên ${i}`,
+          emailNormalized: `gv${i}@tdtu.edu.vn`,
+          departmentName: 'Khoa Mỹ thuật Công nghiệp',
+          lecturerType: 'lecturer',
+          active: true,
+        });
+      }
+
+      const missingEmailNames = [
+        'Đinh Hải Yến',
+        'Đỗ Ngọc Giàu',
+        'Lê Đỗ Uyên Thư',
+        'Lương Văn Nghĩa',
+        'Nguyễn Cung Ngọc Thuỷ',
+        'Nguyễn Hoài Nam',
+        'Nguyễn Quốc Đạt',
+        'Phạm Minh Hảo',
+        'Thierry Delfosse',
+      ];
+
+      missingEmailNames.forEach((name) => {
+        personnel.push({
+          displayName: name,
+          emailNormalized: '',
+          departmentName: 'Chưa phân ngành',
+          lecturerType: 'visiting',
+          active: true,
+        });
+      });
+
+      const jsonStr = JSON.stringify({
+        schemaVersion: 1,
+        source: 'IFA-WORK',
+        generatedAt: new Date().toISOString(),
+        totalRecords: 65,
+        personnel,
+      });
+
+      const result = parseAndClassifyPersonnelJson(jsonStr);
+      expect(result.totalRecords).toBe(65);
+      expect(result.validRecords.length).toBe(56);
+      expect(result.skippedRows.length).toBe(9);
+      expect(result.counts.valid).toBe(56);
+      expect(result.counts.skippedMissingEmail).toBe(9);
+
+      // Verify row #57 (first missing email) has expected reason
+      const firstSkipped = result.skippedRows[0];
+      expect(firstSkipped.displayName).toBe('Đinh Hải Yến');
+      expect(firstSkipped.status).toBe('SKIPPED_MISSING_EMAIL');
+      expect(firstSkipped.reason).toBe('Thiếu email TDTU');
+    });
+
+    it('CASE 1 (Actual File): parses real IFA-PERSONNEL (1).json if present on system', async () => {
+      const { parseAndClassifyPersonnelJson } = await import('../utils/personnelSync');
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const os = await import('node:os');
+
+      const downloadPath = path.join(os.homedir(), 'Downloads', 'IFA-PERSONNEL (1).json');
+      if (fs.existsSync(downloadPath)) {
+        const content = fs.readFileSync(downloadPath, 'utf8');
+        const result = parseAndClassifyPersonnelJson(content);
+        expect(result.totalRecords).toBe(65);
+        expect(result.validRecords.length).toBe(56);
+        expect(result.skippedRows.length).toBe(9);
+        expect(result.counts.skippedMissingEmail).toBe(9);
+        expect(result.skippedRows.map((s) => s.displayName)).toContain('Đinh Hải Yến');
+        expect(result.skippedRows.map((s) => s.displayName)).toContain('Đỗ Ngọc Giàu');
+      }
+    });
+
+    it('CASE 2: 1 invalid email + 10 valid records -> 10 valid, 1 skipped', async () => {
+      const { parseAndClassifyPersonnelJson } = await import('../utils/personnelSync');
+
+      const personnel: any[] = [];
+      for (let i = 1; i <= 10; i++) {
+        personnel.push({
+          displayName: `GV ${i}`,
+          emailNormalized: `gv${i}@tdtu.edu.vn`,
+          departmentName: 'Khoa MTCN',
+        });
+      }
+      personnel.push({
+        displayName: 'GV Email Ngoại',
+        emailNormalized: 'someone@gmail.com',
+        departmentName: 'Khoa MTCN',
+      });
+
+      const jsonStr = JSON.stringify({
+        schemaVersion: 1,
+        source: 'IFA-WORK',
+        personnel,
+      });
+
+      const result = parseAndClassifyPersonnelJson(jsonStr);
+      expect(result.validRecords.length).toBe(10);
+      expect(result.skippedRows.length).toBe(1);
+      expect(result.skippedRows[0].status).toBe('SKIPPED_INVALID_EMAIL');
+      expect(result.skippedRows[0].email).toBe('someone@gmail.com');
+    });
+
+    it('CASE 3: all records missing email -> 0 valid, all skipped', async () => {
+      const { parseAndClassifyPersonnelJson } = await import('../utils/personnelSync');
+
+      const personnel = [
+        { displayName: 'GV A', emailNormalized: '' },
+        { displayName: 'GV B', emailNormalized: '   ' },
+        { displayName: 'GV C', emailNormalized: null },
+      ];
+
+      const jsonStr = JSON.stringify({
+        schemaVersion: 1,
+        source: 'IFA-WORK',
+        personnel,
+      });
+
+      const result = parseAndClassifyPersonnelJson(jsonStr);
+      expect(result.totalRecords).toBe(3);
+      expect(result.validRecords.length).toBe(0);
+      expect(result.skippedRows.length).toBe(3);
+    });
+
+    it('CASE 4: invalid JSON blocks the entire file', async () => {
+      const { parseAndClassifyPersonnelJson } = await import('../utils/personnelSync');
+
+      expect(() => parseAndClassifyPersonnelJson('not-valid-json')).toThrow(
+        'Tệp không đúng định dạng JSON hợp lệ.'
+      );
+      expect(() => parseAndClassifyPersonnelJson('123')).toThrow(
+        'Nội dung tệp JSON không hợp lệ.'
+      );
+    });
+
+    it('CASE 5: wrong schemaVersion or invalid source blocks the entire file', async () => {
+      const { parseAndClassifyPersonnelJson } = await import('../utils/personnelSync');
+
+      const badVer = JSON.stringify({
+        schemaVersion: 2,
+        source: 'IFA-WORK',
+        personnel: [],
+      });
+      expect(() => parseAndClassifyPersonnelJson(badVer)).toThrow(
+        'Phiên bản schema không được hỗ trợ'
+      );
+
+      const badSource = JSON.stringify({
+        schemaVersion: 1,
+        source: 'UNKNOWN',
+        personnel: [],
+      });
+      expect(() => parseAndClassifyPersonnelJson(badSource)).toThrow(
+        'Nguồn tệp không hợp lệ'
+      );
+    });
+
+    it('CASE 6: duplicate valid email retains first valid record and skips subsequent duplicates', async () => {
+      const { parseAndClassifyPersonnelJson } = await import('../utils/personnelSync');
+
+      const personnel = [
+        {
+          displayName: 'Nguyễn Văn A (Dòng 1)',
+          emailNormalized: 'nguyenvana@tdtu.edu.vn',
+          departmentName: 'Thiết kế Đồ họa',
+        },
+        {
+          displayName: 'Nguyễn Văn A (Dòng 2 Trùng)',
+          emailNormalized: 'nguyenvana@tdtu.edu.vn',
+          departmentName: 'Thiết kế Nội thất',
+        },
+        {
+          displayName: 'Trần Thị B',
+          emailNormalized: 'tranthib@tdtu.edu.vn',
+          departmentName: 'Thiết kế Nội thất',
+        },
+      ];
+
+      const jsonStr = JSON.stringify({
+        schemaVersion: 1,
+        source: 'IFA-WORK',
+        personnel,
+      });
+
+      const result = parseAndClassifyPersonnelJson(jsonStr);
+      expect(result.validRecords.length).toBe(2);
+      expect(result.skippedRows.length).toBe(1);
+      expect(result.skippedRows[0].status).toBe('SKIPPED_DUPLICATE_EMAIL');
+      expect(result.skippedRows[0].rowNumber).toBe(2);
+      expect(result.validRecords[0].displayName).toBe('Nguyễn Văn A (Dòng 1)');
+    });
+  });
 });
+
 
