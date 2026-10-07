@@ -1256,3 +1256,123 @@ a:hover {
     align-items: stretch;
   }
 }
+
+/* Accessible & Polished Modal System */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow-y: auto;
+  animation: modalOverlayFadeIn 0.15s ease-out;
+}
+
+.modal-dialog {
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  width: 100%;
+  max-width: 580px;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  animation: modalDialogScaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-dialog-large {
+  max-width: 840px;
+}
+
+.modal-header {
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #ffffff;
+  flex-shrink: 0;
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-main);
+  line-height: 1.35;
+}
+
+.modal-close-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.modal-close-btn:hover {
+  background: #f1f5f9;
+  color: var(--text-main);
+}
+
+.modal-body {
+  padding: 24px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+
+.modal-footer {
+  padding: 14px 24px;
+  border-top: 1px solid var(--line);
+  background: #f8fafc;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+@keyframes modalOverlayFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modalDialogScaleIn {
+  from { opacity: 0; transform: scale(0.97) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@media (max-width: 640px) {
+  .modal-overlay {
+    padding: 10px;
+    align-items: flex-end;
+  }
+  .modal-dialog {
+    max-height: 90vh;
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .modal-header {
+    padding: 14px 18px;
+  }
+  .modal-body {
+    padding: 18px;
+  }
+  .modal-footer {
+    padding: 12px 18px;
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+}
