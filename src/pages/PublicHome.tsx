@@ -61,16 +61,22 @@ export const PublicHome: React.FC = () => {
       (opp.topic && opp.topic.toLowerCase().includes(searchQuery.toLowerCase()));
 
     // Tag
-    let matchTag = selectedTag === "Tất cả";
-    if (selectedTag === "Quốc tế") {
+    let matchTag = false;
+    if (selectedTag === "Tất cả") {
+      matchTag = true;
+    } else if (selectedTag === "Quốc tế") {
       matchTag = opp.level === "Quốc tế";
     } else if (selectedTag === "Trong nước") {
       matchTag = opp.level !== "Quốc tế";
     } else if (selectedTag === "Rất phù hợp MTCN") {
-      matchTag = (opp.suitability || "").toLowerCase().includes("rất phù hợp");
+      matchTag =
+        (opp.suitability || "").toLowerCase().includes("rất phù hợp") ||
+        (opp.tags || []).some((t) => t.toLowerCase().includes("rất phù hợp"));
     } else if (opp.tags && opp.tags.length > 0) {
       matchTag = opp.tags.some(
-        (t) => t.toLowerCase() === selectedTag.toLowerCase() || t.toLowerCase().includes(selectedTag.toLowerCase())
+        (t) =>
+          t.toLowerCase() === selectedTag.toLowerCase() ||
+          t.toLowerCase().includes(selectedTag.toLowerCase())
       );
     }
 

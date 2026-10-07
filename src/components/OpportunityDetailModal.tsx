@@ -33,7 +33,7 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
     <Modal
       isOpen={!!opportunity}
       onClose={onClose}
-      title="Chi tiết Cơ hội Nghiên cứu Khoa học"
+      title="Chi tiết Thông tin Nghiên cứu Khoa học"
       maxWidth="large"
       footer={
         <div style={{ display: "flex", gap: 10, width: "100%", justifyContent: "space-between", alignItems: "center" }}>

@@ -125,7 +125,7 @@ export const PublicHeader: React.FC<PublicHeaderProps> = ({ onSelectTab }) => {
                   onClick={() => onSelectTab("public")}
                 >
                   <Compass size={16} />
-                  <span>Cổng Cơ hội NCKH</span>
+                  <span>Cổng NCKH</span>
                 </button>
                 <button
                   type="button"
