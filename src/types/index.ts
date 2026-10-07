@@ -292,6 +292,9 @@ export interface PersonnelSyncLog {
   // Enhanced row-level metrics
   totalRows?: number;
   validRows?: number;
+  selectedRows?: number;
+  skippedByUser?: number;
+  selectedCount?: number;
   skippedCount?: number;
   skippedMissingEmailCount?: number;
   skippedInvalidEmailCount?: number;
@@ -310,3 +313,13 @@ export interface PersonnelSyncLog {
   errors?: number;
 }
 
+export type ResearchTrackingStatus = "ACTIVE" | "ARCHIVED";
+
+export interface ResearchPersonnelSettings {
+  emailNormalized: string;
+  researchTrackingStatus: ResearchTrackingStatus;
+  archivedAt?: string | null;
+  archivedBy?: string | null;
+  archiveReason?: string | null;
+  updatedAt: string;
+}

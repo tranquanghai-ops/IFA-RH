@@ -51,6 +51,7 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
   const [skippedRows, setSkippedRows] = useState<SkippedRowDetail[]>([]);
   const [showSkippedDetails, setShowSkippedDetails] = useState(false);
   const [filterTab, setFilterTab] = useState<"all" | "changes" | "create" | "deactivate">("all");
+  const [selectedEmails, setSelectedEmails] = useState<Set<string>>(new Set());
   const [syncing, setSyncing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [resultLog, setResultLog] = useState<PersonnelSyncLog | null>(null);
@@ -63,6 +64,7 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
     setSkippedRows([]);
     setShowSkippedDetails(false);
     setFilterTab("all");
+    setSelectedEmails(new Set());
     setSyncing(false);
     setErrorMsg(null);
     setResultLog(null);
@@ -256,6 +258,8 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
       });
       setDiffItems(computedDiffs);
       setSkippedRows(skippedList);
+      // All valid records are checked by default
+      setSelectedEmails(new Set(parsedRecords.map((r) => r.emailNormalized)));
       setStep("preview");
     } catch (err: any) {
       console.error(err);
@@ -269,6 +273,13 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
       setErrorMsg("Không có bản ghi hợp lệ để đồng bộ.");
       return;
     }
+    const selectedRecords = payload.personnel.filter((p) =>
+      selectedEmails.has(p.emailNormalized)
+    );
+    if (selectedRecords.length === 0) {
+      setErrorMsg("Vui lòng chọn ít nhất 1 giảng viên để đồng bộ.");
+      return;
+    }
     if (actor.role !== "owner") {
       setErrorMsg("Chỉ Owner mới có quyền cập nhật danh bạ từ IFA-WORK.");
       return;
@@ -278,10 +289,20 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
     setErrorMsg(null);
 
     try {
+      const totalRows = payload.totalRecords;
+      const validRows = payload.personnel.length;
+      const selectedRows = selectedRecords.length;
+      const skippedByUser = validRows - selectedRows;
+      const skippedByData = skippedRows.length;
+      const skippedCount = skippedByData + skippedByUser;
+
       const stats = {
-        totalRows: payload.totalRecords,
-        validRows: payload.personnel.length,
-        skippedCount: skippedRows.length,
+        totalRows,
+        validRows,
+        selectedRows,
+        skippedByUser,
+        selectedCount: selectedRows,
+        skippedCount,
         skippedMissingEmailCount: skippedRows.filter(
           (s) => s.status === "SKIPPED_MISSING_EMAIL"
         ).length,
@@ -295,7 +316,7 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
       };
 
       const log = await syncSharedPersonnelBatch(
-        payload.personnel,
+        selectedRecords,
         fileName || "IFA-PERSONNEL.json",
         actor,
         stats
@@ -322,6 +343,32 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
   const countDeactivate = diffItems.filter((d) => d.status === "deactivate").length;
   const countReactivate = diffItems.filter((d) => d.status === "reactivate").length;
   const countUnchanged = diffItems.filter((d) => d.status === "unchanged").length;
+
+  const allValidSelected =
+    Boolean(payload && payload.personnel.length > 0 && selectedEmails.size === payload.personnel.length);
+  const isIndeterminate =
+    Boolean(payload && selectedEmails.size > 0 && selectedEmails.size < payload.personnel.length);
+
+  const toggleSelectAll = () => {
+    if (!payload) return;
+    if (selectedEmails.size === payload.personnel.length) {
+      setSelectedEmails(new Set());
+    } else {
+      setSelectedEmails(new Set(payload.personnel.map((p) => p.emailNormalized)));
+    }
+  };
+
+  const toggleSelectRow = (email: string) => {
+    setSelectedEmails((prev) => {
+      const next = new Set(prev);
+      if (next.has(email)) {
+        next.delete(email);
+      } else {
+        next.add(email);
+      }
+      return next;
+    });
+  };
 
   const filteredItems = diffItems.filter((d) => {
     if (filterTab === "all") return true;
@@ -361,18 +408,18 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
                 type="button"
                 className="btn btn-primary"
                 onClick={handleApplySync}
-                disabled={syncing || !payload || payload.personnel.length === 0}
+                disabled={syncing || !payload || selectedEmails.size === 0}
               >
                 {syncing ? (
                   <>
                     <RefreshCw size={16} className="spin-animate" /> Đang đồng bộ...
                   </>
-                ) : payload && payload.personnel.length > 0 ? (
+                ) : selectedEmails.size > 0 ? (
                   <>
-                    <Check size={16} /> Xác nhận đồng bộ ({payload.personnel.length} bản ghi)
+                    <Check size={16} /> Xác nhận đồng bộ ({selectedEmails.size} bản ghi)
                   </>
                 ) : (
-                  "Không có bản ghi hợp lệ để đồng bộ"
+                  "Vui lòng chọn ít nhất 1 giảng viên"
                 )}
               </button>
             </div>
@@ -408,7 +455,7 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
                 Mở <strong>IFA-WORK</strong> &rarr; trang <em>Nhân sự</em> &rarr; bấm <strong>"Xuất danh sách GV"</strong> để tải về tệp <code>IFA-PERSONNEL.json</code>.
               </li>
               <li>Chọn và tải tệp JSON đó vào khung bên dưới.</li>
-              <li>Hệ thống sẽ đối soát (diff preview), chỉ nhập các dòng đủ điều kiện và bỏ qua các dòng chưa có email.</li>
+              <li>Hệ thống sẽ đối soát (diff preview), cho phép chọn lọc từng giảng viên và tự động bỏ qua các dòng thiếu email.</li>
             </ol>
           </div>
 
@@ -531,7 +578,7 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
           >
             <ShieldCheck size={18} style={{ flexShrink: 0 }} />
             <span>
-              <strong>Chính sách an toàn:</strong> Giảng viên hiện có trong IFA-RH nhưng không có tên trong tệp này sẽ được <strong>giữ nguyên</strong> (không tự ý vô hiệu hóa). Lịch sử NCKH luôn được bảo lưu tuyệt đối.
+              <strong>Chính sách an toàn:</strong> Giảng viên hiện có trong IFA-RH nhưng không có tên trong tệp hoặc không được chọn sẽ được <strong>giữ nguyên</strong> (không bị xóa hay ngừng hoạt động). Lịch sử NCKH luôn được bảo lưu tuyệt đối.
             </span>
           </div>
 
@@ -555,7 +602,7 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <AlertTriangle size={18} color="#d97706" style={{ flexShrink: 0 }} />
                 <span>
-                  Có <strong>{skippedRows.length}</strong> bản ghi chưa đủ điều kiện đồng bộ và sẽ được bỏ qua.
+                  Có <strong>{skippedRows.length}</strong> bản ghi chưa đủ điều kiện đồng bộ và sẽ được tự động bỏ qua.
                 </span>
               </div>
               <button
@@ -656,7 +703,7 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
             </div>
           )}
 
-          {/* KPI Summary Grid (9 Metrics) */}
+          {/* KPI Summary Grid (Realtime Selection Counters) */}
           <div
             style={{
               display: "grid",
@@ -671,6 +718,16 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
             <div className="card" style={{ padding: "10px 8px", textAlign: "center", borderColor: payload.personnel.length > 0 ? "#86efac" : undefined }}>
               <div style={{ fontSize: "0.72rem", color: "#16a34a", textTransform: "uppercase" }}>Hợp lệ</div>
               <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#16a34a" }}>{payload.personnel.length}</div>
+            </div>
+            <div className="card" style={{ padding: "10px 8px", textAlign: "center", borderColor: "#3b82f6", background: "#eff6ff" }}>
+              <div style={{ fontSize: "0.72rem", color: "#1d4ed8", textTransform: "uppercase", fontWeight: 700 }}>Được chọn</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 800, color: "#1d4ed8" }}>{selectedEmails.size}</div>
+            </div>
+            <div className="card" style={{ padding: "10px 8px", textAlign: "center", borderColor: (payload.personnel.length - selectedEmails.size) > 0 ? "#fed7aa" : undefined }}>
+              <div style={{ fontSize: "0.72rem", color: "#c2410c", textTransform: "uppercase" }}>Bỏ qua chọn</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: (payload.personnel.length - selectedEmails.size) > 0 ? "#c2410c" : "var(--muted)" }}>
+                {payload.personnel.length - selectedEmails.size}
+              </div>
             </div>
             <div className="card" style={{ padding: "10px 8px", textAlign: "center", borderColor: countCreate > 0 ? "#86efac" : undefined }}>
               <div style={{ fontSize: "0.72rem", color: "#16a34a", textTransform: "uppercase" }}>Mới (Thêm)</div>
@@ -688,12 +745,8 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
               <div style={{ fontSize: "0.72rem", color: "#dc2626", textTransform: "uppercase" }}>Ngừng CT</div>
               <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#dc2626" }}>{countDeactivate}</div>
             </div>
-            <div className="card" style={{ padding: "10px 8px", textAlign: "center", borderColor: countReactivate > 0 ? "#d8b4fe" : undefined }}>
-              <div style={{ fontSize: "0.72rem", color: "#9333ea", textTransform: "uppercase" }}>Tái kích hoạt</div>
-              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#9333ea" }}>{countReactivate}</div>
-            </div>
             <div className="card" style={{ padding: "10px 8px", textAlign: "center", borderColor: skippedRows.length > 0 ? "#fcd34d" : undefined }}>
-              <div style={{ fontSize: "0.72rem", color: "#d97706", textTransform: "uppercase" }}>Bỏ qua</div>
+              <div style={{ fontSize: "0.72rem", color: "#d97706", textTransform: "uppercase" }}>Bỏ qua thiếu</div>
               <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#d97706" }}>{skippedRows.length}</div>
             </div>
             <div className="card" style={{ padding: "10px 8px", textAlign: "center" }}>
@@ -705,7 +758,7 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
           {/* Filter Bar */}
           {payload.personnel.length > 0 && (
             <>
-              <div style={{ display: "flex", gap: 8, borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
+              <div style={{ display: "flex", gap: 8, borderBottom: "1px solid var(--border)", paddingBottom: 8, flexWrap: "wrap" }}>
                 <button
                   type="button"
                   className={`btn btn-sm ${filterTab === "all" ? "btn-primary" : "btn-secondary"}`}
@@ -736,11 +789,24 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
                 </button>
               </div>
 
-              {/* Preview Table */}
-              <div className="table-container" style={{ maxHeight: 320, overflowY: "auto" }}>
+              {/* Preview Table with Selection Checkbox Column */}
+              <div className="table-container" style={{ maxHeight: 340, overflowY: "auto" }}>
                 <table className="table" style={{ fontSize: "0.85rem" }}>
                   <thead>
                     <tr>
+                      <th style={{ width: 44, textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={allValidSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = isIndeterminate;
+                          }}
+                          onChange={toggleSelectAll}
+                          title={allValidSelected ? "Bỏ chọn tất cả" : "Chọn tất cả"}
+                          style={{ cursor: "pointer", width: 16, height: 16 }}
+                          aria-label="Chọn tất cả giảng viên hợp lệ"
+                        />
+                      </th>
                       <th style={{ width: 100 }}>Trạng thái</th>
                       <th>Họ và tên</th>
                       <th>Email TDTU</th>
@@ -751,6 +817,7 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
                   </thead>
                   <tbody>
                     {filteredItems.map((item) => {
+                      const isChecked = selectedEmails.has(item.record.emailNormalized);
                       let badge = <span className="badge badge-secondary">Không đổi</span>;
                       if (item.status === "create") {
                         badge = <span className="badge badge-success">+ Tạo mới</span>;
@@ -763,13 +830,36 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
                       }
 
                       return (
-                        <tr key={item.record.emailNormalized}>
+                        <tr
+                          key={item.record.emailNormalized}
+                          style={{
+                            background: isChecked ? undefined : "rgba(0, 0, 0, 0.02)",
+                            opacity: isChecked ? 1 : 0.6,
+                          }}
+                        >
+                          <td style={{ textAlign: "center" }}>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleSelectRow(item.record.emailNormalized)}
+                              style={{ cursor: "pointer", width: 16, height: 16 }}
+                              aria-label={`Chọn đồng bộ ${item.record.displayName}`}
+                            />
+                          </td>
                           <td>{badge}</td>
                           <td>
                             <strong>{item.record.displayName}</strong>
                             {!item.record.active && (
                               <span style={{ color: "#dc2626", fontSize: "0.75rem", marginLeft: 6 }}>
                                 (Nghỉ)
+                              </span>
+                            )}
+                            {!isChecked && (
+                              <span
+                                className="badge badge-secondary"
+                                style={{ marginLeft: 6, fontSize: "0.7rem", background: "#f3f4f6", color: "#6b7280" }}
+                              >
+                                Bỏ qua
                               </span>
                             )}
                           </td>
@@ -817,7 +907,7 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
           <CheckCircle2 size={56} color="#16a34a" style={{ margin: "0 auto 16px" }} />
           <h3 style={{ margin: "0 0 8px", color: "var(--foreground)" }}>Đồng bộ danh bạ thành công!</h3>
           <p style={{ color: "var(--muted)", fontSize: "0.9rem", marginBottom: 24 }}>
-            Đã đồng bộ {resultLog.validRows ?? resultLog.totalRecords}/{resultLog.totalRecords} bản ghi từ IFA-WORK vào IFA-RH trong {resultLog.durationMs ?? 0}ms.
+            Đã đồng bộ {resultLog.selectedRows ?? resultLog.validRows ?? resultLog.totalRecords}/{resultLog.totalRecords} bản ghi từ IFA-WORK vào IFA-RH trong {resultLog.durationMs ?? 0}ms.
           </p>
 
           <div
@@ -826,7 +916,7 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
               border: "1px solid var(--border)",
               borderRadius: 8,
               padding: 16,
-              maxWidth: 440,
+              maxWidth: 460,
               margin: "0 auto",
               textAlign: "left",
               fontSize: "0.875rem",
@@ -836,13 +926,15 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
             <div><strong>Thời gian:</strong> {formatDateVN(resultLog.timestamp)}</div>
             <div><strong>Phương thức:</strong> {resultLog.method === "manual_json" ? "Tệp JSON thủ công" : "GitHub Action"}</div>
             <div><strong>Tổng trong file:</strong> <strong>{resultLog.totalRecords}</strong></div>
-            <div><strong>Đã xử lý (Hợp lệ):</strong> <strong style={{ color: "#16a34a" }}>{resultLog.validRows ?? resultLog.totalRecords}</strong></div>
+            <div><strong>Hợp lệ:</strong> <strong style={{ color: "#16a34a" }}>{resultLog.validRows ?? resultLog.totalRecords}</strong></div>
+            <div><strong>Đã chọn đồng bộ:</strong> <strong style={{ color: "#2563eb" }}>{resultLog.selectedRows ?? resultLog.validRows ?? resultLog.totalRecords}</strong></div>
+            <div><strong>Bỏ qua theo lựa chọn:</strong> <span style={{ color: "#d97706", fontWeight: 700 }}>{resultLog.skippedByUser ?? 0}</span></div>
+            <div><strong>Bỏ qua do thiếu dữ liệu:</strong> <span style={{ color: "#d97706", fontWeight: 700 }}>{(resultLog.skippedCount ?? 0) - (resultLog.skippedByUser ?? 0)}</span></div>
             <div><strong>Tạo mới:</strong> <span style={{ color: "#16a34a", fontWeight: 700 }}>+{resultLog.createdCount}</span></div>
             <div><strong>Cập nhật:</strong> <span style={{ color: "#2563eb", fontWeight: 700 }}>{resultLog.updatedCount}</span></div>
             <div><strong>Không đổi:</strong> {resultLog.unchangedCount}</div>
             <div><strong>Ngừng công tác:</strong> <span style={{ color: "#dc2626", fontWeight: 700 }}>{resultLog.deactivatedCount}</span></div>
             <div><strong>Kích hoạt lại:</strong> <span style={{ color: "#9333ea", fontWeight: 700 }}>{resultLog.reactivatedCount}</span></div>
-            <div><strong>Bỏ qua:</strong> <span style={{ color: "#d97706", fontWeight: 700 }}>{resultLog.skippedCount ?? 0}</span></div>
             <div><strong>Lỗi:</strong> <span>{resultLog.errorsCount ?? 0}</span></div>
           </div>
         </div>

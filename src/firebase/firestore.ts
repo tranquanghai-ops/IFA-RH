@@ -27,6 +27,8 @@ import type {
   ImportBatch,
   SharedPersonnelRecord,
   PersonnelSyncLog,
+  ResearchPersonnelSettings,
+  ResearchTrackingStatus,
 } from "../types";
 import { normalizeText } from "../utils/dedupe";
 
@@ -903,6 +905,9 @@ export async function fetchLatestPersonnelSyncLog(): Promise<PersonnelSyncLog | 
 export interface SyncBatchStats {
   totalRows?: number;
   validRows?: number;
+  selectedRows?: number;
+  skippedByUser?: number;
+  selectedCount?: number;
   skippedCount?: number;
   skippedMissingEmailCount?: number;
   skippedInvalidEmailCount?: number;
@@ -1035,8 +1040,10 @@ export async function syncSharedPersonnelBatch(
 
   const durationMs = Date.now() - startTime;
   const totalRows = stats?.totalRows ?? records.length;
-  const validRows = stats?.validRows ?? toWrite.length;
-  const skippedCount = stats?.skippedCount ?? Math.max(0, totalRows - validRows);
+  const validRows = stats?.validRows ?? records.length;
+  const selectedRows = stats?.selectedRows ?? toWrite.length;
+  const skippedByUser = stats?.skippedByUser ?? Math.max(0, validRows - selectedRows);
+  const skippedCount = stats?.skippedCount ?? Math.max(0, totalRows - validRows + skippedByUser);
   const skippedMissingEmailCount = stats?.skippedMissingEmailCount ?? 0;
   const skippedInvalidEmailCount = stats?.skippedInvalidEmailCount ?? 0;
   const skippedDuplicateEmailCount = stats?.skippedDuplicateEmailCount ?? 0;
@@ -1059,6 +1066,9 @@ export async function syncSharedPersonnelBatch(
     durationMs,
     totalRows,
     validRows,
+    selectedRows,
+    skippedByUser,
+    selectedCount: selectedRows,
     skippedCount,
     skippedMissingEmailCount,
     skippedInvalidEmailCount,
@@ -1083,9 +1093,77 @@ export async function syncSharedPersonnelBatch(
     "SYNC_SHARED_PERSONNEL",
     "import",
     logId,
-    `Đồng bộ danh bạ dùng chung từ IFA-WORK: ${validRows}/${totalRows} bản ghi (+${createdCount} mới, ~${updatedCount} cập nhật, -${deactivatedCount} ngừng CT, ${skippedCount} bỏ qua) trong ${durationMs}ms.`
+    `Đồng bộ danh bạ dùng chung từ IFA-WORK: ${selectedRows}/${totalRows} bản ghi được chọn (+${createdCount} mới, ~${updatedCount} cập nhật, -${deactivatedCount} ngừng CT, ${skippedCount} bỏ qua gồm ${skippedByUser} bỏ qua theo lựa chọn) trong ${durationMs}ms.`
   );
 
   return logData;
 }
+
+// ======================== RESEARCH PERSONNEL SETTINGS (ARCHIVE/ACTIVE) ========================
+
+export async function fetchResearchPersonnelSettings(): Promise<Map<string, ResearchPersonnelSettings>> {
+  const map = new Map<string, ResearchPersonnelSettings>();
+  try {
+    const snap = await getDocs(collection(firestore, "researchPersonnelSettings"));
+    snap.docs.forEach((d) => {
+      const data = d.data() as ResearchPersonnelSettings;
+      const key = (data.emailNormalized || d.id).toLowerCase().trim();
+      if (key) map.set(key, data);
+    });
+  } catch (err) {
+    console.warn("Could not fetch researchPersonnelSettings:", err);
+  }
+  return map;
+}
+
+export async function setResearchTrackingStatus(
+  emailNormalized: string,
+  trackingStatus: ResearchTrackingStatus,
+  actor: { uid: string; email: string; role: UserRole },
+  archiveReason?: string
+): Promise<ResearchPersonnelSettings> {
+  if (actor.role !== "owner") {
+    throw new Error("Chỉ Owner mới có quyền thay đổi trạng thái theo dõi NCKH của giảng viên.");
+  }
+  const cleanEmail = emailNormalized.toLowerCase().trim();
+  if (!cleanEmail) {
+    throw new Error("Email giảng viên không hợp lệ.");
+  }
+
+  const now = new Date().toISOString();
+  const docRef = doc(firestore, "researchPersonnelSettings", cleanEmail);
+  const snap = await getDoc(docRef);
+  const before = snap.exists() ? (snap.data() as ResearchPersonnelSettings) : null;
+  const oldStatus = before?.researchTrackingStatus || "ACTIVE";
+
+  const settings: ResearchPersonnelSettings = {
+    emailNormalized: cleanEmail,
+    researchTrackingStatus: trackingStatus,
+    updatedAt: now,
+    archivedAt: trackingStatus === "ARCHIVED" ? (before?.archivedAt || now) : null,
+    archivedBy: trackingStatus === "ARCHIVED" ? actor.email : null,
+    archiveReason: trackingStatus === "ARCHIVED" ? (archiveReason?.trim() || before?.archiveReason || "Không thuộc diện NCKH") : null,
+  };
+
+  const cleanDoc: Record<string, any> = {
+    emailNormalized: settings.emailNormalized,
+    researchTrackingStatus: settings.researchTrackingStatus,
+    updatedAt: settings.updatedAt,
+  };
+  if (settings.archivedAt) cleanDoc.archivedAt = settings.archivedAt;
+  if (settings.archivedBy) cleanDoc.archivedBy = settings.archivedBy;
+  if (settings.archiveReason) cleanDoc.archiveReason = settings.archiveReason;
+
+  await setDoc(docRef, cleanDoc);
+
+  const actionName = trackingStatus === "ARCHIVED" ? "LECTURER_RESEARCH_ARCHIVED" : "LECTURER_RESEARCH_RESTORED";
+  const summary = trackingStatus === "ARCHIVED"
+    ? `Lưu trữ NCKH giảng viên ${cleanEmail} (trước đó: ${oldStatus})${cleanDoc.archiveReason ? ` - Lý do: ${cleanDoc.archiveReason}` : ""}.`
+    : `Khôi phục theo dõi NCKH giảng viên ${cleanEmail} (trước đó: ${oldStatus}).`;
+
+  await logAudit(actor, actionName, "user", cleanEmail, summary);
+
+  return settings;
+}
+
 

@@ -204,11 +204,23 @@ rules_version = '2';
 //   - reactivatedCount: int (required, >= 0) - Count of reactivated records
 //   - durationMs: int (optional, >= 0) - Sync processing duration in milliseconds
 //   - createdAt: string | timestamp (optional, max 50 chars if string)
-//   - totalRows, validRows, skippedCount, skippedMissingEmailCount,
+//   - totalRows, validRows, selectedRows, skippedByUser, selectedCount,
+//     skippedCount, skippedMissingEmailCount,
 //     skippedInvalidEmailCount, skippedDuplicateEmailCount, errorsCount,
 //     created, updated, unchanged, inactive, reactivated, skipped,
 //     skippedMissingEmail, skippedInvalidEmail, skippedDuplicateEmail,
 //     errors: int (optional, >= 0) - Enhanced row-level metrics and counter aliases
+//
+// Collection: researchPersonnelSettings
+// Document ID: email (normalized lecturer email, 1-100 chars)
+// Fields:
+//   - emailNormalized: string (required, valid email pattern, max 100 chars)
+//   - researchTrackingStatus: string (required, 'ACTIVE' | 'ARCHIVED')
+//   - updatedAt: string | timestamp (required, max 50 chars if string)
+//   - archivedAt: string | timestamp | null (optional, max 50 chars if string)
+//   - archivedBy: string | null (optional, max 100 chars)
+//   - archiveReason: string | null (optional, max 300 chars)
+//
 //
 // ===============================================================
 
@@ -621,7 +633,8 @@ service cloud.firestore {
           'createdCount', 'updatedCount', 'unchangedCount',
           'deactivatedCount', 'reactivatedCount', 'durationMs',
           'createdAt',
-          'totalRows', 'validRows', 'skippedCount',
+          'totalRows', 'validRows', 'selectedRows', 'skippedByUser',
+          'selectedCount', 'skippedCount',
           'skippedMissingEmailCount', 'skippedInvalidEmailCount',
           'skippedDuplicateEmailCount', 'errorsCount',
           'created', 'updated', 'unchanged', 'inactive',
@@ -644,6 +657,9 @@ service cloud.firestore {
         (!('createdAt' in data) || validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
         (!('totalRows' in data) || (data.totalRows is int && data.totalRows >= 0)) &&
         (!('validRows' in data) || (data.validRows is int && data.validRows >= 0)) &&
+        (!('selectedRows' in data) || (data.selectedRows is int && data.selectedRows >= 0)) &&
+        (!('skippedByUser' in data) || (data.skippedByUser is int && data.skippedByUser >= 0)) &&
+        (!('selectedCount' in data) || (data.selectedCount is int && data.selectedCount >= 0)) &&
         (!('skippedCount' in data) || (data.skippedCount is int && data.skippedCount >= 0)) &&
         (!('skippedMissingEmailCount' in data) || (data.skippedMissingEmailCount is int && data.skippedMissingEmailCount >= 0)) &&
         (!('skippedInvalidEmailCount' in data) || (data.skippedInvalidEmailCount is int && data.skippedInvalidEmailCount >= 0)) &&
@@ -659,6 +675,24 @@ service cloud.firestore {
         (!('skippedInvalidEmail' in data) || (data.skippedInvalidEmail is int && data.skippedInvalidEmail >= 0)) &&
         (!('skippedDuplicateEmail' in data) || (data.skippedDuplicateEmail is int && data.skippedDuplicateEmail >= 0)) &&
         (!('errors' in data) || (data.errors is int && data.errors >= 0));
+    }
+
+    // Validates researchPersonnelSettings/{email} schema and constraints
+    function isValidResearchPersonnelSettings(data) {
+      return data.keys().hasAll([
+          'emailNormalized', 'researchTrackingStatus', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'emailNormalized', 'researchTrackingStatus', 'updatedAt',
+          'archivedAt', 'archivedBy', 'archiveReason'
+        ]) &&
+        validString(data.emailNormalized, 1, 100) &&
+        validEmail(data.emailNormalized) &&
+        data.researchTrackingStatus in ['ACTIVE', 'ARCHIVED'] &&
+        (validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
+        (!('archivedAt' in data) || data.archivedAt == null || validString(data.archivedAt, 1, 50) || data.archivedAt is timestamp) &&
+        (!('archivedBy' in data) || data.archivedBy == null || validString(data.archivedBy, 1, 100)) &&
+        (!('archiveReason' in data) || data.archiveReason == null || validString(data.archiveReason, 0, 300));
     }
 
     // ===============================================================
@@ -834,6 +868,20 @@ service cloud.firestore {
         isValidPersonnelSyncLog(request.resource.data) &&
         request.resource.data.id == id;
       allow update, delete: if false;
+    }
+
+    // 12. Research Personnel Settings collection (Cấu hình theo dõi NCKH giảng viên)
+    // - Admin and Owner can read all settings; authenticated user can read own
+    // - Only Owner can create or update research personnel settings (emailNormalized matches doc id)
+    // - Deletions: Strictly denied
+    match /researchPersonnelSettings/{email} {
+      // Admin and Owner can read all settings; authenticated user can read own
+      allow read: if isAdmin() || (isAuthenticated() && request.auth.token.email.lower() == email);
+      // Only Owner can create or update research personnel settings
+      allow create, update: if isOwner() &&
+        isValidResearchPersonnelSettings(request.resource.data) &&
+        request.resource.data.emailNormalized == email;
+      allow delete: if false;
     }
 
     // ===============================================================

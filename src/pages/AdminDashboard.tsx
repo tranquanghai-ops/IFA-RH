@@ -5,6 +5,7 @@ import {
   fetchPublications,
   fetchAllOpportunities,
   fetchOpportunityCandidates,
+  fetchResearchPersonnelSettings,
 } from "../firebase/firestore";
 import type {
   UserProfile,
@@ -12,6 +13,7 @@ import type {
   Publication,
   Opportunity,
   OpportunityCandidate,
+  ResearchPersonnelSettings,
 } from "../types";
 import {
   Users,
@@ -38,24 +40,27 @@ export const AdminDashboard: React.FC = () => {
   const [publications, setPublications] = useState<Publication[]>([]);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [candidates, setCandidates] = useState<OpportunityCandidate[]>([]);
+  const [researchSettings, setResearchSettings] = useState<Map<string, ResearchPersonnelSettings>>(new Map());
   const [loading, setLoading] = useState(true);
   const [selectedYear, setSelectedYear] = useState<string>("Tất cả");
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const [u, w, p, opps, cands] = await Promise.all([
+      const [u, w, p, opps, cands, rSettings] = await Promise.all([
         fetchAllUsers(),
         fetchResearchWorks(),
         fetchPublications(),
         fetchAllOpportunities(),
         fetchOpportunityCandidates(),
+        fetchResearchPersonnelSettings(),
       ]);
       setUsers(u);
       setWorks(w);
       setPublications(p);
       setOpportunities(opps);
       setCandidates(cands);
+      setResearchSettings(rSettings);
     } catch (err: any) {
       console.error("Lỗi khi tải dữ liệu tổng quan:", err);
     } finally {
@@ -80,7 +85,14 @@ export const AdminDashboard: React.FC = () => {
   );
 
   // ======================== B. KPIS (8 METRICS) ========================
-  const totalLecturers = users.filter((u) => u.active !== false).length;
+  // Active lecturers under research tracking (excludes inactive and archived research status)
+  const activeLecturers = users.filter((u) => {
+    if (u.active === false) return false;
+    const emailNorm = (u.email || "").toLowerCase().trim();
+    const setting = researchSettings.get(emailNorm);
+    return setting?.researchTrackingStatus !== "ARCHIVED";
+  });
+  const totalLecturers = activeLecturers.length;
   const inProgressCount = works.filter((w) => !w.isCompleted).length;
   const writingCount = works.filter((w) => w.status === "Đang viết").length;
   const submittedCount = works.filter((w) => w.status === "Đã gửi").length;
@@ -89,13 +101,16 @@ export const AdminDashboard: React.FC = () => {
   const publishedCount = filteredPubs.length;
   const completedThisYearCount = publications.filter((p) => p.year === currentYear).length;
 
-  // Stale check: works not updated in > 60 days
+  // Stale check: works not updated in > 60 days (excluding archived research lecturers)
   const now = new Date().getTime();
   const staleLecturers = Array.from(
     new Set(
       works
         .filter((w) => !w.isCompleted && w.updatedAt)
         .filter((w) => {
+          const emailNorm = (w.userEmail || "").toLowerCase().trim();
+          const setting = researchSettings.get(emailNorm);
+          if (setting?.researchTrackingStatus === "ARCHIVED") return false;
           const updatedTime = new Date(w.updatedAt).getTime();
           return now - updatedTime > 60 * 24 * 60 * 60 * 1000;
         })

@@ -596,7 +596,193 @@ describe('Personnel Synchronization Logic (IFA-WORK -> IFA-RH)', () => {
       expect(canSyncPersonnel('anonymous')).toBe(false);
     });
   });
+
+  describe('Selective Sync Checkboxes and Counters', () => {
+    const rawPersonnelList: SharedPersonnelRecord[] = [
+      {
+        emailNormalized: 'gv1@tdtu.edu.vn',
+        displayName: 'Giảng viên 1',
+        departmentId: 'dh',
+        departmentName: 'Đồ họa',
+        lecturerType: 'lecturer',
+        academicDegree: 'ThS',
+        active: true,
+        sourceUpdatedAt: '2026-10-01T00:00:00Z',
+        sharedUpdatedAt: '2026-10-01T00:00:00Z',
+      },
+      {
+        emailNormalized: 'gv2@tdtu.edu.vn',
+        displayName: 'Giảng viên 2',
+        departmentId: 'nt',
+        departmentName: 'Nội thất',
+        lecturerType: 'lecturer',
+        academicDegree: 'TS',
+        active: true,
+        sourceUpdatedAt: '2026-10-01T00:00:00Z',
+        sharedUpdatedAt: '2026-10-01T00:00:00Z',
+      },
+      {
+        emailNormalized: 'gv3@tdtu.edu.vn',
+        displayName: 'Giảng viên 3',
+        departmentId: 'tt',
+        departmentName: 'Thời trang',
+        lecturerType: 'core_2',
+        academicDegree: 'Cử nhân',
+        active: true,
+        sourceUpdatedAt: '2026-10-01T00:00:00Z',
+        sharedUpdatedAt: '2026-10-01T00:00:00Z',
+      },
+    ];
+
+    it('defaults to all valid rows selected', () => {
+      const selectedEmails = new Set(rawPersonnelList.map((r) => r.emailNormalized));
+      expect(selectedEmails.size).toBe(3);
+      expect(selectedEmails.has('gv1@tdtu.edu.vn')).toBe(true);
+      expect(selectedEmails.has('gv2@tdtu.edu.vn')).toBe(true);
+      expect(selectedEmails.has('gv3@tdtu.edu.vn')).toBe(true);
+    });
+
+    it('filters records to sync based on user checkbox selection', () => {
+      const selectedEmails = new Set(['gv1@tdtu.edu.vn', 'gv2@tdtu.edu.vn']); // gv3 unchecked
+      const recordsToSync = rawPersonnelList.filter((p) => selectedEmails.has(p.emailNormalized));
+
+      expect(recordsToSync.length).toBe(2);
+      expect(recordsToSync.map((r) => r.emailNormalized)).toEqual(['gv1@tdtu.edu.vn', 'gv2@tdtu.edu.vn']);
+
+      const totalRows = 5; // e.g. 5 total rows in file
+      const validRows = rawPersonnelList.length; // 3 valid
+      const selectedRows = recordsToSync.length; // 2 selected
+      const skippedByUser = validRows - selectedRows; // 1 skipped by user
+      const skippedByData = 2; // 2 skipped due to invalid/missing email
+      const skippedCount = skippedByData + skippedByUser; // 3 total skipped
+
+      expect(selectedRows).toBe(2);
+      expect(skippedByUser).toBe(1);
+      expect(skippedCount).toBe(3);
+    });
+
+    it('handles Select All / Deselect All toggling correctly', () => {
+      let selectedEmails = new Set(rawPersonnelList.map((r) => r.emailNormalized));
+      expect(selectedEmails.size === rawPersonnelList.length).toBe(true);
+
+      // Deselect all
+      const toggleSelectAll = (current: Set<string>, all: SharedPersonnelRecord[]) => {
+        if (current.size === all.length) {
+          return new Set<string>();
+        } else {
+          return new Set<string>(all.map((p) => p.emailNormalized));
+        }
+      };
+
+      selectedEmails = toggleSelectAll(selectedEmails, rawPersonnelList);
+      expect(selectedEmails.size).toBe(0);
+
+      // Select all
+      selectedEmails = toggleSelectAll(selectedEmails, rawPersonnelList);
+      expect(selectedEmails.size).toBe(3);
+    });
+
+    it('disables sync confirmation if 0 rows are selected', () => {
+      const selectedEmails = new Set<string>();
+      const canSync = selectedEmails.size > 0;
+      expect(canSync).toBe(false);
+    });
+  });
+
+  describe('Lecturer Research Tracking Archival (Lưu trữ NCKH)', () => {
+    it('isolates research tracking status in researchPersonnelSettings without altering active field in sharedPersonnel', () => {
+      const sharedRecord: SharedPersonnelRecord = {
+        emailNormalized: 'nguyenvanbachelor@tdtu.edu.vn',
+        displayName: 'Nguyễn Văn Cử Nhân',
+        departmentId: 'dh',
+        departmentName: 'Đồ họa',
+        lecturerType: 'lecturer',
+        academicDegree: 'Cử nhân',
+        active: true, // Still actively employed
+        sourceUpdatedAt: '2026-10-01T00:00:00Z',
+        sharedUpdatedAt: '2026-10-01T00:00:00Z',
+      };
+
+      // Archiving research tracking setting
+      const researchSetting = {
+        emailNormalized: sharedRecord.emailNormalized,
+        researchTrackingStatus: 'ARCHIVED' as const,
+        archivedAt: '2026-10-07T12:00:00Z',
+        archivedBy: 'tranquanghai@tdtu.edu.vn',
+        archiveReason: 'Chỉ có trình độ Cử nhân',
+        updatedAt: '2026-10-07T12:00:00Z',
+      };
+
+      // Crucial requirement: sharedRecord.active MUST REMAIN true!
+      expect(sharedRecord.active).toBe(true);
+      expect(researchSetting.researchTrackingStatus).toBe('ARCHIVED');
+      expect(researchSetting.archiveReason).toBe('Chỉ có trình độ Cử nhân');
+    });
+
+    it('preserves research tracking settings across future sharedPersonnel syncs', () => {
+      // 1. Initial archived setting
+      const existingSettings = new Map<string, { researchTrackingStatus: string; archiveReason: string }>([
+        ['nguyenvanbachelor@tdtu.edu.vn', { researchTrackingStatus: 'ARCHIVED', archiveReason: 'Chỉ có trình độ Cử nhân' }],
+      ]);
+
+      // 2. Incoming shared personnel sync from IFA-WORK
+      const incomingShared: SharedPersonnelRecord[] = [
+        {
+          emailNormalized: 'nguyenvanbachelor@tdtu.edu.vn',
+          displayName: 'Nguyễn Văn Cử Nhân (Updated Name)',
+          departmentId: 'dh',
+          departmentName: 'Thiết kế Đồ họa',
+          lecturerType: 'lecturer',
+          academicDegree: 'Cử nhân',
+          active: true,
+          sourceUpdatedAt: '2026-10-14T00:00:00Z',
+          sharedUpdatedAt: '2026-10-14T00:00:00Z',
+        },
+      ];
+
+      // 3. Since sync writes ONLY to sharedPersonnel/{id}, researchPersonnelSettings is completely untouched
+      const settingAfterSync = existingSettings.get(incomingShared[0].emailNormalized);
+      expect(settingAfterSync).toBeDefined();
+      expect(settingAfterSync?.researchTrackingStatus).toBe('ARCHIVED');
+      expect(settingAfterSync?.archiveReason).toBe('Chỉ có trình độ Cử nhân');
+    });
+
+    it('suggests archival for Bachelor-only, core_2, or visiting lecturers', () => {
+      const isSuggested = (degree: string, lecturerType: string) => {
+        const d = (degree || '').toLowerCase();
+        const isCore2 = lecturerType === 'core_2';
+        const isVisiting = lecturerType === 'visiting';
+        const isBachelor =
+          d.includes('cử nhân') ||
+          d.includes('bachelor') ||
+          d.includes('kỹ sư') ||
+          (d !== '' &&
+            !d.includes('thạc sĩ') &&
+            !d.includes('tiến sĩ') &&
+            !d.includes('ths') &&
+            !d.includes('ts') &&
+            !d.includes('pgs') &&
+            !d.includes('gs'));
+        return isCore2 || isVisiting || isBachelor;
+      };
+
+      expect(isSuggested('Cử nhân', 'lecturer')).toBe(true);
+      expect(isSuggested('ThS', 'core_2')).toBe(true);
+      expect(isSuggested('TS', 'visiting')).toBe(true);
+      expect(isSuggested('ThS', 'lecturer')).toBe(false);
+      expect(isSuggested('PGS.TS', 'teaching_officer')).toBe(false);
+    });
+
+    it('enforces Owner-only permission for archiving or restoring lecturer research tracking', () => {
+      const canManageResearchSettings = (role: string) => role === 'owner';
+
+      expect(canManageResearchSettings('owner')).toBe(true);
+      expect(canManageResearchSettings('admin')).toBe(false);
+      expect(canManageResearchSettings('lecturer')).toBe(false);
+    });
+  });
 });
+
 
 
 

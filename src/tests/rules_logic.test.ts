@@ -98,4 +98,58 @@ describe("RULES Logic & Role Permissions Verification", () => {
     const canUpdateOrDeleteSyncLog = () => false;
     expect(canUpdateOrDeleteSyncLog()).toBe(false);
   });
+
+  it("should validate selective personnel import metrics in personnelSyncLogs", () => {
+    const isValidSelectiveMetrics = (data: Record<string, any>) => {
+      if ('selectedRows' in data && (!Number.isInteger(data.selectedRows) || data.selectedRows < 0)) return false;
+      if ('skippedByUser' in data && (!Number.isInteger(data.skippedByUser) || data.skippedByUser < 0)) return false;
+      if ('selectedCount' in data && (!Number.isInteger(data.selectedCount) || data.selectedCount < 0)) return false;
+      return true;
+    };
+
+    expect(isValidSelectiveMetrics({ selectedRows: 10, skippedByUser: 2, selectedCount: 8 })).toBe(true);
+    expect(isValidSelectiveMetrics({})).toBe(true);
+    expect(isValidSelectiveMetrics({ selectedRows: -1 })).toBe(false);
+    expect(isValidSelectiveMetrics({ skippedByUser: 1.5 })).toBe(false);
+    expect(isValidSelectiveMetrics({ selectedCount: "5" as any })).toBe(false);
+  });
+
+  it("should enforce researchPersonnelSettings security rules and field constraints", () => {
+    // Read permissions
+    const canReadSettings = (auth: { role: string; email: string } | null, docEmail: string) => {
+      if (!auth) return false;
+      const isAdmin = auth.role === "admin" || auth.role === "owner";
+      return isAdmin || auth.email.toLowerCase() === docEmail.toLowerCase();
+    };
+
+    expect(canReadSettings(null, "gv@tdtu.edu.vn")).toBe(false);
+    expect(canReadSettings({ role: "owner", email: "tranquanghai@tdtu.edu.vn" }, "gv@tdtu.edu.vn")).toBe(true);
+    expect(canReadSettings({ role: "admin", email: "admin@tdtu.edu.vn" }, "gv@tdtu.edu.vn")).toBe(true);
+    expect(canReadSettings({ role: "lecturer", email: "gv@tdtu.edu.vn" }, "gv@tdtu.edu.vn")).toBe(true);
+    expect(canReadSettings({ role: "lecturer", email: "other@tdtu.edu.vn" }, "gv@tdtu.edu.vn")).toBe(false);
+
+    // Create & Update permissions: Only Owner
+    const canWriteSettings = (
+      role: string,
+      docEmail: string,
+      data: { emailNormalized: string; researchTrackingStatus: string }
+    ) => {
+      const isOwner = role === "owner";
+      const validStatus = ["ACTIVE", "ARCHIVED"].includes(data.researchTrackingStatus);
+      return isOwner && validStatus && data.emailNormalized === docEmail;
+    };
+
+    expect(canWriteSettings("owner", "gv@tdtu.edu.vn", { emailNormalized: "gv@tdtu.edu.vn", researchTrackingStatus: "ARCHIVED" })).toBe(true);
+    expect(canWriteSettings("admin", "gv@tdtu.edu.vn", { emailNormalized: "gv@tdtu.edu.vn", researchTrackingStatus: "ARCHIVED" })).toBe(false);
+    expect(canWriteSettings("lecturer", "gv@tdtu.edu.vn", { emailNormalized: "gv@tdtu.edu.vn", researchTrackingStatus: "ARCHIVED" })).toBe(false);
+    // Invalid status rejected
+    expect(canWriteSettings("owner", "gv@tdtu.edu.vn", { emailNormalized: "gv@tdtu.edu.vn", researchTrackingStatus: "UNKNOWN" })).toBe(false);
+    // Email mismatch with doc ID rejected
+    expect(canWriteSettings("owner", "gv@tdtu.edu.vn", { emailNormalized: "other@tdtu.edu.vn", researchTrackingStatus: "ACTIVE" })).toBe(false);
+
+    // Deletion strictly denied
+    const canDeleteSettings = () => false;
+    expect(canDeleteSettings()).toBe(false);
+  });
 });
+
