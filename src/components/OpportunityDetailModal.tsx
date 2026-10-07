@@ -52,14 +52,14 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
                 <ExternalLink size={14} />
               </a>
             )}
-            {opportunity.submissionUrl && (
+            {opportunity.submissionUrl && !opportunity.submissionUrl.startsWith("mailto:") && (
               <a
                 href={opportunity.submissionUrl}
-                target={opportunity.submissionUrl.startsWith("mailto:") ? undefined : "_blank"}
+                target="_blank"
                 rel="noopener noreferrer"
                 className="btn btn-primary btn-sm"
               >
-                {opportunity.submissionUrl.startsWith("mailto:") ? "Gửi email nộp bài" : "Cổng nộp bài (Submission)"}
+                Cổng nộp bài (Submission)
                 <ExternalLink size={14} />
               </a>
             )}

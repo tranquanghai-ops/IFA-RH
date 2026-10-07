@@ -81,15 +81,22 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 
-  // URL priority: submissionUrl > sourceUrl
-  const hasSubmission = !!opportunity.submissionUrl;
-  const primaryUrl = opportunity.submissionUrl || opportunity.sourceUrl;
-  const isMailto = primaryUrl?.startsWith("mailto:");
-  const primaryBtnLabel = hasSubmission
-    ? isMailto
-      ? "Gửi bài qua email ↗"
-      : "Đến trang đăng ký ↗"
-    : "Đến nguồn ↗";
+  // URL priority:
+  // - Eliminate all "mailto:" (replace with original page / source website)
+  // - If submissionUrl is a web URL (http/https), link to it with "Đến trang đăng ký ↗"
+  // - If submissionUrl is mailto: or missing, link to sourceUrl with "Đến trang gốc ↗"
+  const isWebSubmission =
+    opportunity.submissionUrl &&
+    !opportunity.submissionUrl.startsWith("mailto:") &&
+    /^https?:\/\//i.test(opportunity.submissionUrl);
+
+  const primaryUrl = isWebSubmission
+    ? opportunity.submissionUrl
+    : opportunity.sourceUrl || (opportunity.submissionUrl && !opportunity.submissionUrl.startsWith("mailto:") ? opportunity.submissionUrl : undefined);
+
+  const primaryBtnLabel = isWebSubmission
+    ? "Đến trang đăng ký ↗"
+    : "Đến trang gốc ↗";
 
   // Formatted dates in priority order: 1. Abstract -> 2. Full paper -> 3. Registration -> 4. Event
   const formattedAbstract = formatDateVN(opportunity.abstractDeadline);
