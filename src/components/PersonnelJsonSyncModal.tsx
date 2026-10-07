@@ -211,6 +211,10 @@ export const PersonnelJsonSyncModal: React.FC<PersonnelJsonSyncModalProps> = ({
 
   const handleApplySync = async () => {
     if (!payload || !payload.personnel.length) return;
+    if (actor.role !== "owner") {
+      setErrorMsg("Chỉ Owner mới có quyền cập nhật danh bạ từ IFA-WORK.");
+      return;
+    }
     setSyncing(true);
     setStep("syncing");
     setErrorMsg(null);

@@ -785,23 +785,24 @@ service cloud.firestore {
 
     // 10. Shared Personnel Directory Mirror collection (Danh bạ nhân sự dùng chung)
     // - Authenticated: Read all shared personnel directory records
-    // - Admin & Owner: Create and update synchronized records (emailNormalized matches doc id)
+    // - Owner only: Create and update synchronized records (emailNormalized matches doc id)
     // - Deletions: Strictly denied
     match /sharedPersonnel/{id} {
       allow read: if isAuthenticated();
-      allow create, update: if isAdmin() &&
+      allow create, update: if isOwner() &&
         isValidSharedPersonnel(request.resource.data) &&
         request.resource.data.emailNormalized == id;
       allow delete: if false;
     }
 
     // 11. Personnel Sync Logs collection (Nhật ký đồng bộ danh bạ nhân sự)
-    // - Admin & Owner: Read sync history and append new sync log entries
+    // - Admin & Owner: Read sync history
+    // - Owner only: Append new sync log entries
     // - Non-admins: Denied
     // - Updates & Deletions: Strictly denied (immutable audit log)
     match /personnelSyncLogs/{id} {
       allow read: if isAdmin();
-      allow create: if isAdmin() &&
+      allow create: if isOwner() &&
         isValidPersonnelSyncLog(request.resource.data) &&
         request.resource.data.id == id;
       allow update, delete: if false;
