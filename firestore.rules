@@ -887,8 +887,8 @@ service cloud.firestore {
     // - Public / Lecturer: Read only if marked public or bootstrap config
     match /systemConfig/{configId} {
       allow read: if isOwner() || isAdmin() || configId in ['public', 'bootstrap'] || (resource != null && resource.data.isPublic == true);
-      allow create: if isOwner() && isValidSystemConfig(request.resource.data);
-      allow update: if isOwner() && isValidSystemConfig(request.resource.data);
+      allow create: if (isOwner() || isAdmin()) && isValidSystemConfig(request.resource.data);
+      allow update: if (isOwner() || isAdmin()) && isValidSystemConfig(request.resource.data);
       allow delete: if isOwner();
     }
 
