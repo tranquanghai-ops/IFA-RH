@@ -13,8 +13,11 @@ import { normalizeTitle, normalizeIssn } from "./journalExcelService";
 
 export const DEFAULT_JOURNAL_DRIVE_FOLDER_URL =
   "https://drive.google.com/open?id=1HHNhKCQk_U85HH24V8-QDbzptQFYbO3X&usp=drive_fs";
-export const DEFAULT_JOURNAL_SHEET_NAME = "TAP_CHI";
-export const EXPECTED_FILE_NAME = "IFA-RH_DANH_MUC_TAP_CHI_HDGSNN";
+export const DEFAULT_JOURNAL_SPREADSHEET_ID =
+  "1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE";
+export const DEFAULT_JOURNAL_SHEET_NAME = "Trang tính1";
+export const FALLBACK_JOURNAL_SHEET_NAME = "TAP_CHI";
+export const EXPECTED_FILE_NAME = "IFA-RH_DANH_MUC_TAP_CHI";
 
 export interface ParsedGoogleSheetJournalRow {
   rowIndex: number;
@@ -29,10 +32,12 @@ export interface FetchJournalSheetResult {
   totalRows: number;
   validJournals: Journal[];
   warnings: string[];
+  manualReviewCount: number;
 }
 
 /**
- * Normalizes header string to match column names flexibly.
+ * Normalizes header string to match column names flexibly across Vietnamese accents,
+ * spaces, and case variations.
  */
 export function normalizeHeaderKey(header: string): string {
   if (!header) return "";
@@ -48,7 +53,7 @@ export function normalizeHeaderKey(header: string): string {
 }
 
 /**
- * Extracts sheet ID from input URL or raw ID.
+ * Extracts sheet ID from input URL or raw ID string.
  */
 export function parseSpreadsheetId(input?: string | null): string {
   const str = String(input || "").trim();
@@ -64,7 +69,147 @@ export function parseSpreadsheetId(input?: string | null): string {
 }
 
 /**
- * Safely parse JSON array of scores from cell value.
+ * Adapts Google Sheets text score fields into structured JournalScoreItem[].
+ * Handles:
+ * - Single group with standard score (e.g. 0.5, 0.75, 1.0)
+ * - Multiple groups separated by '|' (e.g. J_039: Nhóm I: 0.75 | Nhóm III: 1.0)
+ * - Format variations (bản in 1.0 vs bản điện tử 0.5/0.75 in J_076, J_080)
+ * - Historical score cessations (e.g. J_020: 0 from June 2025)
+ * - Pre-2019 only validities (e.g. J_042: 0 - 0.75 before 2019)
+ */
+export function parseScoreAdapter({
+  nhomNganhRaw = "",
+  tenNhomRaw = "",
+  phanLoaiRaw = "",
+  diem2025Raw = "",
+  cacMocRaw = "",
+  ghiChuRaw = "",
+  fallbackField = "Văn hóa - Nghệ thuật",
+}: {
+  nhomNganhRaw?: string;
+  tenNhomRaw?: string;
+  phanLoaiRaw?: string;
+  diem2025Raw?: string | number;
+  cacMocRaw?: string;
+  ghiChuRaw?: string;
+  fallbackField?: string;
+}): { scores: JournalScoreItem[]; maxScore: number; maxScoreYear: number } {
+  const s15 = String(nhomNganhRaw || "").trim();
+  const s16 = String(tenNhomRaw || "").trim();
+  const s17 = String(phanLoaiRaw || "").trim();
+  const s18 = String(diem2025Raw ?? "").trim();
+  const s19 = String(cacMocRaw || "").trim();
+  const s20 = String(ghiChuRaw || "").trim();
+
+  // Multi-group or multi-format split by '|'
+  if (s18.includes("|") || s16.includes("|") || s19.includes("|") || s17.includes("|")) {
+    const splitPipe = (str: string) => (str ? str.split("|").map((s) => s.trim()) : []);
+    const scoresPart = splitPipe(s18);
+    const tenNhomPart = splitPipe(s16);
+    const phanLoaiPart = splitPipe(s17);
+    const cacMocPart = splitPipe(s19);
+    const ghiChuPart = splitPipe(s20);
+    const nhomNganhPart = s15 ? s15.split(/[|;]/).map((s) => s.trim()) : [];
+
+    const count = Math.max(
+      scoresPart.length,
+      tenNhomPart.length,
+      phanLoaiPart.length,
+      cacMocPart.length
+    );
+    const scores: JournalScoreItem[] = [];
+
+    for (let i = 0; i < count; i++) {
+      const rawScoreStr = scoresPart[i] || scoresPart[0] || "";
+      const numMatch = rawScoreStr.match(/(\d+(?:[.,]\d+)?)/);
+      const scoreNum = numMatch ? parseFloat(numMatch[1].replace(",", ".")) : 0;
+
+      const groupName = tenNhomPart[i] || tenNhomPart[0] || nhomNganhPart[i] || fallbackField;
+      const pl = phanLoaiPart[i] || "";
+      const cm = cacMocPart[i] || "";
+      const gc = ghiChuPart[i] || "";
+
+      const notesArr: string[] = [];
+      if (pl) notesArr.push(`Phân loại: ${pl}`);
+      if (cm) notesArr.push(`Lịch sử: ${cm}`);
+      if (gc) notesArr.push(`Ghi chú: ${gc}`);
+
+      // Council code resolution without substring bugs (test V, IV, III, II, I sequentially)
+      let councilCode = `NHOM_${i + 1}`;
+      const searchTarget = `${rawScoreStr} ${groupName} ${nhomNganhPart[i] || ""}`.toLowerCase();
+      if (/\bnhóm\s*(v|5)\b/i.test(searchTarget)) councilCode = "NHOM_V";
+      else if (/\bnhóm\s*(iv|4)\b/i.test(searchTarget)) councilCode = "NHOM_IV";
+      else if (/\bnhóm\s*(iii|3)\b/i.test(searchTarget)) councilCode = "NHOM_III";
+      else if (/\bnhóm\s*(ii|2)\b/i.test(searchTarget)) councilCode = "NHOM_II";
+      else if (/\bnhóm\s*(i|1)\b/i.test(searchTarget)) councilCode = "NHOM_I";
+
+      if (pl.toLowerCase().includes("bản in")) councilCode += "_PRINT";
+      else if (pl.toLowerCase().includes("bản điện tử") || pl.toLowerCase().includes("dien tu"))
+        councilCode += "_ONLINE";
+
+      scores.push({
+        id: `PTS-${i + 1}`,
+        councilCode,
+        councilName: groupName,
+        year: 2025,
+        maxScore: scoreNum,
+        minScore: 0,
+        decisionNumber: "26/QĐ-HĐGSNN",
+        decisionDate: "2025-07-11",
+        notes: notesArr.join(" | ") || undefined,
+      });
+    }
+
+    const maxScore = scores.length > 0 ? Math.max(...scores.map((s) => s.maxScore)) : 0;
+    return { scores, maxScore, maxScoreYear: 2025 };
+  }
+
+  // Single score resolution
+  let scoreNum = 0;
+  if (s18) {
+    const num = parseFloat(s18.replace(",", "."));
+    if (!isNaN(num)) scoreNum = num;
+  } else if (s19.includes("0 từ tháng 6/2025")) {
+    scoreNum = 0;
+  }
+
+  let maxScoreYear = 2025;
+  if (s19.includes("trước 2019") || s19.includes("truoc 2019")) {
+    maxScoreYear = 2018;
+  }
+
+  const notesArr: string[] = [];
+  if (s17 && s17 !== "Toàn tạp chí") notesArr.push(`Phân loại: ${s17}`);
+  if (s19) notesArr.push(`Lịch sử điểm: ${s19}`);
+  if (s20) notesArr.push(`Ghi chú: ${s20}`);
+
+  let councilCode = "HDGS_CHUNG";
+  const searchTarget = `${s15} ${s16}`.toLowerCase();
+  if (/\bnhóm\s*(v|5)\b/i.test(searchTarget)) councilCode = "NHOM_V";
+  else if (/\bnhóm\s*(iv|4)\b/i.test(searchTarget)) councilCode = "NHOM_IV";
+  else if (/\bnhóm\s*(iii|3)\b/i.test(searchTarget)) councilCode = "NHOM_III";
+  else if (/\bnhóm\s*(ii|2)\b/i.test(searchTarget)) councilCode = "NHOM_II";
+  else if (/\bnhóm\s*(i|1)\b/i.test(searchTarget)) councilCode = "NHOM_I";
+
+  const scores: JournalScoreItem[] = [
+    {
+      id: "PTS-1",
+      councilCode,
+      councilName: s16 || s15 || "HĐGS Liên ngành Văn hóa - Nghệ thuật - TDTT",
+      year: maxScoreYear,
+      maxScore: scoreNum,
+      minScore: 0,
+      decisionNumber: "26/QĐ-HĐGSNN",
+      decisionDate: "2025-07-11",
+      notes: notesArr.join(" | ") || undefined,
+    },
+  ];
+
+  return { scores, maxScore: scoreNum, maxScoreYear };
+}
+
+/**
+ * Safely parse JSON array of scores from cell value (retained for backward compatibility).
  */
 export function parseScoresJson(
   val: any,
@@ -87,7 +232,6 @@ export function parseScoresJson(
     return [];
   }
 
-  // If already array
   if (Array.isArray(val)) {
     return val.map((s, idx) => ({
       id: s.id || `PTS-${idx + 1}`,
@@ -95,7 +239,12 @@ export function parseScoresJson(
       councilName: s.councilName || s.council_name || fallback.primaryField,
       year: Number(s.year) || fallback.maxScoreYear || 2025,
       maxScore: Number(s.maxScore ?? s.max_score ?? fallback.maxScore),
-      minScore: s.minScore !== undefined ? Number(s.minScore) : s.min_score !== undefined ? Number(s.min_score) : undefined,
+      minScore:
+        s.minScore !== undefined
+          ? Number(s.minScore)
+          : s.min_score !== undefined
+          ? Number(s.min_score)
+          : undefined,
       decisionNumber: s.decisionNumber || s.decision_number || "26/QĐ-HĐGSNN",
       decisionDate: s.decisionDate || s.decision_date || "2025-07-11",
       notes: s.notes || s.ghi_chu || undefined,
@@ -113,7 +262,12 @@ export function parseScoresJson(
         councilName: s.councilName || s.council_name || fallback.primaryField,
         year: Number(s.year) || fallback.maxScoreYear || 2025,
         maxScore: Number(s.maxScore ?? s.max_score ?? fallback.maxScore),
-        minScore: s.minScore !== undefined ? Number(s.minScore) : s.min_score !== undefined ? Number(s.min_score) : undefined,
+        minScore:
+          s.minScore !== undefined
+            ? Number(s.minScore)
+            : s.min_score !== undefined
+            ? Number(s.min_score)
+            : undefined,
         decisionNumber: s.decisionNumber || s.decision_number || "26/QĐ-HĐGSNN",
         decisionDate: s.decisionDate || s.decision_date || "2025-07-11",
         notes: s.notes || s.ghi_chu || undefined,
@@ -123,7 +277,6 @@ export function parseScoresJson(
     }
   }
 
-  // Text string containing number (e.g. "1.0" or "0.75")
   const num = parseFloat(str.replace(",", "."));
   if (!isNaN(num) && num >= 0) {
     return [
@@ -154,6 +307,12 @@ export function parseGuidelinesValue(
     contactPhone?: string;
     citationStyle?: string;
     publicationFee?: string;
+    publicationLanguage?: string;
+    publicationFrequency?: string;
+    reviewTimeWeeks?: string;
+    manuscriptFormat?: string;
+    pageLimit?: string;
+    officeAddress?: string;
   }
 ): JournalGuidelines {
   let guidelines: JournalGuidelines = {
@@ -162,7 +321,13 @@ export function parseGuidelinesValue(
   };
 
   if (!cellVal) {
-    if (extraCols.templateUrl || extraCols.submissionUrl || extraCols.editorialEmail) {
+    if (
+      extraCols.templateUrl ||
+      extraCols.submissionUrl ||
+      extraCols.editorialEmail ||
+      extraCols.manuscriptFormat ||
+      extraCols.citationStyle
+    ) {
       guidelines.hasGuidelines = true;
     }
     return guidelines;
@@ -175,28 +340,27 @@ export function parseGuidelinesValue(
       return {
         hasGuidelines: true,
         summary: parsed.summary || parsed.tom_tat,
-        manuscriptFormat: parsed.manuscriptFormat || parsed.dinh_dang,
+        manuscriptFormat: parsed.manuscriptFormat || parsed.dinh_dang || extraCols.manuscriptFormat,
         wordLimitMin: parsed.wordLimitMin ? Number(parsed.wordLimitMin) : undefined,
         wordLimitMax: parsed.wordLimitMax ? Number(parsed.wordLimitMax) : undefined,
-        pageLimit: parsed.pageLimit || parsed.so_trang,
+        pageLimit: parsed.pageLimit || parsed.so_trang || extraCols.pageLimit,
         templateUrl: parsed.templateUrl || extraCols.templateUrl,
         citationStyle: parsed.citationStyle || extraCols.citationStyle,
-        publicationLanguage: parsed.publicationLanguage || parsed.ngon_ngu,
+        publicationLanguage: parsed.publicationLanguage || parsed.ngon_ngu || extraCols.publicationLanguage,
         reviewFee: parsed.reviewFee || parsed.phi_phan_bien,
         publicationFee: parsed.publicationFee || extraCols.publicationFee,
-        publicationFrequency: parsed.publicationFrequency || parsed.tan_suat,
-        reviewTimeWeeks: parsed.reviewTimeWeeks || parsed.thoi_gian_phan_bien,
+        publicationFrequency: parsed.publicationFrequency || parsed.tan_suat || extraCols.publicationFrequency,
+        reviewTimeWeeks: parsed.reviewTimeWeeks || parsed.thoi_gian_phan_bien || extraCols.reviewTimeWeeks,
         submissionUrl: parsed.submissionUrl || extraCols.submissionUrl,
         editorialEmail: parsed.editorialEmail || extraCols.editorialEmail,
         contactPhone: parsed.contactPhone || extraCols.contactPhone,
-        officeAddress: parsed.officeAddress || parsed.dia_chi,
+        officeAddress: parsed.officeAddress || parsed.dia_chi || extraCols.officeAddress,
       };
     } catch {
       // Fallback
     }
   }
 
-  // Plain text summary
   return {
     hasGuidelines: str.length > 0 && !str.toLowerCase().includes("chưa có"),
     summary: str,
@@ -205,46 +369,70 @@ export function parseGuidelinesValue(
 }
 
 /**
- * Fetches and parses Google Sheets single tab TAP_CHI rows via GViz endpoint.
+ * Fetches and parses Google Sheets single tab rows via GViz endpoint.
+ * Supports primary tab "Trang tính1" and fallback "TAP_CHI".
+ * Fully parses all 47 columns and identifies 17 manual inspection cases.
  */
 export async function fetchJournalGoogleSheetRows(
   sheetId: string,
   sheetName: string = DEFAULT_JOURNAL_SHEET_NAME,
   { fetchImpl = fetch }: { fetchImpl?: typeof fetch } = {}
 ): Promise<FetchJournalSheetResult> {
-  const cleanId = parseSpreadsheetId(sheetId);
+  const cleanId = parseSpreadsheetId(sheetId) || DEFAULT_JOURNAL_SPREADSHEET_ID;
   if (!cleanId) {
     throw new Error(
       "Spreadsheet ID không hợp lệ hoặc để trống. Vui lòng cung cấp Spreadsheet ID do Spark tạo."
     );
   }
 
-  const url = `https://docs.google.com/spreadsheets/d/${cleanId}/gviz/tq?sheet=${encodeURIComponent(
-    sheetName
-  )}&tqx=out:json&headers=1&_t=${Date.now()}`;
+  let effectiveSheetName = sheetName || DEFAULT_JOURNAL_SHEET_NAME;
 
-  const response = await fetchImpl(url, { signal: AbortSignal.timeout(25000) });
-  if (!response.ok) {
-    throw new Error(
-      `Lỗi kết nối Google Sheets HTTP ${response.status}: ${response.statusText}. Kiểm tra xem file đã được chia sẻ quyền xem (Anyone with the link can view) chưa.`
-    );
+  const tryFetchGviz = async (targetTab: string) => {
+    const url = `https://docs.google.com/spreadsheets/d/${cleanId}/gviz/tq?sheet=${encodeURIComponent(
+      targetTab
+    )}&tqx=out:json&headers=1&_t=${Date.now()}`;
+    const response = await fetchImpl(url, { signal: AbortSignal.timeout(25000) });
+    if (!response.ok) {
+      throw new Error(
+        `Lỗi kết nối Google Sheets HTTP ${response.status}: ${response.statusText}. Kiểm tra xem file đã được chia sẻ quyền xem (Anyone with the link can view) chưa.`
+      );
+    }
+    const text = await response.text();
+    const start = text.indexOf("google.visualization.Query.setResponse(");
+    if (start < 0) {
+      throw new Error("Google Sheets không trả về định dạng bảng hợp lệ.");
+    }
+    const jsonStr = text
+      .slice(start + "google.visualization.Query.setResponse(".length)
+      .trim()
+      .replace(/\);?\s*$/, "");
+    const resObj = JSON.parse(jsonStr);
+    return resObj;
+  };
+
+  let resObj: any = null;
+  try {
+    resObj = await tryFetchGviz(effectiveSheetName);
+    if (resObj.status !== "ok" || !resObj.table) {
+      throw new Error(resObj.errors?.[0]?.message || "Lỗi nạp tab chính");
+    }
+  } catch (primaryErr) {
+    // If primary tab fails, try fallback tab
+    const alternativeTab =
+      effectiveSheetName === DEFAULT_JOURNAL_SHEET_NAME
+        ? FALLBACK_JOURNAL_SHEET_NAME
+        : DEFAULT_JOURNAL_SHEET_NAME;
+    try {
+      resObj = await tryFetchGviz(alternativeTab);
+      if (resObj.status === "ok" && resObj.table) {
+        effectiveSheetName = alternativeTab;
+      } else {
+        throw primaryErr;
+      }
+    } catch {
+      throw primaryErr;
+    }
   }
-
-  const text = await response.text();
-  const start = text.indexOf("google.visualization.Query.setResponse(");
-  if (start < 0) {
-    throw new Error(
-      "Google Sheets không trả về định dạng bảng hợp lệ. Đảm bảo tên tab là '" +
-        sheetName +
-        "' và file đã được chia sẻ công khai hoặc trong thư mục Khoa."
-    );
-  }
-
-  const jsonStr = text
-    .slice(start + "google.visualization.Query.setResponse(".length)
-    .trim()
-    .replace(/\);?\s*$/, "");
-  const resObj = JSON.parse(jsonStr);
 
   if (resObj.status !== "ok" || !resObj.table) {
     throw new Error(
@@ -272,34 +460,69 @@ export async function fetchJournalGoogleSheetRows(
     return -1;
   };
 
-  // Find column indices
+  // 47 column indexes
   const cJournalId = getCol(["journal_id", "ma_tap_chi", "id", "stt"]);
-  const cName = getCol(["journal_name", "ten_tap_chi", "name", "ten_tieng_viet", "tap_chi"]);
-  const cEnglishName = getCol(["english_name", "ten_tieng_anh", "english"]);
-  const cAbbr = getCol(["abbreviation", "ten_viet_tat", "viet_tat"]);
-  const cPublisher = getCol(["publisher", "co_quan_xuat_ban", "don_vi_xuat_ban", "chu_quan"]);
+  const cName = getCol(["ten_chinh_thuc_vn", "ten_tap_chi", "journal_name", "name", "ten_tieng_viet", "tap_chi"]);
+  const cEnglishName = getCol(["ten_tieng_anh", "english_name", "english"]);
+  const cAbbr = getCol(["ten_viet_tat", "abbreviation", "viet_tat"]);
   const cIssnPrint = getCol(["issn_print", "issn", "issn_ban_in", "issn_in"]);
   const cIssnOnline = getCol(["issn_online", "e_issn", "eissn", "issn_dien_tu"]);
-  const cIsbn = getCol(["isbn"]);
-  const cPrimaryField = getCol(["primary_field", "linh_vuc", "linh_vuc_chinh", "chuyen_nganh"]);
+  const cIsbn = getCol(["isbn_lien_quan", "isbn"]);
+  const cHostAgency = getCol(["co_quan_chu_quan", "chu_quan"]);
+  const cPublisher = getCol(["don_vi_xuat_ban", "publisher", "co_quan_xuat_ban"]);
+  const cPrimaryField = getCol(["linh_vuc_nghien_cuu", "primary_field", "linh_vuc", "linh_vuc_chinh", "chuyen_nganh"]);
+  const cLang = getCol(["ngon_ngu_xuat_ban", "ngon_ngu"]);
+  const cFreq = getCol(["tan_suat_xuat_ban", "tan_suat"]);
+  const cNameHistory = getCol(["lich_su_thay_doi_ten"]);
+  const cStatus = getCol(["trang_thai_hoat_dong"]);
+  const cPdfIndex = getCol(["so_tt_pdf"]);
+
+  // Scores
+  const cNhomNganh = getCol(["nhom_nganh_hdgsnn"]);
+  const cTenNhom = getCol(["ten_nhom_nganh"]);
+  const cPhanLoai = getCol(["phan_loai_an_pham"]);
+  const cDiem2025 = getCol(["diem_toi_da_2025", "max_score", "diem_toi_da"]);
+  const cCacMocDiem = getCol(["cac_moc_thay_doi_diem", "lich_su_diem"]);
+  const cGhiChuDiem = getCol(["ghi_chu_diem_hdgsnn"]);
+  const cScoresJson = getCol(["scores", "scores_json", "diem_hdgsnn_json"]);
   const cFields = getCol(["fields", "nhom_nganh", "cac_hoi_dong", "hoi_dong_nganh"]);
-  const cMaxScore = getCol(["max_score", "diem_toi_da", "diem_hdgsnn", "diem"]);
-  const cMaxScoreYear = getCol(["max_score_year", "nam_cong_nhan", "nam"]);
-  const cScoresJson = getCol(["scores", "diem_hdgsnn", "lich_su_diem", "diem_chi_tiet", "scores_json"]);
-  const cWebsite = getCol(["website", "trang_chu", "url", "link_trang_chu"]);
-  const cGuidelines = getCol(["guidelines", "the_le_dang_bai", "huong_dan_tac_gia", "the_le", "quy_cach_dang_bai"]);
-  const cTemplateUrl = getCol(["template_url", "file_mau", "mau_bai_viet", "link_mau"]);
-  const cCitationStyle = getCol(["citation_style", "chuan_trich_dan"]);
-  const cPubFee = getCol(["publication_fee", "phi_cong_bo", "phi_xuat_ban", "apc"]);
-  const cSubmissionUrl = getCol(["submission_url", "cong_nop_bai", "link_nop_bai", "nop_bai_truc_tuyen"]);
-  const cEmail = getCol(["editorial_email", "email_toa_soan", "email", "lien_he"]);
-  const cPhone = getCol(["contact_phone", "dien_thoai", "hotline"]);
-  const cSourceRef = getCol(["source_reference", "nguon_xac_minh", "van_ban_can_cu"]);
+
+  // Guidelines
+  const cTheLe = getCol(["the_le_dang_bai", "guidelines", "huong_dan_tac_gia", "the_le"]);
+  const cQuyCach = getCol(["quy_cach_ban_thao", "dinh_dang"]);
+  const cSoTu = getCol(["so_tu_so_trang", "so_trang"]);
+  const cChuanTrichDan = getCol(["chuan_trich_dan", "citation_style"]);
+  const cFileMau = getCol(["file_mau_bai_viet", "template_url", "file_mau", "mau_bai_viet"]);
+  const cLePhiNop = getCol(["le_phi_nop_bai", "phi_nop_bai"]);
+  const cPhiApc = getCol(["phi_xuat_ban_apc", "publication_fee", "phi_cong_bo", "phi_xuat_ban", "apc"]);
+  const cThoiGianPb = getCol(["thoi_gian_phan_bien", "thoi_gian_xet_duyet"]);
+  const cNgonNguChapNhan = getCol(["ngon_ngu_chap_nhan"]);
+  const cHinhThucNop = getCol(["hinh_thuc_nop_bai"]);
+
+  // Contacts & Links
+  const cUrlWebsite = getCol(["url_website_chinh_thuc", "website", "trang_chu", "url", "link_trang_chu"]);
+  const cUrlHuongDan = getCol(["url_huong_dan_tac_gia"]);
+  const cUrlNopBai = getCol(["url_nop_bai_truc_tuyen", "submission_url", "cong_nop_bai", "link_nop_bai"]);
+  const cEmail = getCol(["email_toa_soan", "editorial_email", "email", "lien_he"]);
+  const cPhone = getCol(["so_dien_thoai_toa_soan", "contact_phone", "dien_thoai", "hotline"]);
+  const cDiaChi = getCol(["dia_chi_toa_soan", "dia_chi"]);
+  const cWebsiteChuQuan = getCol(["website_co_quan_chu_quan"]);
+  const cLoaiWebsite = getCol(["loai_he_thong_website"]);
+
+  // Verification
+  const cXacMinhWebsite = getCol(["xac_minh_website", "website_verified"]);
+  const cXacMinhTheLe = getCol(["xac_minh_the_le"]);
+  const cNgayXacMinh = getCol(["ngay_xac_minh", "verification_date"]);
+  const cNguonDoiSoat = getCol(["nguon_doi_soat", "source_reference", "nguon_xac_minh", "van_ban_can_cu"]);
+  const cDoTinCay = getCol(["do_tin_cay_nguon"]);
+  const cCanAdminKiemTra = getCol(["can_admin_kiem_tra_thu_cong"]);
+  const cLyDoKiemTra = getCol(["ly_do_kiem_tra_thu_cong"]);
+  const cGhiChuKiemChung = getCol(["ghi_chu_kiem_chung", "verification_notes"]);
   const cVerifStatus = getCol(["verification_status", "trang_thai_kiem_chung", "trang_thai"]);
-  const cVerifNotes = getCol(["verification_notes", "ghi_chu_kiem_chung"]);
 
   const validJournals: Journal[] = [];
   const warnings: string[] = [];
+  let manualReviewCount = 0;
 
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
@@ -314,21 +537,9 @@ export async function fetchJournalGoogleSheetRows(
       return "";
     };
 
-    const getNum = (idx: number): number | undefined => {
-      if (idx < 0 || idx >= row.c.length) return undefined;
-      const cell = row.c[idx];
-      if (!cell) return undefined;
-      if (typeof cell.v === "number") return cell.v;
-      const str = getVal(idx).replace(",", ".");
-      const n = parseFloat(str);
-      return isNaN(n) ? undefined : n;
-    };
-
     let journalId = getVal(cJournalId);
     const name = getVal(cName);
-    const publisher = getVal(cPublisher) || "Đang cập nhật cơ quan xuất bản";
 
-    // If completely empty row
     if (!name && !journalId) continue;
 
     if (!name) {
@@ -340,15 +551,41 @@ export async function fetchJournalGoogleSheetRows(
       journalId = `TC-${(r + 1).toString().padStart(3, "0")}`;
     }
 
+    const hostAgency = getVal(cHostAgency);
+    const pubAgency = getVal(cPublisher);
+    const publisher =
+      pubAgency && hostAgency && pubAgency !== hostAgency
+        ? `${pubAgency} (${hostAgency})`
+        : pubAgency || hostAgency || "Đang cập nhật cơ quan xuất bản";
+
     const primaryField = getVal(cPrimaryField) || "Văn hóa - Nghệ thuật";
-    const maxScore = getNum(cMaxScore) || 0;
-    const maxScoreYear = getNum(cMaxScoreYear) || 2025;
 
-    // Parse scores JSON or fallback
-    const rawScores = getVal(cScoresJson);
-    const scores = parseScoresJson(rawScores, { maxScore, maxScoreYear, primaryField });
+    // Score resolution: check JSON first if present, otherwise use 6-column adapter
+    let scores: JournalScoreItem[] = [];
+    let maxScore = 0;
+    let maxScoreYear = 2025;
 
-    // Aggregate fields
+    const rawScoresJson = getVal(cScoresJson);
+    if (rawScoresJson && (rawScoresJson.startsWith("[") || rawScoresJson.startsWith("{"))) {
+      scores = parseScoresJson(rawScoresJson, { maxScore: 0, maxScoreYear: 2025, primaryField });
+      maxScore = scores.length > 0 ? Math.max(...scores.map((s) => s.maxScore)) : 0;
+      maxScoreYear = scores.length > 0 ? scores[0].year : 2025;
+    } else {
+      const adapted = parseScoreAdapter({
+        nhomNganhRaw: getVal(cNhomNganh),
+        tenNhomRaw: getVal(cTenNhom),
+        phanLoaiRaw: getVal(cPhanLoai),
+        diem2025Raw: getVal(cDiem2025),
+        cacMocRaw: getVal(cCacMocDiem),
+        ghiChuRaw: getVal(cGhiChuDiem),
+        fallbackField: primaryField,
+      });
+      scores = adapted.scores;
+      maxScore = adapted.maxScore;
+      maxScoreYear = adapted.maxScoreYear;
+    }
+
+    // Fields aggregation
     const fieldsSet = new Set<string>();
     fieldsSet.add(primaryField);
     scores.forEach((s) => {
@@ -362,28 +599,125 @@ export async function fetchJournalGoogleSheetRows(
       });
     }
 
-    // Guidelines
-    const guidelines = parseGuidelinesValue(getVal(cGuidelines), {
-      templateUrl: getVal(cTemplateUrl) || undefined,
-      submissionUrl: getVal(cSubmissionUrl) || undefined,
+    // Website & URLs
+    const rawUrlWebsite = getVal(cUrlWebsite);
+    const website =
+      rawUrlWebsite && (rawUrlWebsite.startsWith("http://") || rawUrlWebsite.startsWith("https://"))
+        ? rawUrlWebsite
+        : undefined;
+
+    const websiteVerifiedVal = getVal(cXacMinhWebsite).toLowerCase();
+    const websiteVerified = Boolean(
+      website &&
+        (websiteVerifiedVal.includes("đã") ||
+          websiteVerifiedVal.includes("da") ||
+          websiteVerifiedVal.includes("hợp lệ") ||
+          websiteVerifiedVal.includes("verified"))
+    );
+
+    // Manual check needed flag (17 official Spark cases)
+    const canCheckManualVal = getVal(cCanAdminKiemTra).trim().toUpperCase();
+    const isManualCheckNeeded =
+      canCheckManualVal.includes("CÓ") ||
+      canCheckManualVal.includes("CO") ||
+      canCheckManualVal === "1" ||
+      canCheckManualVal === "TRUE";
+    const manualCheckReason = getVal(cLyDoKiemTra);
+
+    if (isManualCheckNeeded) {
+      manualReviewCount++;
+    }
+
+    // Guidelines extraction (all 15 items)
+    const fileMauVal = getVal(cFileMau);
+    const templateUrl =
+      fileMauVal && (fileMauVal.startsWith("http://") || fileMauVal.startsWith("https://"))
+        ? fileMauVal
+        : undefined;
+
+    const nopBaiVal = getVal(cUrlNopBai);
+    const submissionUrl =
+      nopBaiVal && (nopBaiVal.startsWith("http://") || nopBaiVal.startsWith("https://"))
+        ? nopBaiVal
+        : undefined;
+
+    const huongDanVal = getVal(cUrlHuongDan);
+    const authorGuideUrl =
+      huongDanVal && (huongDanVal.startsWith("http://") || huongDanVal.startsWith("https://"))
+        ? huongDanVal
+        : undefined;
+
+    const guidelinesSummaryParts = [
+      getVal(cTheLe),
+      getVal(cHinhThucNop) ? `Hình thức nộp: ${getVal(cHinhThucNop)}` : "",
+      getVal(cNameHistory) ? `Lịch sử đổi tên: ${getVal(cNameHistory)}` : "",
+    ].filter(Boolean);
+
+    const guidelines = parseGuidelinesValue(guidelinesSummaryParts.join("\n\n"), {
+      templateUrl,
+      submissionUrl: submissionUrl || authorGuideUrl,
       editorialEmail: getVal(cEmail) || undefined,
       contactPhone: getVal(cPhone) || undefined,
-      citationStyle: getVal(cCitationStyle) || undefined,
-      publicationFee: getVal(cPubFee) || undefined,
+      citationStyle: getVal(cChuanTrichDan) || undefined,
+      publicationFee: getVal(cPhiApc) || undefined,
+      publicationLanguage: getVal(cNgonNguChapNhan) || getVal(cLang) || "Tiếng Việt",
+      publicationFrequency: getVal(cFreq) || undefined,
+      reviewTimeWeeks: getVal(cThoiGianPb) || undefined,
+      manuscriptFormat: getVal(cQuyCach) || undefined,
+      pageLimit: getVal(cSoTu) || undefined,
+      officeAddress: getVal(cDiaChi) || undefined,
     });
 
-    const website = getVal(cWebsite) || undefined;
-    const vStatusRaw = getVal(cVerifStatus).toLowerCase();
-    const verificationStatus =
-      vStatusRaw.includes("verif") || vStatusRaw.includes("da kiem") || vStatusRaw.includes("hop le")
-        ? "verified"
-        : vStatusRaw.includes("needs") || vStatusRaw.includes("can")
-        ? "needs_update"
-        : "unverified";
+    // Links collection
+    const links: JournalLinkItem[] = [];
+    if (website) {
+      links.push({
+        id: `LINK-${journalId}-home`,
+        journalId,
+        linkType: "Trang chủ",
+        label: "Website chính thức",
+        url: website,
+        isVerified: websiteVerified,
+      });
+    }
+    if (submissionUrl && submissionUrl !== website) {
+      links.push({
+        id: `LINK-${journalId}-submit`,
+        journalId,
+        linkType: "Nộp bài",
+        label: "Cổng nộp bài trực tuyến",
+        url: submissionUrl,
+        isVerified: true,
+      });
+    }
 
-    const websiteVerified = Boolean(website && website.startsWith("http") && verificationStatus === "verified");
+    // Verification structure
+    const verificationNotes = [
+      getVal(cGhiChuKiemChung),
+      isManualCheckNeeded ? `[CẦN KIỂM TRA THỦ CÔNG]: ${manualCheckReason}` : "",
+      getVal(cDoTinCay) ? `Độ tin cậy: ${getVal(cDoTinCay)}` : "",
+      getVal(cPdfIndex) ? `Số TT PDF QĐ 26: ${getVal(cPdfIndex)}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ");
 
     const now = new Date().toISOString();
+    const verification: JournalVerification = {
+      status: isManualCheckNeeded
+        ? "needs_update"
+        : websiteVerified
+        ? "verified"
+        : "unverified",
+      verifiedBy: "Spark Agent",
+      verifiedDate: getVal(cNgayXacMinh) || now.split("T")[0],
+      sourceReference: getVal(cNguonDoiSoat) || "Quyết định 26/QĐ-HĐGSNN ngày 11/7/2025",
+      notes: verificationNotes || undefined,
+      schemaVersion: 1,
+      manualReviewNeeded: isManualCheckNeeded,
+      manualReviewReason: isManualCheckNeeded ? manualCheckReason : undefined,
+      confidenceLevel: getVal(cDoTinCay) || "Cao",
+    };
+
     const journalObj: Journal = {
       id: journalId,
       journalId,
@@ -399,30 +733,12 @@ export async function fetchJournalGoogleSheetRows(
       fields: Array.from(fieldsSet),
       website,
       websiteVerified,
-      maxScore: scores.length > 0 ? Math.max(...scores.map((s) => s.maxScore)) : maxScore,
-      maxScoreYear: scores.length > 0 ? scores[0].year : maxScoreYear,
+      maxScore,
+      maxScoreYear,
       scores,
       guidelines,
-      links: website
-        ? [
-            {
-              id: `LINK-${journalId}-1`,
-              journalId,
-              linkType: "Trang chủ",
-              label: "Website chính thức",
-              url: website,
-              isVerified: websiteVerified,
-            },
-          ]
-        : [],
-      verification: {
-        status: verificationStatus,
-        verifiedBy: "Spark Agent",
-        verifiedDate: now.split("T")[0],
-        sourceReference: getVal(cSourceRef) || "Quyết định 26/QĐ-HĐGSNN ngày 11/7/2025",
-        notes: getVal(cVerifNotes) || undefined,
-        schemaVersion: 1,
-      },
+      links,
+      verification,
       status: "active",
       isManualEdited: false,
       createdAt: now,
@@ -435,10 +751,11 @@ export async function fetchJournalGoogleSheetRows(
 
   return {
     sheetId: cleanId,
-    sheetName,
+    sheetName: effectiveSheetName,
     totalRows: rows.length,
     validJournals,
     warnings,
+    manualReviewCount,
   };
 }
 
@@ -466,7 +783,8 @@ export function computeJournalFieldDiffs(
 
   check("name", "Tên tạp chí", oldJ.name, newJ.name);
   check("englishName", "Tên tiếng Anh", oldJ.englishName, newJ.englishName);
-  check("publisher", "Cơ quan xuất bản", oldJ.publisher, newJ.publisher);
+  check("abbreviation", "Tên viết tắt", oldJ.abbreviation, newJ.abbreviation);
+  check("publisher", "Đơn vị xuất bản", oldJ.publisher, newJ.publisher);
   check("issnPrint", "ISSN bản in", oldJ.issnPrint, newJ.issnPrint);
   check("issnOnline", "E-ISSN", oldJ.issnOnline, newJ.issnOnline);
   check("primaryField", "Lĩnh vực chính", oldJ.primaryField, newJ.primaryField);
@@ -501,6 +819,9 @@ export function computeJournalFieldDiffs(
  * - New journals (changeType: 'create')
  * - Existing journals with modifications (changeType: 'update' + diffSummary)
  * - Existing journals that are unchanged (skipped from queue to avoid clutter)
+ * Guarantees IDEMPOTENCY by assigning deterministic IDs:
+ *   - cand_new_${incoming.journalId}
+ *   - cand_upd_${matched.journalId}
  */
 export function buildJournalCandidatesFromSheet(
   incomingJournals: Journal[],
@@ -552,6 +873,12 @@ export function buildJournalCandidatesFromSheet(
 
     // Identify unverified fields
     const unverifiedFields: string[] = [];
+    const isManualCheck = incoming.verification?.manualReviewNeeded === true;
+    const manualReason = incoming.verification?.manualReviewReason;
+
+    if (isManualCheck && manualReason) {
+      unverifiedFields.push(`Cần kiểm tra thủ công: ${manualReason}`);
+    }
     if (!incoming.website) {
       unverifiedFields.push("Chưa có trang chủ");
     } else if (!incoming.websiteVerified) {
@@ -581,6 +908,7 @@ export function buildJournalCandidatesFromSheet(
     }
 
     const now = new Date().toISOString();
+    const candidateStatus = isManualCheck ? "needs_review" : "pending";
 
     if (!matched) {
       // Case A: Completely NEW journal!
@@ -593,8 +921,11 @@ export function buildJournalCandidatesFromSheet(
         return;
       }
 
+      // Deterministic ID for idempotency
+      const candId = `cand_new_${incoming.journalId}`;
+
       const candidateDoc: JournalCandidate = {
-        id: `cand_${incoming.journalId}_${Date.now()}_${idx}`,
+        id: candId,
         journalId: incoming.journalId,
         name: incoming.name,
         englishName: incoming.englishName,
@@ -616,7 +947,7 @@ export function buildJournalCandidatesFromSheet(
         verification: incoming.verification,
         sourceType: "GOOGLE_SHEETS",
         changeType: "create",
-        status: "pending",
+        status: candidateStatus,
         unverifiedFields,
         sheetRowIndex: idx + 2,
         createdAt: now,
@@ -635,17 +966,20 @@ export function buildJournalCandidatesFromSheet(
       }
 
       // Changes detected!
-      updatedCount++;
-
-      // If already has an identical pending update in queue, skip duplicate
+      // If already has an active pending candidate in queue, skip duplicate
       const existingPending = activePendingMap.get(matched.journalId);
       if (existingPending) {
         skippedDuplicates++;
         return;
       }
 
+      updatedCount++;
+
+      const candId = `cand_upd_${matched.journalId}`;
+
+
       const candidateDoc: JournalCandidate = {
-        id: `cand_upd_${matched.journalId}_${Date.now()}_${idx}`,
+        id: candId,
         journalId: matched.journalId,
         name: incoming.name,
         englishName: incoming.englishName,
@@ -669,7 +1003,7 @@ export function buildJournalCandidatesFromSheet(
         changeType: "update",
         existingJournalId: matched.id || matched.journalId,
         diffSummary: diffs,
-        status: "pending",
+        status: candidateStatus,
         isManualPreserved: matched.isManualEdited,
         unverifiedFields,
         sheetRowIndex: idx + 2,

@@ -20,6 +20,7 @@ import {
   fetchJournalGoogleSheetRows,
   buildJournalCandidatesFromSheet,
   DEFAULT_JOURNAL_SHEET_NAME,
+  DEFAULT_JOURNAL_SPREADSHEET_ID,
 } from "./journalGoogleSheetService";
 import { fetchJournals, createJournal, updateJournal } from "./journalService";
 
@@ -117,11 +118,11 @@ export async function getJournalSyncSettings(): Promise<JournalSyncSettings | nu
  * DOES NOT publish directly to public journals!
  */
 export async function syncJournalsFromGoogleSheetsToQueue({
-  sheetId,
+  sheetId = DEFAULT_JOURNAL_SPREADSHEET_ID,
   sheetName = DEFAULT_JOURNAL_SHEET_NAME,
   user,
 }: {
-  sheetId: string;
+  sheetId?: string;
   sheetName?: string;
   user: { uid: string; email?: string };
 }): Promise<{
@@ -131,10 +132,14 @@ export async function syncJournalsFromGoogleSheetsToQueue({
   updatedCandidatesCount: number;
   unchangedCount: number;
   skippedDuplicates: number;
+  manualReviewCount: number;
   warnings: string[];
 }> {
+  const effectiveSheetId = sheetId || DEFAULT_JOURNAL_SPREADSHEET_ID;
+  const effectiveSheetName = sheetName || DEFAULT_JOURNAL_SHEET_NAME;
+
   // 1. Fetch rows from Google Sheets
-  const sheetResult = await fetchJournalGoogleSheetRows(sheetId, sheetName);
+  const sheetResult = await fetchJournalGoogleSheetRows(effectiveSheetId, effectiveSheetName);
 
   // 2. Fetch existing journals and active pending candidates
   const [existingJournals, existingCandidates] = await Promise.all([
@@ -186,6 +191,7 @@ export async function syncJournalsFromGoogleSheetsToQueue({
     updatedCandidatesCount: updatedCount,
     unchangedCount,
     skippedDuplicates,
+    manualReviewCount: sheetResult.manualReviewCount,
     warnings: sheetResult.warnings,
   };
 }
@@ -301,12 +307,29 @@ export async function approveJournalCandidate(
 export async function bulkApproveJournalCandidates(
   candidateIds: string[],
   user: { uid: string; email?: string }
-): Promise<{ successCount: number; errorCount: number }> {
+): Promise<{ successCount: number; errorCount: number; skippedWarningCount: number }> {
   let successCount = 0;
   let errorCount = 0;
+  let skippedWarningCount = 0;
 
   for (const id of candidateIds) {
     try {
+      const candRef = doc(firestore, "journalCandidates", id);
+      const candSnap = await getDoc(candRef);
+      if (candSnap.exists()) {
+        const cand = candSnap.data() as JournalCandidate;
+        // Enforce rule: candidates with verification warning cannot be bulk approved
+        const hasWarning =
+          cand.status === "needs_review" ||
+          cand.verification?.manualReviewNeeded === true ||
+          cand.unverifiedFields?.some((f) => f.includes("Cần kiểm tra thủ công"));
+
+        if (hasWarning) {
+          skippedWarningCount++;
+          continue;
+        }
+      }
+
       await approveJournalCandidate(id, user);
       successCount++;
     } catch (err) {
@@ -315,8 +338,9 @@ export async function bulkApproveJournalCandidates(
     }
   }
 
-  return { successCount, errorCount };
+  return { successCount, errorCount, skippedWarningCount };
 }
+
 
 /**
  * Reject candidate with reason.
