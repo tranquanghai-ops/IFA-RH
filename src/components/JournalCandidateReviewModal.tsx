@@ -214,8 +214,37 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
             </div>
           )}
 
+          {/* Manual Inspection Needed Warning Alert */}
+          {(candidate.verification?.manualReviewNeeded ||
+            candidate.unverifiedFields?.some((f) => f.includes("Cần kiểm tra thủ công"))) && (
+            <div
+              style={{
+                padding: "12px 16px",
+                borderRadius: "8px",
+                backgroundColor: "#fffbeb",
+                border: "1px solid #fde68a",
+                fontSize: "0.85rem",
+                color: "#92400e",
+                display: "flex",
+                flexDirection: "column",
+                gap: "6px",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", fontWeight: 700, color: "#b45309" }}>
+                <AlertTriangle size={18} />
+                CẢNH BÁO ĐỐI SOÁT THỦ CÔNG (THEO ĐIỀU TRA SPARK / QUYẾT ĐỊNH 26):
+              </div>
+              <p style={{ margin: 0, lineHeight: 1.5, fontWeight: 500 }}>
+                {candidate.verification?.manualReviewReason ||
+                  candidate.unverifiedFields?.find((f) => f.includes("Cần kiểm tra thủ công")) ||
+                  "Hồ sơ này có đặc thù về điểm số, mã ISSN hoặc lịch sử tên gọi cần Admin đối chiếu kỹ trước khi duyệt."}
+              </p>
+            </div>
+          )}
+
           {/* Section 1: Diff comparison (If Update) */}
           {isUpdate && diffs.length > 0 && (
+
             <div>
               <h4 style={{ margin: "0 0 10px 0", fontSize: "0.95rem", fontWeight: 700, color: "#0f172a" }}>
                 So sánh thay đổi dữ liệu (Trước vs Sau khi Spark cập nhật):

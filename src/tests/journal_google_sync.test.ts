@@ -257,3 +257,130 @@ describe("Kiểm tra phân quyền Duyệt Hàng chờ Tạp chí", () => {
     expect(canReviewCandidate("owner")).toBe(true);
   });
 });
+
+describe("Hệ thống Adapter 47 Cột và Xử lý Điểm Chuyên sâu (QĐ 26/QĐ-HĐGSNN)", () => {
+  it("xử lý trường hợp đặc biệt J_020 (Nghiên cứu dân tộc: điểm về 0 từ tháng 6/2025)", async () => {
+    const { parseScoreAdapter } = await import("../services/journalGoogleSheetService");
+    const adapted = parseScoreAdapter({
+      nhomNganhRaw: "Nhóm I",
+      tenNhomRaw: "Nhóm tạp chí áp dụng chung cho ngành Văn hóa, Nghệ thuật, Thể dục thể thao",
+      phanLoaiRaw: "Toàn tạp chí",
+      diem2025Raw: "",
+      cacMocRaw: "0 - 0,5 từ 2019; 0 - 0,75 từ 2023; 0 từ tháng 6/2025",
+      ghiChuRaw: "ĐẶC BIỆT: Quyết định 26 quy định điểm về 0 từ tháng 6/2025 (dừng tính điểm)",
+    });
+
+    expect(adapted.maxScore).toBe(0);
+    expect(adapted.maxScoreYear).toBe(2025);
+    expect(adapted.scores.length).toBe(1);
+    expect(adapted.scores[0].maxScore).toBe(0);
+    expect(adapted.scores[0].notes).toContain("0 từ tháng 6/2025");
+    expect(adapted.scores[0].notes).toContain("dừng tính điểm");
+  });
+
+  it("xử lý trường hợp đặc biệt J_039 (Lý luận Chính trị: 2 nhóm ngành với điểm 0.75 và 1.0)", async () => {
+    const { parseScoreAdapter } = await import("../services/journalGoogleSheetService");
+    const adapted = parseScoreAdapter({
+      nhomNganhRaw: "Nhóm I; Nhóm III",
+      tenNhomRaw: "Nhóm I: Nhóm tạp chí áp dụng chung cho ngành VHNT-TDTT | Nhóm III: Nhóm các tạp chí cho ngành Báo chí, truyền thông",
+      phanLoaiRaw: "43: Toàn tạp chí | 80: Toàn tạp chí",
+      diem2025Raw: "Nhóm I: 0.75 | Nhóm III: 1",
+      cacMocRaw: "Nhóm I (TT 43): 0 - 0,5 từ 2024; 0 - 0,75 từ 2025 | Nhóm III (TT 80): 0 - 0,5 từ 2017; 0 - 0,75 từ 2021; 0 - 1,0 từ 2024",
+      ghiChuRaw: "Nhóm I: Điểm tại Nhóm I là 0,75 | Nhóm III: Điểm tối đa 1,0 tại ngành Báo chí truyền thông",
+    });
+
+    expect(adapted.maxScore).toBe(1.0);
+    expect(adapted.scores.length).toBe(2);
+    expect(adapted.scores[0].councilCode).toBe("NHOM_I");
+    expect(adapted.scores[0].maxScore).toBe(0.75);
+    expect(adapted.scores[1].councilCode).toBe("NHOM_III");
+    expect(adapted.scores[1].maxScore).toBe(1.0);
+  });
+
+  it("xử lý trường hợp đặc biệt J_076 (Lý luận Chính trị và Truyền thông: Bản in 1.0 vs Bản điện tử 0.75)", async () => {
+    const { parseScoreAdapter } = await import("../services/journalGoogleSheetService");
+    const adapted = parseScoreAdapter({
+      nhomNganhRaw: "Nhóm III; Nhóm III",
+      tenNhomRaw: "Nhóm III: Báo chí, truyền thông | Nhóm III: Báo chí, truyền thông",
+      phanLoaiRaw: "81a: Bản in | 81b: Bản điện tử",
+      diem2025Raw: "Nhóm III: 1 | Nhóm III: 0.75",
+      cacMocRaw: "Nhóm III (TT 81a): 0 - 0,5; 0 - 0,75 từ 2019; 0 - 1,0 từ 2024 | Nhóm III (TT 81b): 0 - 0,25 từ 2022; 0 - 0,5 từ 2024; 0 - 0,75 từ 2025",
+      ghiChuRaw: "Bản in đạt 1,0 | Bản điện tử đạt 0,75",
+    });
+
+    expect(adapted.maxScore).toBe(1.0);
+    expect(adapted.scores.length).toBe(2);
+    expect(adapted.scores[0].councilCode).toBe("NHOM_III_PRINT");
+    expect(adapted.scores[0].maxScore).toBe(1.0);
+    expect(adapted.scores[1].councilCode).toBe("NHOM_III_ONLINE");
+    expect(adapted.scores[1].maxScore).toBe(0.75);
+  });
+
+  it("xử lý trường hợp đặc biệt J_080 (Khoa học Đào tạo và huấn luyện Thể thao: Bản in 1.0 vs Bản điện tử 0.5)", async () => {
+    const { parseScoreAdapter } = await import("../services/journalGoogleSheetService");
+    const adapted = parseScoreAdapter({
+      nhomNganhRaw: "Nhóm IV; Nhóm IV",
+      tenNhomRaw: "Nhóm IV: Thể dục thể thao | Nhóm IV: Thể dục thể thao",
+      phanLoaiRaw: "85a: Bản in | 85b: Bản điện tử",
+      diem2025Raw: "Nhóm IV: 1 | Nhóm IV: 0.5",
+      cacMocRaw: "Nhóm IV (TT 85a): 0 - 0,5; 0 - 0,75 từ 2019; 0 - 1,0 từ 2025 | Nhóm IV (TT 85b): 0 - 0,5 từ 2025",
+    });
+
+    expect(adapted.maxScore).toBe(1.0);
+    expect(adapted.scores.length).toBe(2);
+    expect(adapted.scores[0].councilCode).toBe("NHOM_IV_PRINT");
+    expect(adapted.scores[0].maxScore).toBe(1.0);
+    expect(adapted.scores[1].councilCode).toBe("NHOM_IV_ONLINE");
+    expect(adapted.scores[1].maxScore).toBe(0.5);
+  });
+
+  it("xử lý trường hợp J_042 (Di sản văn hóa: mốc điểm trước 2019)", async () => {
+    const { parseScoreAdapter } = await import("../services/journalGoogleSheetService");
+    const adapted = parseScoreAdapter({
+      nhomNganhRaw: "Nhóm II",
+      tenNhomRaw: "Nhóm các Tạp chí trong nước áp dụng cho ngành Văn hóa, Nghệ thuật",
+      phanLoaiRaw: "Toàn tạp chí",
+      diem2025Raw: "0.75",
+      cacMocRaw: "0 - 0,75 trước 2019",
+      ghiChuRaw: "Từ 2019 không có mốc điểm mới",
+    });
+
+    expect(adapted.maxScore).toBe(0.75);
+    expect(adapted.maxScoreYear).toBe(2018);
+    expect(adapted.scores[0].notes).toContain("trước 2019");
+  });
+
+  it("gán trạng thái needs_review và unverifiedFields cho các hồ sơ có cảnh báo kiểm tra thủ công", async () => {
+    const { buildJournalCandidatesFromSheet } = await import("../services/journalGoogleSheetService");
+    const manualJournal: Journal = {
+      id: "J_020",
+      journalId: "J_020",
+      name: "Tạp chí Nghiên cứu dân tộc",
+      publisher: "Học viện Dân tộc",
+      category: "domestic",
+      primaryField: "Văn hóa - Nghệ thuật",
+      fields: ["Văn hóa - Nghệ thuật"],
+      maxScore: 0,
+      maxScoreYear: 2025,
+      websiteVerified: true,
+      scores: [],
+      status: "active",
+      isManualEdited: false,
+      verification: {
+        status: "needs_update",
+        schemaVersion: 1,
+        manualReviewNeeded: true,
+        manualReviewReason: "Điểm về 0 từ tháng 6/2025",
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: "Spark",
+    };
+
+    const res = buildJournalCandidatesFromSheet([manualJournal], []);
+    expect(res.candidatesToCreate.length).toBe(1);
+    const cand = res.candidatesToCreate[0];
+    expect(cand.status).toBe("needs_review");
+    expect(cand.unverifiedFields.some((f) => f.includes("Điểm về 0 từ tháng 6/2025"))).toBe(true);
+  });
+});

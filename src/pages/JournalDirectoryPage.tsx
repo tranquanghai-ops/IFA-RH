@@ -298,10 +298,11 @@ export const getJournalCandidateCategory = (
 ): "today" | "pending" | "needs_review" | "approved" | "rejected" => {
   if (c.status === "rejected") return "rejected";
   if (c.status === "approved") return "approved";
-  if (c.status === "needs_review") return "needs_review";
+  if (c.status === "needs_review" || c.verification?.manualReviewNeeded) return "needs_review";
   if (isTodayDate(c.createdAt)) return "today";
   return "pending";
 };
+
 
 export const JournalDirectoryPage: React.FC = () => {
   const { profile, user } = useAuth();
@@ -520,7 +521,13 @@ export const JournalDirectoryPage: React.FC = () => {
         uid: user.uid,
         email: user.email || "",
       });
-      alert(`Đã duyệt thành công ${res.successCount} bản ghi!`);
+      if (res.skippedWarningCount > 0) {
+        alert(
+          `Đã duyệt thành công ${res.successCount} bản ghi! Lưu ý: ${res.skippedWarningCount} bản ghi có cảnh báo kiểm tra thủ công đã được giữ lại trong danh sách để Admin đối chiếu riêng.`
+        );
+      } else {
+        alert(`Đã duyệt thành công ${res.successCount} bản ghi!`);
+      }
       setSelectedCandidateIds([]);
     } catch (err: any) {
       alert("Lỗi duyệt hàng loạt: " + err.message);
@@ -914,12 +921,31 @@ export const JournalDirectoryPage: React.FC = () => {
                         <td style={{ padding: "10px 12px" }}>
                           <div style={{ fontWeight: 700, color: "#0f172a" }}>{c.journalId}</div>
                           <div style={{ color: "#334155" }}>{c.name}</div>
-                          {c.isManualPreserved && (
-                            <span style={{ fontSize: "0.72rem", color: "#854d0e", backgroundColor: "#fefce8", padding: "1px 5px", borderRadius: "3px" }}>
-                              Đã sửa thủ công
-                            </span>
-                          )}
+                          <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", marginTop: "3px" }}>
+                            {c.isManualPreserved && (
+                              <span style={{ fontSize: "0.72rem", color: "#854d0e", backgroundColor: "#fefce8", padding: "1px 5px", borderRadius: "3px" }}>
+                                Đã sửa thủ công
+                              </span>
+                            )}
+                            {c.verification?.manualReviewNeeded && (
+                              <span
+                                style={{
+                                  fontSize: "0.72rem",
+                                  color: "#92400e",
+                                  backgroundColor: "#fef3c7",
+                                  padding: "1px 6px",
+                                  borderRadius: "3px",
+                                  border: "1px solid #fde68a",
+                                  fontWeight: 600,
+                                }}
+                                title={c.verification.manualReviewReason || "Cần kiểm tra thủ công"}
+                              >
+                                ⚠ Cần kiểm tra thủ công
+                              </span>
+                            )}
+                          </div>
                         </td>
+
                         <td style={{ padding: "10px 12px" }}>
                           {c.changeType === "create" ? (
                             <span style={{ color: "#059669", fontWeight: 700 }}>Tạp chí mới</span>

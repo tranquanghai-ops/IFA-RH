@@ -15,6 +15,7 @@ import {
   buildJournalCandidatesFromSheet,
   DEFAULT_JOURNAL_DRIVE_FOLDER_URL,
   DEFAULT_JOURNAL_SHEET_NAME,
+  DEFAULT_JOURNAL_SPREADSHEET_ID,
   EXPECTED_FILE_NAME,
 } from "../services/journalGoogleSheetService";
 import {
@@ -38,7 +39,7 @@ export const JournalSyncModal: React.FC<JournalSyncModalProps> = ({
   user,
   onSyncComplete,
 }) => {
-  const [sheetId, setSheetId] = useState("");
+  const [sheetId, setSheetId] = useState(DEFAULT_JOURNAL_SPREADSHEET_ID);
   const [sheetName, setSheetName] = useState(DEFAULT_JOURNAL_SHEET_NAME);
   const [lastSettings, setLastSettings] = useState<JournalSyncSettings | null>(null);
 
@@ -51,6 +52,7 @@ export const JournalSyncModal: React.FC<JournalSyncModalProps> = ({
     updatedCount: number;
     unchangedCount: number;
     skippedDuplicates: number;
+    manualReviewCount: number;
     warnings: string[];
     sampleCandidates: JournalCandidate[];
   } | null>(null);
@@ -66,6 +68,9 @@ export const JournalSyncModal: React.FC<JournalSyncModalProps> = ({
           setLastSettings(settings);
           if (settings.sheetId) setSheetId(settings.sheetId);
           if (settings.sheetName) setSheetName(settings.sheetName);
+        } else {
+          setSheetId(DEFAULT_JOURNAL_SPREADSHEET_ID);
+          setSheetName(DEFAULT_JOURNAL_SHEET_NAME);
         }
         setIsLoadingSettings(false);
       });
@@ -111,8 +116,9 @@ export const JournalSyncModal: React.FC<JournalSyncModalProps> = ({
         updatedCount: analysis.updatedCount,
         unchangedCount: analysis.unchangedCount,
         skippedDuplicates: analysis.skippedDuplicates,
+        manualReviewCount: sheetData.manualReviewCount,
         warnings: sheetData.warnings,
-        sampleCandidates: analysis.candidatesToCreate.slice(0, 15),
+        sampleCandidates: analysis.candidatesToCreate.slice(0, 30),
       });
     } catch (err: any) {
       setCheckError(err.message || "Không thể nạp dữ liệu từ Google Sheets.");
@@ -134,7 +140,9 @@ export const JournalSyncModal: React.FC<JournalSyncModalProps> = ({
       });
 
       setSyncOutcome(
-        `Đã đưa thành công ${res.newCandidatesCount} tạp chí mới và ${res.updatedCandidatesCount} yêu cầu cập nhật vào Hàng chờ duyệt!`
+        `Đã đưa thành công ${res.newCandidatesCount} tạp chí mới và ${res.updatedCandidatesCount} yêu cầu cập nhật vào Hàng chờ duyệt!${
+          res.manualReviewCount > 0 ? ` (Bao gồm ${res.manualReviewCount} hồ sơ cần Admin kiểm tra thủ công).` : ""
+        }`
       );
       onSyncComplete();
     } catch (err: any) {
@@ -411,6 +419,12 @@ export const JournalSyncModal: React.FC<JournalSyncModalProps> = ({
                     {previewResult.skippedDuplicates}
                   </div>
                 </div>
+                <div style={{ backgroundColor: "#fffbeb", padding: "10px 14px", borderRadius: "8px", border: "1px solid #fde68a" }}>
+                  <div style={{ fontSize: "0.75rem", color: "#b45309", fontWeight: 600 }}>Cần kiểm tra</div>
+                  <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "#b45309" }}>
+                    {previewResult.manualReviewCount}
+                  </div>
+                </div>
               </div>
 
               {/* Sample list of items that will be queued */}
@@ -439,6 +453,26 @@ export const JournalSyncModal: React.FC<JournalSyncModalProps> = ({
                       <tr key={c.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
                         <td style={{ padding: "8px 10px" }}>
                           <span style={{ fontWeight: 700 }}>{c.journalId}</span>: {c.name}
+                          {c.verification?.manualReviewNeeded && (
+                            <span
+                              style={{
+                                marginLeft: "6px",
+                                fontSize: "0.72rem",
+                                padding: "1px 6px",
+                                borderRadius: "4px",
+                                backgroundColor: "#fef3c7",
+                                color: "#92400e",
+                                fontWeight: 600,
+                                border: "1px solid #fde68a",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "3px",
+                              }}
+                              title={c.verification.manualReviewReason || "Cần kiểm tra thủ công"}
+                            >
+                              Cần kiểm tra
+                            </span>
+                          )}
                         </td>
                         <td style={{ padding: "8px 10px" }}>
                           {c.changeType === "create" ? (
@@ -460,6 +494,7 @@ export const JournalSyncModal: React.FC<JournalSyncModalProps> = ({
             </div>
           )}
         </div>
+
 
         {/* Footer */}
         <div

@@ -55,6 +55,9 @@ export interface JournalVerification {
   sourceReference?: string;
   notes?: string;
   schemaVersion: number;
+  manualReviewNeeded?: boolean;
+  manualReviewReason?: string;
+  confidenceLevel?: string;
 }
 
 export interface Journal {
