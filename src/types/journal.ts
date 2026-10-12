@@ -119,3 +119,70 @@ export interface JournalImportResult {
   importedBy: string;
   schemaVersion: number;
 }
+
+export type JournalCandidateStatus = "pending" | "approved" | "rejected" | "needs_review";
+
+export type JournalCandidateChangeType = "create" | "update";
+
+export interface JournalFieldDiff {
+  field: string;
+  label: string;
+  oldValue: any;
+  newValue: any;
+}
+
+export interface JournalCandidate {
+  id: string; // Document ID in 'journalCandidates' collection
+  journalId: string; // Stable primary key
+  name: string;
+  englishName?: string;
+  abbreviation?: string;
+  publisher: string;
+  issnPrint?: string;
+  issnOnline?: string;
+  isbn?: string;
+  category: JournalCategory;
+  primaryField: string;
+  fields: string[];
+  website?: string;
+  websiteVerified: boolean;
+  maxScore: number;
+  maxScoreYear: number;
+  scores: JournalScoreItem[];
+  guidelines?: JournalGuidelines;
+  links?: JournalLinkItem[];
+  verification?: JournalVerification;
+  sourceType: "GOOGLE_SHEETS" | "SPARK" | "EXCEL" | "MANUAL";
+  changeType: JournalCandidateChangeType;
+  existingJournalId?: string;
+  diffSummary?: JournalFieldDiff[];
+  status: JournalCandidateStatus;
+  rejectionReason?: string;
+  isManualPreserved?: boolean;
+  unverifiedFields: string[];
+  sheetRowIndex?: number;
+  createdAt: string;
+  updatedAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  publishedJournalId?: string;
+}
+
+export interface JournalSyncSettings {
+  sheetId: string;
+  sheetName: string;
+  folderUrl?: string;
+  autoSyncEnabled?: boolean;
+  lastSyncedAt?: string;
+  lastSyncedBy?: string;
+  lastStats?: {
+    totalRead: number;
+    validRows: number;
+    newCount: number;
+    updatedCount: number;
+    unchangedCount: number;
+    skippedCount: number;
+    errorCount: number;
+  };
+}
+
