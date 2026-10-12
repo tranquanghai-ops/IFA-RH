@@ -17,13 +17,25 @@ import {
   bulkApproveJournalCandidates,
   rejectJournalCandidate,
   markJournalCandidateNeedsReview,
+  getJournalSyncSettings,
+  syncJournalsFromGoogleSheetsToQueue,
+  JournalSyncStageError,
 } from "../services/journalCandidateService";
+import {
+  DEFAULT_JOURNAL_SPREADSHEET_ID,
+  DEFAULT_JOURNAL_SHEET_NAME,
+} from "../services/journalGoogleSheetService";
 import { useAuth } from "../firebase/auth";
 import { JournalCard } from "../components/JournalCard";
 import { JournalDetailModal } from "../components/JournalDetailModal";
 import { JournalFormModal } from "../components/JournalFormModal";
 import { JournalExcelImportModal } from "../components/JournalExcelImportModal";
-import { JournalSyncModal } from "../components/JournalSyncModal";
+import { JournalSourceConfigModal } from "../components/JournalSourceConfigModal";
+import {
+  JournalSyncResultModal,
+  type JournalSyncResultData,
+  type JournalSyncErrorData,
+} from "../components/JournalSyncResultModal";
 import { JournalCandidateReviewModal } from "../components/JournalCandidateReviewModal";
 import {
   BookOpen,
@@ -44,6 +56,7 @@ import {
   CheckSquare,
   Square,
   AlertCircle,
+  Settings,
 } from "lucide-react";
 
 // Default initial seeds matching Quyết định 26/QĐ-HĐGSNN if database is completely empty
@@ -276,9 +289,9 @@ const DEFAULT_SAMPLE_JOURNALS: Journal[] = [
   },
 ];
 
-export type CandidateQueueTab = "today" | "pending" | "needs_review" | "approved" | "rejected" | "all";
+export type CandidateQueueTab = "pending" | "needs_review" | "rejected" | "all";
 
-const isTodayDate = (dateStr?: string | null): boolean => {
+export const isTodayDate = (dateStr?: string | null): boolean => {
   if (!dateStr) return false;
   try {
     const d = new Date(dateStr);
@@ -295,11 +308,10 @@ const isTodayDate = (dateStr?: string | null): boolean => {
 
 export const getJournalCandidateCategory = (
   c: JournalCandidate
-): "today" | "pending" | "needs_review" | "approved" | "rejected" => {
-  if (c.status === "rejected") return "rejected";
+): "pending" | "needs_review" | "rejected" | "approved" => {
   if (c.status === "approved") return "approved";
+  if (c.status === "rejected") return "rejected";
   if (c.status === "needs_review" || c.verification?.manualReviewNeeded) return "needs_review";
-  if (isTodayDate(c.createdAt)) return "today";
   return "pending";
 };
 
@@ -338,8 +350,14 @@ export const JournalDirectoryPage: React.FC = () => {
   const [journalForForm, setJournalForForm] = useState<Journal | null>(null);
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
   const [isImportOpen, setIsImportOpen] = useState<boolean>(false);
-  const [isSyncModalOpen, setIsSyncModalOpen] = useState<boolean>(false);
   const [candidateForReview, setCandidateForReview] = useState<JournalCandidate | null>(null);
+
+  // Direct sync & source configuration state
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [isConfigSourceOpen, setIsConfigSourceOpen] = useState<boolean>(false);
+  const [isSyncResultOpen, setIsSyncResultOpen] = useState<boolean>(false);
+  const [syncResultData, setSyncResultData] = useState<JournalSyncResultData | null>(null);
+  const [syncErrorData, setSyncErrorData] = useState<JournalSyncErrorData | null>(null);
 
   // Subscribe to Firestore journals
   useEffect(() => {
@@ -368,19 +386,21 @@ export const JournalDirectoryPage: React.FC = () => {
     return () => unsub();
   }, [isAdmin]);
 
-  // Calculate candidate non-overlapping counts
+  // Calculate candidate non-overlapping counts for review queue (excluding approved)
   const candidateTabCounts = useMemo(() => {
     const counts: Record<CandidateQueueTab, number> = {
-      today: 0,
       pending: 0,
       needs_review: 0,
-      approved: 0,
       rejected: 0,
-      all: candidates.length,
+      all: 0,
     };
     candidates.forEach((c) => {
+      if (c.status === "approved") return;
       const cat = getJournalCandidateCategory(c);
-      counts[cat]++;
+      if (cat === "rejected") counts.rejected++;
+      else if (cat === "needs_review") counts.needs_review++;
+      else if (cat === "pending") counts.pending++;
+      counts.all++;
     });
     return counts;
   }, [candidates]);
@@ -471,9 +491,12 @@ export const JournalDirectoryPage: React.FC = () => {
     showHidden,
   ]);
 
-  // Filtered candidate items
+  // Filtered candidate items (approved candidates are displayed in Public Directory)
   const filteredCandidates = useMemo(() => {
     return candidates.filter((c) => {
+      // Exclude approved candidates from review queue
+      if (c.status === "approved") return false;
+
       // Tab filter
       if (candidateFilterTab !== "all") {
         const cat = getJournalCandidateCategory(c);
@@ -552,6 +575,57 @@ export const JournalDirectoryPage: React.FC = () => {
     await setJournalStatus(journal.id, nextStatus, { uid: user.uid, email: user.email || "" });
   };
 
+  // Direct Google Sheets Synchronization (Immediate execution using saved settings)
+  const handleDirectSync = async () => {
+    if (!user || isSyncing) return;
+    setIsSyncing(true);
+    setSyncErrorData(null);
+    setSyncResultData(null);
+
+    try {
+      const savedSettings = await getJournalSyncSettings();
+      const sheetId = savedSettings?.sheetId || DEFAULT_JOURNAL_SPREADSHEET_ID;
+      const sheetName = savedSettings?.sheetName || DEFAULT_JOURNAL_SHEET_NAME;
+
+      const res = await syncJournalsFromGoogleSheetsToQueue({
+        sheetId,
+        sheetName,
+        user: { uid: user.uid, email: user.email || "" },
+      });
+
+      setSyncResultData({
+        totalRead: res.totalRead,
+        newCandidatesCount: res.newCandidatesCount,
+        updatedCandidatesCount: res.updatedCandidatesCount,
+        unchangedCount: res.unchangedCount,
+        skippedDuplicates: res.skippedDuplicates,
+        manualReviewCount: res.manualReviewCount,
+        warnings: res.warnings,
+        batchId: res.batchId,
+      });
+      setIsSyncResultOpen(true);
+    } catch (err: any) {
+      if (err instanceof JournalSyncStageError) {
+        setSyncErrorData({
+          message: err.message,
+          stage: err.stage,
+          collectionName: err.collectionName,
+          operationType: err.operationType,
+          userSummary: err.userSummary,
+          documentId: err.documentId,
+        });
+      } else {
+        setSyncErrorData({
+          message: err.message || "Đồng bộ Google Sheets thất bại.",
+          userSummary: "Lỗi kết nối hoặc đọc dữ liệu từ Google Sheets",
+        });
+      }
+      setIsSyncResultOpen(true);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   return (
     <div className="journal-directory-page" style={{ padding: "20px 24px", maxWidth: "1400px", margin: "0 auto" }}>
       {/* Top Banner & Header */}
@@ -580,50 +654,62 @@ export const JournalDirectoryPage: React.FC = () => {
 
         {/* Admin Action Toolbar */}
         {isAdmin && (
-          <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+            {/* Primary Action: Direct Sync */}
             <button
-              onClick={() => setIsSyncModalOpen(true)}
+              onClick={handleDirectSync}
+              disabled={isSyncing}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
-                gap: "6px",
-                padding: "8px 14px",
-                backgroundColor: "#f0fdf4",
-                border: "1px solid #bbf7d0",
+                gap: "8px",
+                height: "38px",
+                padding: "0 16px",
+                backgroundColor: "#1e3a8a",
+                border: "none",
                 borderRadius: "6px",
-                color: "#166534",
-                fontSize: "0.85rem",
+                color: "#ffffff",
+                fontSize: "0.86rem",
                 fontWeight: 600,
-                cursor: "pointer",
+                cursor: isSyncing ? "not-allowed" : "pointer",
+                opacity: isSyncing ? 0.75 : 1,
                 boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
+                transition: "all 0.15s ease",
               }}
-              title="Đồng bộ dữ liệu điều tra từ Google Sheets của Khoa"
+              title="Đồng bộ ngay từ Google Sheets theo cấu hình đã lưu"
             >
-              <UploadCloud size={16} />
-              Đồng bộ Google Sheets
+              <RefreshCw
+                size={15}
+                style={{
+                  animation: isSyncing ? "spin 1s linear infinite" : undefined,
+                }}
+              />
+              <span>{isSyncing ? "Đang đồng bộ..." : "Đồng bộ Google Sheets"}</span>
             </button>
 
+            {/* Minor Action: Source Config (Gear Icon) */}
             <button
-              onClick={() => setIsImportOpen(true)}
+              onClick={() => setIsConfigSourceOpen(true)}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
-                gap: "6px",
-                padding: "8px 14px",
+                justifyContent: "center",
+                height: "38px",
+                width: "38px",
                 backgroundColor: "#ffffff",
                 border: "1px solid #cbd5e1",
                 borderRadius: "6px",
-                color: "#1e3a8a",
-                fontSize: "0.85rem",
-                fontWeight: 600,
+                color: "#475569",
                 cursor: "pointer",
                 boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
+                transition: "all 0.15s ease",
               }}
+              title="Cấu hình nguồn Google Sheets (Spreadsheet ID, Tên tab)"
             >
-              <Upload size={16} />
-              Nhập Excel
+              <Settings size={16} />
             </button>
 
+            {/* Secondary Action: Add Journal */}
             <button
               onClick={() => {
                 setJournalForForm(null);
@@ -633,25 +719,27 @@ export const JournalDirectoryPage: React.FC = () => {
                 display: "inline-flex",
                 alignItems: "center",
                 gap: "6px",
-                padding: "8px 16px",
-                backgroundColor: "#1e3a8a",
-                border: "none",
+                height: "38px",
+                padding: "0 16px",
+                backgroundColor: "#ffffff",
+                border: "1px solid #cbd5e1",
                 borderRadius: "6px",
-                color: "#ffffff",
-                fontSize: "0.85rem",
+                color: "#1e3a8a",
+                fontSize: "0.86rem",
                 fontWeight: 600,
                 cursor: "pointer",
                 boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
+                transition: "all 0.15s ease",
               }}
             >
               <Plus size={16} />
-              Thêm tạp chí
+              <span>Thêm tạp chí</span>
             </button>
           </div>
         )}
       </div>
 
-      {/* Admin View Mode Switcher: Công khai vs Hàng chờ duyệt */}
+      {/* Admin View Mode Switcher: Danh mục Công khai vs Hàng chờ duyệt */}
       {isAdmin && (
         <div
           style={{
@@ -679,10 +767,23 @@ export const JournalDirectoryPage: React.FC = () => {
               fontSize: "0.88rem",
               cursor: "pointer",
               boxShadow: adminViewMode === "public_directory" ? "0 1px 3px rgba(0, 0, 0, 0.1)" : "none",
+              transition: "all 0.15s ease",
             }}
           >
             <BookOpen size={16} />
-            Danh mục Công khai ({journals.length})
+            <span>Danh mục Công khai</span>
+            <span
+              style={{
+                backgroundColor: adminViewMode === "public_directory" ? "#eff6ff" : "#e2e8f0",
+                color: adminViewMode === "public_directory" ? "#1e40af" : "#64748b",
+                padding: "1px 7px",
+                borderRadius: "10px",
+                fontSize: "0.75rem",
+                fontWeight: 700,
+              }}
+            >
+              {journals.length}
+            </span>
           </button>
 
           <button
@@ -700,22 +801,23 @@ export const JournalDirectoryPage: React.FC = () => {
               fontSize: "0.88rem",
               cursor: "pointer",
               boxShadow: adminViewMode === "queue" ? "0 1px 3px rgba(0, 0, 0, 0.1)" : "none",
+              transition: "all 0.15s ease",
             }}
           >
-            <Sparkles size={16} color="#2563eb" />
-            Hàng chờ Duyệt (Spark)
-            {candidateTabCounts.pending + candidateTabCounts.today > 0 && (
+            <Clock size={16} />
+            <span>Hàng chờ duyệt</span>
+            {candidateTabCounts.pending + candidateTabCounts.needs_review > 0 && (
               <span
                 style={{
-                  backgroundColor: "#dc2626",
-                  color: "#ffffff",
-                  fontSize: "0.75rem",
-                  padding: "1px 6px",
+                  backgroundColor: adminViewMode === "queue" ? "#eff6ff" : "#e2e8f0",
+                  color: adminViewMode === "queue" ? "#1e40af" : "#64748b",
+                  padding: "1px 7px",
                   borderRadius: "10px",
+                  fontSize: "0.75rem",
                   fontWeight: 700,
                 }}
               >
-                {candidateTabCounts.pending + candidateTabCounts.today}
+                {candidateTabCounts.pending + candidateTabCounts.needs_review}
               </span>
             )}
           </button>
@@ -731,57 +833,62 @@ export const JournalDirectoryPage: React.FC = () => {
           <div
             style={{
               display: "flex",
-              borderBottom: "1px solid #e2e8f0",
               gap: "6px",
+              padding: "4px",
+              backgroundColor: "#f1f5f9",
+              borderRadius: "8px",
+              width: "fit-content",
               flexWrap: "wrap",
             }}
           >
             {(
               [
-                { id: "pending", label: "Chờ duyệt", count: candidateTabCounts.pending, color: "#2563eb" },
-                { id: "today", label: "Mới hôm nay", count: candidateTabCounts.today, color: "#16a34a" },
-                { id: "needs_review", label: "Cần hiệu chỉnh", count: candidateTabCounts.needs_review, color: "#d97706" },
-                { id: "approved", label: "Đã duyệt", count: candidateTabCounts.approved, color: "#059669" },
-                { id: "rejected", label: "Từ chối", count: candidateTabCounts.rejected, color: "#dc2626" },
-                { id: "all", label: "Tất cả", count: candidateTabCounts.all, color: "#475569" },
+                { id: "pending", label: "Chờ duyệt", count: candidateTabCounts.pending },
+                { id: "needs_review", label: "Cần hiệu chỉnh", count: candidateTabCounts.needs_review },
+                { id: "rejected", label: "Từ chối", count: candidateTabCounts.rejected },
+                { id: "all", label: "Tất cả", count: candidateTabCounts.all },
               ] as const
-            ).map((t) => (
-              <button
-                key={t.id}
-                onClick={() => {
-                  setCandidateFilterTab(t.id);
-                  setSelectedCandidateIds([]);
-                }}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  padding: "10px 16px",
-                  background: "none",
-                  border: "none",
-                  borderBottom: candidateFilterTab === t.id ? `3px solid ${t.color}` : "3px solid transparent",
-                  color: candidateFilterTab === t.id ? t.color : "#64748b",
-                  fontWeight: 700,
-                  fontSize: "0.88rem",
-                  cursor: "pointer",
-                  marginBottom: "-1px",
-                }}
-              >
-                <span>{t.label}</span>
-                <span
+            ).map((t) => {
+              const isActive = candidateFilterTab === t.id;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                    setCandidateFilterTab(t.id);
+                    setSelectedCandidateIds([]);
+                  }}
                   style={{
-                    backgroundColor: candidateFilterTab === t.id ? "#eff6ff" : "#f1f5f9",
-                    color: candidateFilterTab === t.id ? t.color : "#64748b",
-                    padding: "1px 6px",
-                    borderRadius: "10px",
-                    fontSize: "0.75rem",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    padding: "7px 14px",
+                    borderRadius: "6px",
+                    border: "none",
+                    backgroundColor: isActive ? "#ffffff" : "transparent",
+                    color: isActive ? "#0f172a" : "#64748b",
                     fontWeight: 700,
+                    fontSize: "0.86rem",
+                    cursor: "pointer",
+                    boxShadow: isActive ? "0 1px 3px rgba(0, 0, 0, 0.1)" : "none",
+                    transition: "all 0.15s ease",
                   }}
                 >
-                  {t.count}
-                </span>
-              </button>
-            ))}
+                  <span>{t.label}</span>
+                  <span
+                    style={{
+                      backgroundColor: isActive ? "#eff6ff" : "#e2e8f0",
+                      color: isActive ? "#1e40af" : "#64748b",
+                      padding: "1px 7px",
+                      borderRadius: "10px",
+                      fontSize: "0.75rem",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {t.count}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
           {/* Queue Filter & Actions Bar */}
@@ -822,7 +929,7 @@ export const JournalDirectoryPage: React.FC = () => {
 
             {/* Bulk actions */}
             <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-              {(candidateFilterTab === "pending" || candidateFilterTab === "today") && selectedCandidateIds.length > 0 && (
+              {candidateFilterTab === "pending" && selectedCandidateIds.length > 0 && (
                 <button
                   onClick={handleBulkApprove}
                   disabled={isBulkApproving}
@@ -846,26 +953,6 @@ export const JournalDirectoryPage: React.FC = () => {
                     : `Duyệt & Công bố (${selectedCandidateIds.length} mục)`}
                 </button>
               )}
-
-              <button
-                onClick={() => setIsSyncModalOpen(true)}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  padding: "7px 14px",
-                  backgroundColor: "#ffffff",
-                  border: "1px solid #cbd5e1",
-                  borderRadius: "6px",
-                  color: "#1e3a8a",
-                  fontSize: "0.85rem",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
-              >
-                <RefreshCw size={14} />
-                Đồng bộ Sheet mới
-              </button>
             </div>
           </div>
 
@@ -919,11 +1006,29 @@ export const JournalDirectoryPage: React.FC = () => {
                           />
                         </td>
                         <td style={{ padding: "10px 12px" }}>
-                          <div style={{ fontWeight: 700, color: "#0f172a" }}>{c.journalId}</div>
-                          <div style={{ color: "#334155" }}>{c.name}</div>
-                          <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", marginTop: "3px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            <span style={{ fontWeight: 700, color: "#0f172a" }}>{c.journalId}</span>
+                            {isTodayDate(c.createdAt) && (
+                              <span
+                                style={{
+                                  fontSize: "0.68rem",
+                                  fontWeight: 700,
+                                  color: "#166534",
+                                  backgroundColor: "#dcfce7",
+                                  border: "1px solid #bbf7d0",
+                                  padding: "0 5px",
+                                  borderRadius: "4px",
+                                  letterSpacing: "0.02em",
+                                }}
+                              >
+                                MỚI
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ color: "#334155", marginTop: "2px" }}>{c.name}</div>
+                          <div style={{ display: "flex", gap: "4px", flexWrap: "wrap", marginTop: "4px" }}>
                             {c.isManualPreserved && (
-                              <span style={{ fontSize: "0.72rem", color: "#854d0e", backgroundColor: "#fefce8", padding: "1px 5px", borderRadius: "3px" }}>
+                              <span style={{ fontSize: "0.72rem", color: "#854d0e", backgroundColor: "#fefce8", padding: "1px 5px", borderRadius: "3px", border: "1px solid #fef08a", fontWeight: 600 }}>
                                 Đã sửa thủ công
                               </span>
                             )}
@@ -940,7 +1045,7 @@ export const JournalDirectoryPage: React.FC = () => {
                                 }}
                                 title={c.verification.manualReviewReason || "Cần kiểm tra thủ công"}
                               >
-                                ⚠ Cần kiểm tra thủ công
+                                ⚠ Cần kiểm tra
                               </span>
                             )}
                           </div>
@@ -965,11 +1070,9 @@ export const JournalDirectoryPage: React.FC = () => {
                           </span>
                         </td>
                         <td style={{ padding: "10px 12px" }}>
-                          {c.status === "approved" ? (
-                            <span style={{ color: "#166534", fontWeight: 600 }}>Đã duyệt</span>
-                          ) : c.status === "rejected" ? (
+                          {c.status === "rejected" ? (
                             <span style={{ color: "#991b1b", fontWeight: 600 }}>Từ chối</span>
-                          ) : c.status === "needs_review" ? (
+                          ) : c.status === "needs_review" || c.verification?.manualReviewNeeded ? (
                             <span style={{ color: "#854d0e", fontWeight: 600 }}>Cần hiệu chỉnh</span>
                           ) : (
                             <span style={{ color: "#1e40af", fontWeight: 600 }}>Chờ duyệt</span>
@@ -1014,7 +1117,7 @@ export const JournalDirectoryPage: React.FC = () => {
                 Không có bản ghi nào trong mục này
               </h3>
               <p style={{ margin: "4px 0 0 0", fontSize: "0.82rem" }}>
-                Bấm "Đồng bộ Sheet mới" để nạp dữ liệu điều tra từ Google Sheets của Spark.
+                Bấm "Đồng bộ Google Sheets" ở đầu trang để nạp dữ liệu điều tra từ Spark.
               </p>
             </div>
           )}
@@ -1404,17 +1507,24 @@ export const JournalDirectoryPage: React.FC = () => {
         />
       )}
 
-      {isSyncModalOpen && user && (
-        <JournalSyncModal
-          isOpen={isSyncModalOpen}
-          onClose={() => setIsSyncModalOpen(false)}
-          user={{ uid: user.uid, email: user.email || "" }}
-          onSyncComplete={() => {
-            setAdminViewMode("queue");
-            setCandidateFilterTab("pending");
-          }}
-        />
-      )}
+      {/* Google Sheets Source Configuration Modal (Gear Icon) */}
+      <JournalSourceConfigModal
+        isOpen={isConfigSourceOpen}
+        onClose={() => setIsConfigSourceOpen(false)}
+      />
+
+      {/* Google Sheets Sync Result & Stage Diagnostics Modal */}
+      <JournalSyncResultModal
+        isOpen={isSyncResultOpen}
+        onClose={() => setIsSyncResultOpen(false)}
+        result={syncResultData}
+        error={syncErrorData}
+        onGoToQueue={() => {
+          setAdminViewMode("queue");
+          setCandidateFilterTab("pending");
+        }}
+        onRetry={handleDirectSync}
+      />
 
       {candidateForReview && user && (
         <JournalCandidateReviewModal
