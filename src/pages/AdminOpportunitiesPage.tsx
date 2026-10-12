@@ -66,6 +66,9 @@ export const AdminOpportunitiesPage: React.FC = () => {
   if (!profile) return null;
 
   const filtered = opportunities.filter((opp) => {
+    // Only display opportunities created manually by Admin / Owner (strictly exclude AI/SPARK)
+    if (opp.sourceType === "SPARK") return false;
+
     const matchStatus = statusFilter === "all" ? true : opp.status === statusFilter;
     const matchSearch =
       searchQuery.trim() === "" ||
@@ -214,7 +217,7 @@ export const AdminOpportunitiesPage: React.FC = () => {
         <div>
           <h1 style={{ fontSize: "1.6rem", color: "var(--primary)" }}>Quản lý Cơ hội NCKH & Hội thảo</h1>
           <p style={{ color: "var(--muted)", fontSize: "0.9rem", marginTop: 4 }}>
-            Quản trị danh sách hội thảo, Call for Papers, tạp chí công bố ra trang chủ cho giảng viên
+            Quản trị danh sách hội thảo và công bố học thuật do Quản trị viên đăng thủ công
           </p>
         </div>
 

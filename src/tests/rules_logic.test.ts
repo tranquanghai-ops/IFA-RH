@@ -185,5 +185,49 @@ describe("RULES Logic & Role Permissions Verification", () => {
     expect(isValidEnhancedFields({ topicsDetailed: new Array(51).fill("Topic") })).toBe(false);
     expect(isValidEnhancedFields({ topicsDetailed: "Not a list" as any })).toBe(false);
   });
+
+  it("should validate opportunity candidate statuses including needs_review, optional updatedBy, and empty deadline", () => {
+    const isValidStatus = (status: string) => ['pending', 'approved', 'rejected', 'needs_review'].includes(status);
+    expect(isValidStatus('pending')).toBe(true);
+    expect(isValidStatus('approved')).toBe(true);
+    expect(isValidStatus('rejected')).toBe(true);
+    expect(isValidStatus('needs_review')).toBe(true);
+    expect(isValidStatus('draft')).toBe(false);
+    expect(isValidStatus('archived')).toBe(false);
+
+    const isValidDeadline = (deadline: string) => typeof deadline === 'string' && deadline.length >= 0 && deadline.length <= 50;
+    expect(isValidDeadline("")).toBe(true);
+    expect(isValidDeadline("2026-12-31")).toBe(true);
+    expect(isValidDeadline("x".repeat(51))).toBe(false);
+
+    const isValidUpdatedBy = (data: { updatedBy?: any }) => {
+      if (!('updatedBy' in data)) return true;
+      return typeof data.updatedBy === 'string' && data.updatedBy.length >= 0 && data.updatedBy.length <= 100;
+    };
+    expect(isValidUpdatedBy({})).toBe(true);
+    expect(isValidUpdatedBy({ updatedBy: "admin@tdtu.edu.vn" })).toBe(true);
+    expect(isValidUpdatedBy({ updatedBy: "" })).toBe(true);
+    expect(isValidUpdatedBy({ updatedBy: "x".repeat(101) })).toBe(false);
+    expect(isValidUpdatedBy({ updatedBy: 123 })).toBe(false);
+  });
+
+  it("should validate import batch skippedCount and systemConfig keys capacity", () => {
+    const isValidImportBatch = (data: { skippedCount?: any }) => {
+      if (!('skippedCount' in data)) return true;
+      return Number.isInteger(data.skippedCount) && data.skippedCount >= 0;
+    };
+
+    expect(isValidImportBatch({})).toBe(true);
+    expect(isValidImportBatch({ skippedCount: 0 })).toBe(true);
+    expect(isValidImportBatch({ skippedCount: 15 })).toBe(true);
+    expect(isValidImportBatch({ skippedCount: -1 })).toBe(false);
+    expect(isValidImportBatch({ skippedCount: 2.5 })).toBe(false);
+    expect(isValidImportBatch({ skippedCount: "5" as any })).toBe(false);
+
+    const isValidSystemConfigKeys = (keys: string[]) => keys.length <= 50;
+    expect(isValidSystemConfigKeys(new Array(30).fill("k"))).toBe(true);
+    expect(isValidSystemConfigKeys(new Array(50).fill("k"))).toBe(true);
+    expect(isValidSystemConfigKeys(new Array(51).fill("k"))).toBe(false);
+  });
 });
 

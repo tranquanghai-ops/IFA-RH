@@ -78,9 +78,10 @@ rules_version = '2';
 // Collection: opportunityCandidates
 // Document ID: candidateId (auto-generated)
 // Fields:
-//   - Similar to opportunities, with status in ['pending', 'approved', 'rejected'],
+//   - Similar to opportunities, with status in ['pending', 'approved', 'rejected', 'needs_review'],
 //     sourceType == 'SPARK', normalizedTitle: string (required, 1-500 chars),
 //     rejectionReason: string (optional, max 1000 chars), reviewedBy: string (optional),
+//     updatedBy: string (optional, max 100 chars),
 //     publishedOpportunityId: string (optional, max 100 chars),
 //     recalledAt: string | timestamp (optional, max 50 chars), recalledBy: string (optional, max 100 chars),
 //     detailedContent, topicsDetailed, publicationFee, registrationFee, feeStatus, feeSourceUrl.
@@ -184,6 +185,7 @@ rules_version = '2';
 //   - totalRows: int (required, >= 0)
 //   - successCount: int (required, >= 0)
 //   - errorCount: int (required, >= 0)
+//   - skippedCount: int (optional, >= 0)
 //   - errors: list (optional, max 100 items)
 //   - createdAt: timestamp | string (optional, max 50 chars)
 //
@@ -444,7 +446,7 @@ service cloud.firestore {
           'normalizedTitle', 'createdAt', 'updatedAt',
           'publicationFee', 'registrationFee', 'feeStatus', 'feeSourceUrl',
           'detailedContent', 'topicsDetailed',
-          'publishedOpportunityId', 'recalledAt', 'recalledBy'
+          'publishedOpportunityId', 'recalledAt', 'recalledBy', 'updatedBy'
         ]) &&
         validString(data.title, 1, 300) &&
         validString(data.organizer, 1, 200) &&
@@ -457,10 +459,10 @@ service cloud.firestore {
         validString(data.topic, 1, 300) &&
         validString(data.field, 1, 200) &&
         validList(data.tags, 30) &&
-        validString(data.deadline, 1, 50) &&
+        validString(data.deadline, 0, 50) &&
         validString(data.content, 1, 50000) &&
         data.sourceType == 'SPARK' &&
-        data.status in ['pending', 'approved', 'rejected'] &&
+        data.status in ['pending', 'approved', 'rejected', 'needs_review'] &&
         validString(data.normalizedTitle, 1, 500) &&
         (validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
         (validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
@@ -492,6 +494,7 @@ service cloud.firestore {
         (!('publishedOpportunityId' in data) || validString(data.publishedOpportunityId, 0, 100)) &&
         (!('recalledAt' in data) || validString(data.recalledAt, 0, 50) || data.recalledAt is timestamp) &&
         (!('recalledBy' in data) || validString(data.recalledBy, 0, 100)) &&
+        (!('updatedBy' in data) || validString(data.updatedBy, 0, 100)) &&
         (!('id' in data) || validString(data.id, 0, 100));
     }
 
@@ -621,7 +624,7 @@ service cloud.firestore {
 
     // Validates systemConfig/{configId} schema and constraints
     function isValidSystemConfig(data) {
-      return data.keys().size() <= 30 &&
+      return data.keys().size() <= 50 &&
         (!('isPublic' in data) || data.isPublic is bool) &&
         (!('updatedAt' in data) || validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp);
     }
@@ -634,7 +637,7 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'id', 'timestamp', 'importedBy', 'fileName', 'type',
-          'totalRows', 'successCount', 'errorCount', 'errors', 'createdAt'
+          'totalRows', 'successCount', 'errorCount', 'skippedCount', 'errors', 'createdAt'
         ]) &&
         validString(data.timestamp, 1, 50) &&
         validString(data.importedBy, 1, 100) &&
@@ -643,6 +646,7 @@ service cloud.firestore {
         data.totalRows is int && data.totalRows >= 0 &&
         data.successCount is int && data.successCount >= 0 &&
         data.errorCount is int && data.errorCount >= 0 &&
+        (!('skippedCount' in data) || (data.skippedCount is int && data.skippedCount >= 0)) &&
         (!('errors' in data) || validList(data.errors, 100)) &&
         (!('createdAt' in data) || validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
         (!('id' in data) || validString(data.id, 0, 100));

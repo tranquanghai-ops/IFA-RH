@@ -447,8 +447,14 @@ function mapRowToCandidateDoc(row, index) {
   const fullPaper = row.fullPaperDeadline && row.fullPaperDeadline !== 'Chưa xác minh' ? row.fullPaperDeadline : '';
   const abstract = row.abstractDeadline && row.abstractDeadline !== 'Chưa xác minh' ? row.abstractDeadline : '';
   const registration = row.registrationDeadline && row.registrationDeadline !== 'Chưa xác minh' ? row.registrationDeadline : '';
-  const event = row.eventDate && row.eventDate !== 'Chưa xác minh' ? row.eventDate : '';
-  const mainDeadline = fullPaper || abstract || registration || '';
+  const mainDeadline =
+    fullPaper ||
+    abstract ||
+    registration ||
+    (event && (event.toLowerCase().includes('định kỳ') || event.toLowerCase().includes('thường xuyên'))
+      ? 'Nhận bài thường xuyên'
+      : '') ||
+    'Nhận bài thường xuyên';
 
   const tagsList = (row.tags || '')
     .split(/[,;]/)

@@ -23,6 +23,7 @@ interface CandidateReviewModalProps {
   onApprove: (cand: OpportunityCandidate) => Promise<void>;
   onReject: (candId: string, candTitle: string, reason: string) => Promise<void>;
   onDelete: (candId: string, candTitle: string) => Promise<void>;
+  onNeedsReview?: (candId: string, candTitle: string, reason: string) => Promise<void>;
 }
 
 export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
@@ -31,9 +32,12 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
   onApprove,
   onReject,
   onDelete,
+  onNeedsReview,
 }) => {
   const [rejecting, setRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  const [needsReviewing, setNeedsReviewing] = useState(false);
+  const [needsReviewReason, setNeedsReviewReason] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -65,6 +69,21 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
       onClose();
     } catch (err: any) {
       setError(err.message || "Lỗi từ chối cơ hội.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirmNeedsReview = async () => {
+    if (!onNeedsReview) return;
+    try {
+      setLoading(true);
+      setError("");
+      await onNeedsReview(candidate.id, candidate.title, needsReviewReason);
+      setNeedsReviewing(false);
+      onClose();
+    } catch (err: any) {
+      setError(err.message || "Lỗi cập nhật trạng thái cần hiệu chỉnh.");
     } finally {
       setLoading(false);
     }
@@ -106,7 +125,7 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
           </div>
 
           <div style={{ display: "flex", gap: 10 }}>
-            {candidate.status === "pending" && !rejecting && (
+            {(candidate.status === "pending" || candidate.status === "needs_review") && !rejecting && !needsReviewing && (
               <>
                 <button
                   type="button"
@@ -117,6 +136,17 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
                   <XCircle size={16} />
                   Từ chối
                 </button>
+                {onNeedsReview && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setNeedsReviewing(true)}
+                    disabled={loading}
+                    style={{ color: "#d97706" }}
+                  >
+                    Cần hiệu chỉnh
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn btn-success btn-sm"
@@ -170,6 +200,41 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
                 type="button"
                 className="btn btn-secondary btn-sm"
                 onClick={() => setRejecting(false)}
+              >
+                Hủy
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Needs review input prompt */}
+        {needsReviewing && (
+          <div style={{ background: "#fffbeb", border: "1px solid #fde68a", padding: 16, borderRadius: 8 }}>
+            <h4 style={{ color: "#92400e", marginBottom: 8 }}>Yêu cầu hiệu chỉnh thông tin</h4>
+            <div className="form-group">
+              <label className="form-label">Ghi chú hiệu chỉnh:</label>
+              <input
+                type="text"
+                className="form-control"
+                value={needsReviewReason}
+                onChange={(e) => setNeedsReviewReason(e.target.value)}
+                placeholder="Ví dụ: Cần bổ sung mức phí chính thức / Cần cập nhật đúng deadline toàn văn..."
+                autoFocus
+              />
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+              <button
+                type="button"
+                className="btn btn-warning btn-sm"
+                onClick={handleConfirmNeedsReview}
+                disabled={loading}
+              >
+                Xác nhận yêu cầu hiệu chỉnh
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setNeedsReviewing(false)}
               >
                 Hủy
               </button>

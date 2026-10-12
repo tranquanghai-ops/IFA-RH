@@ -17,13 +17,12 @@ import {
   type ResearchMatchTarget,
 } from "../utils/researchDedupe";
 import { formatDateVN } from "../utils/date";
-import { addCandidate, runFacultyResearchSyncClient } from "../firebase/firestore";
+import { runFacultyResearchSyncClient } from "../firebase/firestore";
 import { useAuth } from "../firebase/auth";
 import {
   Sparkles,
   CheckCircle2,
   AlertTriangle,
-  Upload,
   Calendar,
   Building,
   RefreshCw,
@@ -181,73 +180,24 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
   const matchedCount = analyzedItems.filter((i) => i.status === "matched").length;
   const duplicateCount = analyzedItems.filter((i) => i.status === "skipped").length;
 
-  // Handle uploading custom JSON file from Spark export
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setErrorMsg("");
-    setSaveResult(null);
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const text = event.target?.result as string;
-        const parsed = JSON.parse(text);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setSourceData(parsed);
-          setSourceName(`Tệp JSON tùy chọn: ${file.name} (${parsed.length} bản ghi)`);
-          setIsLiveSheet(false);
-        } else {
-          setErrorMsg("Tệp JSON không chứa danh sách bản ghi hợp lệ.");
-        }
-      } catch (err: any) {
-        setErrorMsg("Lỗi khi đọc file JSON: " + err.message);
-      }
-    };
-    reader.readAsText(file);
-  };
-
   const handleSyncCommit = async () => {
     if (!profile) return;
     setSaving(true);
     setErrorMsg("");
 
     try {
-      if (isLiveSheet) {
-        // Run full sync engine
-        const outcome = await runFacultyResearchSyncClient(profile, { force: true });
-        if (outcome.skipped) {
-          setErrorMsg(outcome.reason || "Phiên đồng bộ đã bị bỏ qua.");
-        } else {
-          const stats = outcome.stats;
-          setSaveResult({
-            added: stats?.created || 0,
-            updated: stats?.updated || 0,
-            preservedAdmin: stats?.preservedAdmin || 0,
-            matched: stats?.matched || 0,
-            skipped: stats?.duplicates || 0,
-          });
-          onSuccess();
-        }
+      // Run full sync engine directly against Google Sheets
+      const outcome = await runFacultyResearchSyncClient(profile, { force: true });
+      if (outcome.skipped) {
+        setErrorMsg(outcome.reason || "Phiên đồng bộ đã bị bỏ qua.");
       } else {
-        // Uploaded custom dataset
-        let added = 0;
-        let skipped = 0;
-        for (const item of analyzedItems) {
-          if (item.status === "created") {
-            await addCandidate(item.candidate);
-            added++;
-          } else {
-            skipped++;
-          }
-        }
+        const stats = outcome.stats;
         setSaveResult({
-          added,
-          updated: 0,
-          preservedAdmin: 0,
-          matched: 0,
-          skipped,
+          added: stats?.created || 0,
+          updated: stats?.updated || 0,
+          preservedAdmin: stats?.preservedAdmin || 0,
+          matched: stats?.matched || 0,
+          skipped: stats?.duplicates || 0,
         });
         onSuccess();
       }
@@ -333,19 +283,6 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
               <RotateCw size={14} className={loadingSheet ? "spin" : ""} />
               {loadingSheet ? "Đang tải..." : "Tải lại Sheet"}
             </button>
-
-            <label
-              className="btn btn-secondary btn-sm"
-              style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6 }}
-            >
-              <Upload size={14} /> Nạp file JSON
-              <input
-                type="file"
-                accept=".json"
-                style={{ display: "none" }}
-                onChange={handleFileUpload}
-              />
-            </label>
           </div>
         </div>
 

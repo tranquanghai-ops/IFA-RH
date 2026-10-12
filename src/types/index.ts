@@ -92,7 +92,7 @@ export interface Opportunity {
   updatedBy?: string;
 }
 
-export type CandidateStatus = "pending" | "approved" | "rejected";
+export type CandidateStatus = "pending" | "approved" | "rejected" | "needs_review";
 
 export interface OpportunityCandidate {
   id: string;

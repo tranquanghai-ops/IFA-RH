@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useAuth } from "../firebase/auth";
 import {
   fetchOpportunityCandidates,
@@ -6,27 +6,71 @@ import {
   approveCandidate,
   rejectCandidate,
   deleteCandidate,
-  addCandidate,
+  markCandidateNeedsReview,
 } from "../firebase/firestore";
 import type { OpportunityCandidate, Opportunity } from "../types";
 import { CandidateReviewModal } from "../components/CandidateReviewModal";
 import { FacultyResearchSyncModal } from "../components/FacultyResearchSyncModal";
 import { FacultyResearchSyncDashboard } from "../components/FacultyResearchSyncDashboard";
-import { formatDateVN } from "../utils/date";
+import { formatDateVN, parseDateSafe, getOpportunityDeadlineInfo } from "../utils/date";
 import { isDuplicateOpportunity } from "../utils/dedupe";
 import {
   Sparkles,
   LayoutGrid,
   List,
   CheckCircle,
-  XCircle,
-  Trash2,
   ExternalLink,
   AlertTriangle,
   Search,
-  Filter,
-  Upload,
+  Calendar,
+  Clock,
 } from "lucide-react";
+
+export type CandidateFilterTab =
+  | "today"
+  | "pending"
+  | "needs_review"
+  | "approved"
+  | "expired"
+  | "rejected"
+  | "all";
+
+const isTodayDate = (dateStr?: string | null): boolean => {
+  if (!dateStr) return false;
+  const d = parseDateSafe(dateStr);
+  if (!d) return false;
+  const now = new Date();
+  return (
+    d.getDate() === now.getDate() &&
+    d.getMonth() === now.getMonth() &&
+    d.getFullYear() === now.getFullYear()
+  );
+};
+
+export const getCandidatePrimaryCategory = (
+  c: OpportunityCandidate
+): "today" | "pending" | "needs_review" | "approved" | "expired" | "rejected" => {
+  if (c.status === "rejected") return "rejected";
+  if (c.status === "approved") return "approved";
+  if (c.sheetStatus === "HẾT HẠN" || getOpportunityDeadlineInfo(c).isExpired) {
+    return "expired";
+  }
+  if (c.status === "needs_review") return "needs_review";
+  if (isTodayDate(c.createdAt) || isTodayDate(c.discoveredAt)) {
+    return "today";
+  }
+  return "pending";
+};
+
+const FILTER_TABS: Array<{ id: CandidateFilterTab; label: string }> = [
+  { id: "today", label: "Mới hôm nay" },
+  { id: "pending", label: "Chờ duyệt" },
+  { id: "needs_review", label: "Cần hiệu chỉnh" },
+  { id: "approved", label: "Đã duyệt" },
+  { id: "expired", label: "Hết hạn" },
+  { id: "rejected", label: "Từ chối" },
+  { id: "all", label: "Tất cả" },
+];
 
 export const AdminCandidatesPage: React.FC = () => {
   const { profile } = useAuth();
@@ -34,7 +78,7 @@ export const AdminCandidatesPage: React.FC = () => {
   const [publishedOpps, setPublishedOpps] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"grid" | "table">("table");
-  const [statusFilter, setStatusFilter] = useState<"pending" | "approved" | "rejected" | "all">("pending");
+  const [activeTab, setActiveTab] = useState<CandidateFilterTab>("pending");
   const [searchQuery, setSearchQuery] = useState("");
 
   // Modals & Actions
@@ -62,23 +106,67 @@ export const AdminCandidatesPage: React.FC = () => {
     loadData();
   }, []);
 
+  // Compute non-overlapping counts for each tab
+  const tabCounts = useMemo(() => {
+    const counts: Record<CandidateFilterTab, number> = {
+      today: 0,
+      pending: 0,
+      needs_review: 0,
+      approved: 0,
+      expired: 0,
+      rejected: 0,
+      all: candidates.length,
+    };
+    for (const cand of candidates) {
+      const cat = getCandidatePrimaryCategory(cand);
+      counts[cat]++;
+    }
+    return counts;
+  }, [candidates]);
+
+  // Filter candidates based on activeTab and searchQuery
+  const filteredCandidates = useMemo(() => {
+    return candidates.filter((cand) => {
+      // 1. Tab filter
+      if (activeTab !== "all") {
+        const cat = getCandidatePrimaryCategory(cand);
+        if (cat !== activeTab) return false;
+      }
+      // 2. Search query filter
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchTitle = cand.title.toLowerCase().includes(q);
+        const matchOrg = cand.organizer.toLowerCase().includes(q);
+        const matchField = !!(cand.field && cand.field.toLowerCase().includes(q));
+        const matchLevel = !!(cand.level && cand.level.toLowerCase().includes(q));
+        const matchType = !!(cand.type && cand.type.toLowerCase().includes(q));
+        if (!matchTitle && !matchOrg && !matchField && !matchLevel && !matchType) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [candidates, activeTab, searchQuery]);
+
   if (!profile) return null;
 
   const handleBulkApproveOpen = async () => {
-    const openPending = candidates.filter(
-      (c) => c.status === "pending" && c.sheetStatus !== "HẾT HẠN"
-    );
-    if (openPending.length === 0) return;
+    const openCandidates = candidates.filter((c) => {
+      const cat = getCandidatePrimaryCategory(c);
+      return cat === "pending" || cat === "today";
+    });
+    if (openCandidates.length === 0) return;
     if (
       !window.confirm(
-        `Duyệt và xuất bản ${openPending.length} cơ hội đang mở sang Cổng NCKH công khai?`
+        `Duyệt và xuất bản ${openCandidates.length} cơ hội đang mở sang Cổng NCKH công khai?`
       )
-    )
+    ) {
       return;
+    }
 
     setBulkApproving(true);
     try {
-      for (const cand of openPending) {
+      for (const cand of openCandidates) {
         await approveCandidate(cand, {
           uid: profile.uid,
           email: profile.email,
@@ -93,15 +181,6 @@ export const AdminCandidatesPage: React.FC = () => {
       setBulkApproving(false);
     }
   };
-
-  const filteredCandidates = candidates.filter((c) => {
-    const matchStatus = statusFilter === "all" ? true : c.status === statusFilter;
-    const matchSearch =
-      searchQuery.trim() === "" ||
-      c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.organizer.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchStatus && matchSearch;
-  });
 
   return (
     <div className="app-container">
@@ -123,11 +202,11 @@ export const AdminCandidatesPage: React.FC = () => {
               className="badge"
               style={{ background: "#f3e8ff", color: "#6b21a8", fontWeight: 700, padding: "4px 8px" }}
             >
-              CHỜ DUYỆT
+              SPAK / AI
             </span>
           </div>
           <p style={{ color: "var(--muted)", fontSize: "0.9rem", marginTop: 4 }}>
-            Các hội thảo và cơ hội NCKH do hệ thống tự động phát hiện, đang chờ duyệt.
+            Quản trị và kiểm duyệt toàn bộ dữ liệu hội thảo, cơ hội NCKH do hệ thống AI đồng bộ từ Google Sheets.
           </p>
         </div>
 
@@ -141,7 +220,10 @@ export const AdminCandidatesPage: React.FC = () => {
             <Sparkles size={14} /> Đồng bộ từ IFA Faculty Research
           </button>
 
-          {candidates.some((c) => c.status === "pending" && c.sheetStatus !== "HẾT HẠN") && (
+          {candidates.some((c) => {
+            const cat = getCandidatePrimaryCategory(c);
+            return cat === "pending" || cat === "today";
+          }) && (
             <button
               type="button"
               className="btn btn-secondary btn-sm"
@@ -153,14 +235,6 @@ export const AdminCandidatesPage: React.FC = () => {
               {bulkApproving ? "Đang xuất bản..." : "Duyệt tất cả đang mở"}
             </button>
           )}
-
-          <a
-            href="#admin_import"
-            className="btn btn-secondary btn-sm"
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-          >
-            <Upload size={14} /> Import file Spark
-          </a>
 
           {/* View Switcher */}
           <div style={{ display: "flex", gap: 6, background: "#e2e8f0", padding: 4, borderRadius: 6 }}>
@@ -190,10 +264,11 @@ export const AdminCandidatesPage: React.FC = () => {
         onOpenSyncModal={() => setIsSyncModalOpen(true)}
       />
 
-      {/* Filter and Search Bar */}
+      {/* Search Bar & Horizontal Responsive Filter Buttons */}
       <div className="card" style={{ marginBottom: 20, padding: 16 }}>
-        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
-          <div style={{ position: "relative", flex: "1 1 280px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Search Box */}
+          <div style={{ position: "relative", width: "100%" }}>
             <Search
               size={18}
               color="var(--muted)"
@@ -203,26 +278,61 @@ export const AdminCandidatesPage: React.FC = () => {
               type="text"
               className="form-control"
               style={{ paddingLeft: 38 }}
-              placeholder="Tìm kiếm ứng viên theo tiêu đề, đơn vị tổ chức..."
+              placeholder="Tìm kiếm ứng viên theo tiêu đề, đơn vị tổ chức, ngành, cấp độ..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Filter size={16} color="var(--primary)" />
-            <span style={{ fontSize: "0.85rem", color: "var(--muted)", fontWeight: 600 }}>Trạng thái:</span>
-            <select
-              className="form-control"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
-              style={{ width: "auto" }}
-            >
-              <option value="pending">Chờ duyệt (Pending)</option>
-              <option value="approved">Đã duyệt (Approved)</option>
-              <option value="rejected">Từ chối (Rejected)</option>
-              <option value="all">Tất cả</option>
-            </select>
+          {/* Horizontal Filter Buttons */}
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 8,
+              alignItems: "center",
+            }}
+          >
+            {FILTER_TABS.map((tab) => {
+              const isActive = activeTab === tab.id;
+              const count = tabCounts[tab.id];
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  style={{
+                    padding: "6px 14px",
+                    borderRadius: 20,
+                    border: isActive ? "1px solid var(--primary)" : "1px solid #cbd5e1",
+                    background: isActive ? "var(--primary)" : "#ffffff",
+                    color: isActive ? "#ffffff" : "var(--text-main)",
+                    fontWeight: isActive ? 600 : 500,
+                    fontSize: "0.84rem",
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    transition: "all 0.15s ease",
+                    boxShadow: isActive ? "0 2px 4px rgba(0,0,0,0.12)" : "none",
+                  }}
+                >
+                  <span>{tab.label}</span>
+                  <span
+                    style={{
+                      background: isActive ? "rgba(255, 255, 255, 0.25)" : "#f1f5f9",
+                      color: isActive ? "#ffffff" : "#475569",
+                      padding: "1px 7px",
+                      borderRadius: 10,
+                      fontSize: "0.75rem",
+                      fontWeight: 700,
+                    }}
+                  >
+                    ({count})
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -235,23 +345,25 @@ export const AdminCandidatesPage: React.FC = () => {
       ) : filteredCandidates.length === 0 ? (
         <div className="card" style={{ textAlign: "center", padding: 48, color: "var(--muted)" }}>
           <Sparkles size={36} color="#7e22ce" style={{ margin: "0 auto 12px" }} />
-          <h3 style={{ color: "var(--primary)", marginBottom: 6 }}>Hàng chờ trống</h3>
+          <h3 style={{ color: "var(--primary)", marginBottom: 6 }}>Danh sách trống</h3>
           <p style={{ fontSize: "0.9rem", maxWidth: 450, margin: "0 auto" }}>
-            Hiện tại không có ứng viên nào ở trạng thái "{statusFilter}".
+            Không có ứng viên nào thuộc nhóm "
+            {FILTER_TABS.find((t) => t.id === activeTab)?.label || activeTab}
+            " phù hợp với điều kiện tìm kiếm.
           </p>
         </div>
       ) : viewMode === "table" ? (
-        <div className="table-container">
-          <table className="table">
+        <div className="table-container" style={{ overflowX: "auto" }}>
+          <table className="table" style={{ width: "100%" }}>
             <thead>
               <tr>
-                <th>Tiêu đề hội thảo / cơ hội</th>
-                <th>Đơn vị tổ chức</th>
-                <th>Loại / Cấp độ</th>
-                <th>Hạn nộp (Deadline)</th>
-                <th>Trùng lặp?</th>
-                <th>Trạng thái</th>
-                <th style={{ textAlign: "right" }}>Thao tác</th>
+                <th style={{ minWidth: 260 }}>Tiêu đề hội thảo / Cơ hội</th>
+                <th style={{ minWidth: 160 }}>Đơn vị tổ chức</th>
+                <th style={{ width: 140, textAlign: "center" }}>Loại / Cấp độ</th>
+                <th style={{ width: 160 }}>Hạn nộp & Diễn ra</th>
+                <th style={{ width: 90, textAlign: "center" }}>Trùng lặp?</th>
+                <th style={{ width: 120, textAlign: "center" }}>Trạng thái</th>
+                <th style={{ width: 100, textAlign: "right" }}>Thao tác</th>
               </tr>
             </thead>
             <tbody>
@@ -267,6 +379,8 @@ export const AdminCandidatesPage: React.FC = () => {
                   publishedOpps
                 );
 
+                const primaryCat = getCandidatePrimaryCategory(cand);
+
                 return (
                   <tr key={cand.id}>
                     <td>
@@ -278,57 +392,112 @@ export const AdminCandidatesPage: React.FC = () => {
                           href={cand.sourceUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          style={{ fontSize: "0.75rem", display: "inline-flex", alignItems: "center", gap: 3, color: "var(--secondary)" }}
+                          style={{
+                            fontSize: "0.75rem",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 3,
+                            color: "var(--secondary)",
+                          }}
                         >
                           Nguồn chính thức <ExternalLink size={10} />
                         </a>
                       )}
-                    </td>
-                    <td>{cand.organizer} {cand.country ? `(${cand.country})` : ""}</td>
-                    <td>
-                      <span className="badge badge-neutral">{cand.type}</span>{" "}
-                      <span className="badge badge-neutral">{cand.level}</span>
-                    </td>
-                    <td style={{ fontWeight: 700, color: "var(--danger)" }}>
-                      {formatDateVN(cand.deadline) || "Chưa rõ"}
+                      {cand.field && (
+                        <div style={{ fontSize: "0.75rem", color: "var(--teal)", marginTop: 2 }}>
+                          {cand.field}
+                        </div>
+                      )}
                     </td>
                     <td>
+                      <div>{cand.organizer}</div>
+                      {cand.country && (
+                        <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                          {cand.country}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ textAlign: "center" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center" }}>
+                        <span className="badge badge-neutral">{cand.type}</span>
+                        {cand.level && (
+                          <span
+                            className="badge"
+                            style={{
+                              background: "#f0fdf4",
+                              color: "#166534",
+                              border: "1px solid #bbf7d0",
+                              fontSize: "0.72rem",
+                            }}
+                          >
+                            {cand.level}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--danger)" }}>
+                          Hạn: {formatDateVN(cand.deadline) || "Chưa rõ"}
+                        </div>
+                        {cand.eventDate && (
+                          <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                            Diễn ra: {formatDateVN(cand.eventDate)}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td style={{ textAlign: "center" }}>
                       {dedupe.isDuplicate ? (
                         <span
                           className="badge"
-                          style={{ background: "#fee2e2", color: "#991b1b", display: "inline-flex", alignItems: "center", gap: 4 }}
+                          style={{
+                            background: "#fee2e2",
+                            color: "#991b1b",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                          }}
                           title={dedupe.matchReason}
                         >
                           <AlertTriangle size={12} />
                           Nghi trùng
                         </span>
                       ) : (
-                        <span style={{ color: "var(--success)", fontSize: "0.8rem", fontWeight: 600 }}>Mới</span>
+                        <span style={{ color: "var(--success)", fontSize: "0.8rem", fontWeight: 600 }}>
+                          Mới
+                        </span>
                       )}
                     </td>
-                    <td>
-                      <span
-                        className={`badge ${
-                          cand.status === "approved"
-                            ? "badge-success"
-                            : cand.status === "rejected"
-                            ? "badge-warning"
-                            : "badge-new"
-                        }`}
-                      >
-                        {cand.status.toUpperCase()}
-                      </span>
+                    <td style={{ textAlign: "center" }}>
+                      {primaryCat === "expired" ? (
+                        <span className="badge" style={{ background: "#f1f5f9", color: "#64748b" }}>
+                          HẾT HẠN
+                        </span>
+                      ) : primaryCat === "approved" ? (
+                        <span className="badge badge-success">ĐÃ DUYỆT</span>
+                      ) : primaryCat === "rejected" ? (
+                        <span className="badge badge-warning">TỪ CHỐI</span>
+                      ) : primaryCat === "needs_review" ? (
+                        <span className="badge" style={{ background: "#fef3c7", color: "#b45309" }}>
+                          CẦN HIỆU CHỈNH
+                        </span>
+                      ) : primaryCat === "today" ? (
+                        <span className="badge" style={{ background: "#dcfce7", color: "#15803d" }}>
+                          MỚI HÔM NAY
+                        </span>
+                      ) : (
+                        <span className="badge badge-new">CHỜ DUYỆT</span>
+                      )}
                     </td>
                     <td style={{ textAlign: "right" }}>
-                      <div style={{ display: "inline-flex", gap: 6 }}>
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-sm"
-                          onClick={() => setSelectedCandidate(cand)}
-                        >
-                          Kiểm duyệt
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        onClick={() => setSelectedCandidate(cand)}
+                      >
+                        Kiểm duyệt
+                      </button>
                     </td>
                   </tr>
                 );
@@ -337,7 +506,13 @@ export const AdminCandidatesPage: React.FC = () => {
           </table>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 300px), 1fr))", gap: 20 }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 320px), 1fr))",
+            gap: 20,
+          }}
+        >
           {filteredCandidates.map((cand) => {
             const dedupe = isDuplicateOpportunity(
               {
@@ -350,30 +525,82 @@ export const AdminCandidatesPage: React.FC = () => {
               publishedOpps
             );
 
+            const primaryCat = getCandidatePrimaryCategory(cand);
+
             return (
-              <div key={cand.id} className="card card-hover" style={{ display: "flex", flexDirection: "column" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <span className="badge badge-neutral">{cand.type}</span>
-                  <span
-                    className={`badge ${
-                      cand.status === "approved"
-                        ? "badge-success"
-                        : cand.status === "rejected"
-                        ? "badge-warning"
-                        : "badge-new"
-                    }`}
-                  >
-                    {cand.status.toUpperCase()}
-                  </span>
+              <div
+                key={cand.id}
+                className="card card-hover"
+                style={{ display: "flex", flexDirection: "column" }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 8,
+                    flexWrap: "wrap",
+                    gap: 6,
+                  }}
+                >
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <span className="badge badge-neutral">{cand.type}</span>
+                    {cand.level && (
+                      <span
+                        className="badge"
+                        style={{
+                          background: "#f0fdf4",
+                          color: "#166534",
+                          border: "1px solid #bbf7d0",
+                          fontSize: "0.72rem",
+                        }}
+                      >
+                        {cand.level}
+                      </span>
+                    )}
+                  </div>
+                  {primaryCat === "expired" ? (
+                    <span className="badge" style={{ background: "#f1f5f9", color: "#64748b" }}>
+                      HẾT HẠN
+                    </span>
+                  ) : primaryCat === "approved" ? (
+                    <span className="badge badge-success">ĐÃ DUYỆT</span>
+                  ) : primaryCat === "rejected" ? (
+                    <span className="badge badge-warning">TỪ CHỐI</span>
+                  ) : primaryCat === "needs_review" ? (
+                    <span className="badge" style={{ background: "#fef3c7", color: "#b45309" }}>
+                      CẦN HIỆU CHỈNH
+                    </span>
+                  ) : primaryCat === "today" ? (
+                    <span className="badge" style={{ background: "#dcfce7", color: "#15803d" }}>
+                      MỚI HÔM NAY
+                    </span>
+                  ) : (
+                    <span className="badge badge-new">CHỜ DUYỆT</span>
+                  )}
                 </div>
 
-                <h3 style={{ fontSize: "1.05rem", color: "var(--primary)", marginBottom: 8, lineHeight: 1.4 }}>
+                <h3
+                  style={{
+                    fontSize: "1.05rem",
+                    color: "var(--primary)",
+                    marginBottom: 8,
+                    lineHeight: 1.4,
+                  }}
+                >
                   {cand.title}
                 </h3>
 
-                <div style={{ fontSize: "0.8125rem", color: "var(--muted)", marginBottom: 12 }}>
+                <div style={{ fontSize: "0.8125rem", color: "var(--muted)", marginBottom: 8 }}>
                   Đơn vị: <strong>{cand.organizer}</strong>
+                  {cand.country ? ` (${cand.country})` : ""}
                 </div>
+
+                {cand.field && (
+                  <div style={{ fontSize: "0.78rem", color: "var(--teal)", marginBottom: 8 }}>
+                    Chuyên ngành: {cand.field}
+                  </div>
+                )}
 
                 {dedupe.isDuplicate && (
                   <div
@@ -394,9 +621,30 @@ export const AdminCandidatesPage: React.FC = () => {
                   </div>
                 )}
 
-                <div style={{ marginTop: "auto", paddingTop: 12, borderTop: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ fontSize: "0.8125rem" }}>
-                    Hạn: <strong style={{ color: "var(--danger)" }}>{formatDateVN(cand.deadline)}</strong>
+                <div
+                  style={{
+                    marginTop: "auto",
+                    paddingTop: 12,
+                    borderTop: "1px solid var(--line)",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: 8,
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: "0.8125rem" }}>
+                      Hạn:{" "}
+                      <strong style={{ color: "var(--danger)" }}>
+                        {formatDateVN(cand.deadline) || "Chưa rõ"}
+                      </strong>
+                    </div>
+                    {cand.eventDate && (
+                      <div style={{ fontSize: "0.75rem", color: "var(--muted)" }}>
+                        Diễn ra: {formatDateVN(cand.eventDate)}
+                      </div>
+                    )}
                   </div>
                   <button
                     type="button"
@@ -417,27 +665,35 @@ export const AdminCandidatesPage: React.FC = () => {
         candidate={selectedCandidate}
         onClose={() => setSelectedCandidate(null)}
         onApprove={async (cand) => {
-          await approveCandidate(
-            cand,
-            { uid: profile.uid, email: profile.email, role: profile.role }
-          );
+          await approveCandidate(cand, {
+            uid: profile.uid,
+            email: profile.email,
+            role: profile.role,
+          });
           await loadData();
         }}
         onReject={async (candId, candTitle, reason) => {
-          await rejectCandidate(
-            candId,
-            candTitle,
-            reason,
-            { uid: profile.uid, email: profile.email, role: profile.role }
-          );
+          await rejectCandidate(candId, candTitle, reason, {
+            uid: profile.uid,
+            email: profile.email,
+            role: profile.role,
+          });
+          await loadData();
+        }}
+        onNeedsReview={async (candId, candTitle, reason) => {
+          await markCandidateNeedsReview(candId, candTitle, reason, {
+            uid: profile.uid,
+            email: profile.email,
+            role: profile.role,
+          });
           await loadData();
         }}
         onDelete={async (candId, candTitle) => {
-          await deleteCandidate(
-            candId,
-            candTitle,
-            { uid: profile.uid, email: profile.email, role: profile.role }
-          );
+          await deleteCandidate(candId, candTitle, {
+            uid: profile.uid,
+            email: profile.email,
+            role: profile.role,
+          });
           await loadData();
         }}
       />

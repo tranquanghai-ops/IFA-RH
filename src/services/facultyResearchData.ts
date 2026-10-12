@@ -378,7 +378,14 @@ export function mapRowToCandidate(row: RawFacultyResearchRow, index: number): Op
   const event = row.eventDate && row.eventDate !== "Chưa xác minh" ? row.eventDate : "";
 
   // The main deadline to judge is full paper or abstract
-  const mainDeadline = fullPaper || abstract || registration || "";
+  const mainDeadline =
+    fullPaper ||
+    abstract ||
+    registration ||
+    (event && (event.toLowerCase().includes("định kỳ") || event.toLowerCase().includes("thường xuyên"))
+      ? "Nhận bài thường xuyên"
+      : "") ||
+    "Nhận bài thường xuyên";
 
   // Split tags
   const tagsList = (row.tags || "")

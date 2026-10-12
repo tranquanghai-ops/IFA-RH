@@ -782,6 +782,31 @@ export async function rejectCandidate(
   );
 }
 
+export async function markCandidateNeedsReview(
+  candidateId: string,
+  candidateTitle: string,
+  reason: string,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  const now = new Date().toISOString();
+  const candRef = doc(firestore, "opportunityCandidates", candidateId);
+  await updateDoc(candRef, {
+    status: "needs_review",
+    rejectionReason: reason || "Yêu cầu hiệu chỉnh thông tin",
+    reviewedBy: actor.email,
+    reviewedAt: now,
+    updatedAt: now,
+  });
+
+  await logAudit(
+    actor,
+    "UPDATE_CANDIDATE",
+    "candidate",
+    candidateId,
+    `Yêu cầu hiệu chỉnh ứng viên cơ hội Spark: "${candidateTitle}" (Lý do: ${reason || "Không có"})`
+  );
+}
+
 export async function deleteCandidate(
   candidateId: string,
   candidateTitle: string,
