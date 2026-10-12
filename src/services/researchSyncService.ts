@@ -9,6 +9,7 @@ import {
   computeOpportunityDiff,
   ResearchMatchTarget,
 } from "../utils/researchDedupe";
+import { normalizeText } from "../utils/dedupe";
 import { mapRowToCandidate } from "./facultyResearchData";
 import type { RawFacultyResearchRow } from "./facultyResearchData";
 import type { OpportunityCandidate, Opportunity } from "../types";
@@ -374,13 +375,35 @@ export async function executeResearchSync({
             const colName = isOpp ? "opportunities" : "opportunityCandidates";
             const docRef = sdk.doc(db, colName, target.id);
             try {
+              const safeUpdates: Record<string, any> = {
+                ...diff.updates,
+                updatedAt: new Date().toISOString(),
+                updatedBy: "SPARK_SYNC",
+              };
+
+              // Backfill normalizedTitle if candidate lacked it in older schema
+              if (!target.normalizedTitle) {
+                safeUpdates.normalizedTitle = normalizeText(row.title || target.title);
+              }
+
+              // Backfill country if candidate lacked it
+              if (!target.country) {
+                safeUpdates.country = row.country || "Việt Nam";
+              }
+
+              // Canonicalize type if target had raw/legacy conference type
+              if (target.type && !["Hội thảo", "Hội nghị", "Call for Papers", "Special Issue", "Book Chapter", "Seminar", "Hợp tác nghiên cứu", "Đổi mới sáng tạo", "Khác"].includes(target.type)) {
+                safeUpdates.type = target.type.includes("Hội nghị") ? "Hội nghị" : "Hội thảo";
+              }
+
+              // Canonicalize status if target had raw sheet status (e.g. 'MỚI')
+              if (target.status && !["pending", "approved", "rejected", "needs_review"].includes(target.status)) {
+                safeUpdates.status = "pending";
+              }
+
               await sdk.updateDoc(
                 docRef,
-                cleanUndefined({
-                  ...diff.updates,
-                  updatedAt: new Date().toISOString(),
-                  updatedBy: "SPARK_SYNC",
-                })
+                cleanUndefined(safeUpdates)
               );
             } catch (updateErr: any) {
               throw new ResearchSyncStageError({
@@ -389,7 +412,7 @@ export async function executeResearchSync({
                 documentId: target.id,
                 operationType: "update",
                 originalError: updateErr,
-                userSummary: `Không đủ quyền cập nhật ${isOpp ? "cơ hội" : "ứng viên"} "${row.title}" (ID: ${target.id})`,
+                userSummary: `Không đủ quyền cập nhật ${isOpp ? "cơ hội" : "ứng viên"} "${row.title}" (ID: ${target.id}, Trạng thái: ${target.status || "chưa xác định"})`,
                 actorUid: user.uid,
                 actorRole: user.role,
               });

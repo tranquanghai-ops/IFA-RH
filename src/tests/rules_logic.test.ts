@@ -262,9 +262,8 @@ describe("RULES Logic & Role Permissions Verification", () => {
 
     const isValidOpportunityCandidate = (data: Record<string, any>) => {
       const requiredKeys = [
-        "title", "organizer", "country", "type", "level", "topic",
-        "field", "tags", "deadline", "content", "sourceType",
-        "status", "normalizedTitle", "createdAt", "updatedAt"
+        "title", "organizer", "type", "level",
+        "sourceType", "status", "createdAt", "updatedAt"
       ];
       if (!requiredKeys.every((k) => k in data)) return false;
 
@@ -279,21 +278,30 @@ describe("RULES Logic & Role Permissions Verification", () => {
         "publicationFee", "registrationFee", "feeStatus", "feeSourceUrl",
         "detailedContent", "topicsDetailed",
         "publishedOpportunityId", "recalledAt", "recalledBy", "updatedBy",
-        "createdBy", "editedByAdmin", "manualOverrides"
+        "createdBy", "editedByAdmin", "manualOverrides",
+        "stt", "candidateId", "hiddenAt", "hiddenBy", "sheetRowIndex",
+        "unverifiedFields", "manualReviewNeeded", "manualReviewReason", "confidenceLevel",
+        "diffSummary"
       ]);
       if (!Object.keys(data).every((k) => allowedKeys.has(k))) return false;
 
       if (typeof data.title !== "string" || data.title.length < 1 || data.title.length > 300) return false;
       if (typeof data.organizer !== "string" || data.organizer.length < 1 || data.organizer.length > 200) return false;
-      if (typeof data.country !== "string" || data.country.length < 1 || data.country.length > 100) return false;
-      if (typeof data.topic !== "string" || data.topic.length > 300) return false;
-      if (typeof data.field !== "string" || data.field.length > 200) return false;
-      if (!Array.isArray(data.tags) || data.tags.length > 30) return false;
-      if (typeof data.deadline !== "string" || data.deadline.length > 200) return false;
-      if (typeof data.content !== "string" || data.content.length > 50000) return false;
+      if ("country" in data && (typeof data.country !== "string" || data.country.length > 100)) return false;
+      if (![
+        "Hội thảo", "Hội nghị", "Call for Papers", "Special Issue",
+        "Book Chapter", "Seminar", "Hợp tác nghiên cứu", "Đổi mới sáng tạo", "Khác",
+        "Hội thảo khoa học quốc tế", "Hội thảo quốc tế", "Hội thảo quốc gia"
+      ].includes(data.type)) return false;
+      if (!["Quốc tế", "Quốc gia", "Cấp Trường", "Cấp Khoa", "Khác"].includes(data.level)) return false;
+      if ("topic" in data && (typeof data.topic !== "string" || data.topic.length > 300)) return false;
+      if ("field" in data && (typeof data.field !== "string" || data.field.length > 200)) return false;
+      if ("tags" in data && (!Array.isArray(data.tags) || data.tags.length > 30)) return false;
+      if ("deadline" in data && (typeof data.deadline !== "string" || data.deadline.length > 200)) return false;
+      if ("content" in data && (typeof data.content !== "string" || data.content.length > 50000)) return false;
       if (data.sourceType !== "SPARK") return false;
-      if (!["pending", "approved", "rejected", "needs_review"].includes(data.status)) return false;
-      if (typeof data.normalizedTitle !== "string" || data.normalizedTitle.length < 1 || data.normalizedTitle.length > 500)
+      if (!["pending", "approved", "rejected", "needs_review", "MỚI", "moi", "new"].includes(data.status)) return false;
+      if ("normalizedTitle" in data && (typeof data.normalizedTitle !== "string" || data.normalizedTitle.length > 500))
         return false;
       return true;
     };
@@ -432,6 +440,41 @@ describe("RULES Logic & Role Permissions Verification", () => {
       // Disallowed key
       const disallowedKey = { ...sampleCandidate, maliciousInjectedField: true };
       expect(isValidOpportunityCandidate(disallowedKey as any)).toBe(false);
+    });
+
+    // 11. Legacy candidate documents (e.g., HAXD 2027 with 'Hội thảo khoa học quốc tế', 'MỚI', legacy fields) are valid
+    it("11. validates legacy candidate documents like HAXD 2027 with raw type, status, and legacy fields", () => {
+      const legacyHaxdCandidate = {
+        title: "Hội thảo khoa học quốc tế lần thứ 3 về Tương tác Người – AI và Thiết kế Trải nghiệm (HAXD 2027)",
+        organizer: "Trường Đại học Mỹ thuật Công nghiệp",
+        country: "Việt Nam",
+        type: "Hội thảo khoa học quốc tế",
+        level: "Quốc tế",
+        topic: "Tương tác Người - AI",
+        field: "Thiết kế tương tác",
+        tags: ["HAXD", "AI"],
+        deadline: "15/12/2026",
+        content: "Nội dung hội thảo HAXD 2027",
+        sourceType: "SPARK",
+        status: "MỚI",
+        stt: 1,
+        candidateId: "spark_opp_20261012-01_1",
+        unverifiedFields: [],
+        createdAt: "2026-10-12T01:00:00.000Z",
+        updatedAt: "2026-10-12T01:00:00.000Z",
+      };
+      expect(isValidOpportunityCandidate(legacyHaxdCandidate)).toBe(true);
+
+      // Simulating update payload merged into resource.data (backfilled canonical fields)
+      const updatedLegacyDoc = {
+        ...legacyHaxdCandidate,
+        updatedAt: new Date().toISOString(),
+        updatedBy: "SPARK_SYNC",
+        normalizedTitle: "hoi thao khoa hoc quoc te lan thu 3 ve tuong tac nguoi ai va thiet ke trai nghiem haxd 2027",
+        type: "Hội thảo",
+        status: "pending",
+      };
+      expect(isValidOpportunityCandidate(updatedLegacyDoc)).toBe(true);
     });
   });
 });
