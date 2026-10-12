@@ -20,6 +20,7 @@ import { StatisticsPage } from "./pages/StatisticsPage";
 import { AdminImportPage } from "./pages/AdminImportPage";
 import { OwnerPage } from "./pages/OwnerPage";
 import { LoginPage } from "./pages/LoginPage";
+import { JournalDirectoryPage } from "./pages/JournalDirectoryPage";
 
 export const App: React.FC = () => {
   const { profile, loading, user } = useAuth();
@@ -126,6 +127,9 @@ export const App: React.FC = () => {
           <LoginPage />
         );
 
+      case "journal_directory":
+        return <JournalDirectoryPage />;
+
       case "owner":
         return profile && profile.role === "owner" ? <OwnerPage /> : <LoginPage />;
 
@@ -143,8 +147,8 @@ export const App: React.FC = () => {
     );
   }
 
-  // A. PUBLIC PORTAL VIEW (Homepage / Opportunities Portal)
-  if (currentTab === "public" || !profile) {
+  // A. PUBLIC PORTAL VIEW (Homepage / Opportunities Portal / Journal Directory)
+  if (currentTab === "public" || (currentTab === "journal_directory" && !profile) || !profile) {
     return (
       <div className="public-portal-layout">
         <PublicHeader onSelectTab={handleSelectTab} />
@@ -153,6 +157,8 @@ export const App: React.FC = () => {
             <LoginPage />
           ) : currentTab === "public" ? (
             <PublicHome />
+          ) : currentTab === "journal_directory" ? (
+            <JournalDirectoryPage />
           ) : (
             <LoginPage />
           )}
@@ -162,6 +168,7 @@ export const App: React.FC = () => {
       </div>
     );
   }
+
 
   // B. PRIVATE / ADMIN WORKSPACE (Authenticated with role profile)
   return (

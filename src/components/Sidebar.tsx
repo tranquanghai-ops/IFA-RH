@@ -90,6 +90,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
         tabTarget: isOwner || isAdmin ? "admin_opportunities" : "public",
       },
       {
+        id: "journal_directory",
+        label: "Danh mục Tạp chí",
+        icon: <BookOpen size={18} />,
+        tabTarget: "journal_directory",
+      },
+      {
         id: "research_progress",
         label: "Tiến độ NCKH",
         icon: <Layers size={18} />,

@@ -756,6 +756,71 @@ service cloud.firestore {
         (!('archiveReason' in data) || data.archiveReason == null || validString(data.archiveReason, 0, 300));
     }
 
+    // Validates journals/{journalId} schema and constraints
+    function isValidJournal(data) {
+      return data.keys().hasAll([
+          'journalId', 'name', 'publisher', 'category', 'primaryField',
+          'status', 'isManualEdited', 'createdAt', 'updatedAt', 'createdBy'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'journalId', 'name', 'englishName', 'abbreviation', 'publisher',
+          'issnPrint', 'issnOnline', 'isbn', 'category', 'primaryField', 'fields',
+          'website', 'websiteVerified', 'maxScore', 'maxScoreYear', 'scores',
+          'guidelines', 'links', 'verification', 'status', 'isManualEdited',
+          'lastImportedAt', 'lastImportBatch', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy'
+        ]) &&
+        validString(data.journalId, 1, 50) &&
+        validString(data.name, 1, 300) &&
+        validString(data.publisher, 1, 300) &&
+        data.category in ['domestic', 'international'] &&
+        validString(data.primaryField, 1, 200) &&
+        data.status in ['active', 'hidden'] &&
+        data.isManualEdited is bool &&
+        (validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
+        (validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
+        validString(data.createdBy, 1, 100) &&
+        (!('id' in data) || validString(data.id, 0, 100)) &&
+        (!('englishName' in data) || validString(data.englishName, 0, 300)) &&
+        (!('abbreviation' in data) || validString(data.abbreviation, 0, 50)) &&
+        (!('issnPrint' in data) || validString(data.issnPrint, 0, 50)) &&
+        (!('issnOnline' in data) || validString(data.issnOnline, 0, 50)) &&
+        (!('isbn' in data) || validString(data.isbn, 0, 50)) &&
+        (!('fields' in data) || (data.fields is list && data.fields.size() <= 30)) &&
+        (!('website' in data) || validString(data.website, 0, 500)) &&
+        (!('websiteVerified' in data) || data.websiteVerified is bool) &&
+        (!('maxScore' in data) || (data.maxScore is number && data.maxScore >= 0 && data.maxScore <= 10)) &&
+        (!('maxScoreYear' in data) || (data.maxScoreYear is int && data.maxScoreYear >= 2000 && data.maxScoreYear <= 2100)) &&
+        (!('scores' in data) || (data.scores is list && data.scores.size() <= 50)) &&
+        (!('guidelines' in data) || data.guidelines is map) &&
+        (!('links' in data) || (data.links is list && data.links.size() <= 50)) &&
+        (!('verification' in data) || data.verification is map) &&
+        (!('lastImportedAt' in data) || validString(data.lastImportedAt, 0, 50) || data.lastImportedAt is timestamp) &&
+        (!('lastImportBatch' in data) || validString(data.lastImportBatch, 0, 100)) &&
+        (!('updatedBy' in data) || validString(data.updatedBy, 0, 100));
+    }
+
+    // Validates journalImports/{importId} schema and constraints
+    function isValidJournalImport(data) {
+      return data.keys().hasAll([
+          'batchId', 'fileName', 'totalParsed', 'createdCount', 'updatedCount',
+          'skippedCount', 'errorCount', 'importedAt', 'importedBy', 'schemaVersion'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'batchId', 'fileName', 'totalParsed', 'createdCount', 'updatedCount',
+          'skippedCount', 'errorCount', 'errors', 'importedAt', 'importedBy', 'schemaVersion'
+        ]) &&
+        validString(data.batchId, 1, 100) &&
+        validString(data.fileName, 1, 200) &&
+        data.totalParsed is int && data.totalParsed >= 0 &&
+        data.createdCount is int && data.createdCount >= 0 &&
+        data.updatedCount is int && data.updatedCount >= 0 &&
+        data.skippedCount is int && data.skippedCount >= 0 &&
+        data.errorCount is int && data.errorCount >= 0 &&
+        data.schemaVersion is int && data.schemaVersion >= 1 &&
+        (validString(data.importedAt, 1, 50) || data.importedAt is timestamp) &&
+        validString(data.importedBy, 1, 100);
+    }
+
     // ===============================================================
     // Collection Rules
     // ===============================================================
@@ -945,6 +1010,27 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // 13. Journals collection (Danh mục tạp chí khoa học HĐGSNN)
+    // - Public & Lecturer: Read active journals
+    // - Admin & Owner: Read all (including hidden), Create, Update, Delete
+    match /journals/{journalId} {
+      allow read: if resource.data.status == 'active' || isAdmin();
+      allow create: if isAdmin() && isValidJournal(request.resource.data);
+      allow update: if isAdmin() && isValidJournal(request.resource.data) && areImmutableFieldsUnchanged(['createdAt', 'createdBy']);
+      allow delete: if isAdmin();
+    }
+
+    // 14. Journal Imports collection (Lịch sử import danh mục tạp chí)
+    // - Admin & Owner: Read all, Append new import logs
+    // - Updates: Strictly denied (immutable audit)
+    // - Deletions: Admin & Owner only
+    match /journalImports/{importId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && isValidJournalImport(request.resource.data);
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
     // ===============================================================
     // Root Default Deny
     // ===============================================================
@@ -953,3 +1039,4 @@ service cloud.firestore {
     }
   }
 }
+

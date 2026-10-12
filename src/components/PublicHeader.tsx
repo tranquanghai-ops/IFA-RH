@@ -1,6 +1,6 @@
 import React from "react";
 import { useAuth } from "../firebase/auth";
-import { Compass, LogIn, LayoutDashboard, LogOut } from "lucide-react";
+import { Compass, LogIn, LayoutDashboard, LogOut, BookOpen } from "lucide-react";
 
 interface PublicHeaderProps {
   onSelectTab: (tab: string) => void;
@@ -126,6 +126,15 @@ export const PublicHeader: React.FC<PublicHeaderProps> = ({ onSelectTab }) => {
                 >
                   <Compass size={16} />
                   <span>Cổng NCKH</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm public-btn-portal"
+                  onClick={() => onSelectTab("journal_directory")}
+                  title="Tra cứu danh mục tạp chí khoa học HĐGSNN"
+                >
+                  <BookOpen size={16} />
+                  <span>Tạp chí HĐGSNN</span>
                 </button>
                 <button
                   type="button"
