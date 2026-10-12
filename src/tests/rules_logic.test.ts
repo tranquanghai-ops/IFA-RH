@@ -224,10 +224,215 @@ describe("RULES Logic & Role Permissions Verification", () => {
     expect(isValidImportBatch({ skippedCount: 2.5 })).toBe(false);
     expect(isValidImportBatch({ skippedCount: "5" as any })).toBe(false);
 
-    const isValidSystemConfigKeys = (keys: string[]) => keys.length <= 50;
+    const isValidSystemConfigKeys = (keys: string[]) => keys.length <= 100;
     expect(isValidSystemConfigKeys(new Array(30).fill("k"))).toBe(true);
     expect(isValidSystemConfigKeys(new Array(50).fill("k"))).toBe(true);
-    expect(isValidSystemConfigKeys(new Array(51).fill("k"))).toBe(false);
+    expect(isValidSystemConfigKeys(new Array(100).fill("k"))).toBe(true);
+    expect(isValidSystemConfigKeys(new Array(101).fill("k"))).toBe(false);
+  });
+
+  describe("Comprehensive Research Sync Security Rules Simulation", () => {
+    // Helper mimicking Firestore Rules authentication functions
+    const isBootstrapOwner = (auth: any) =>
+      auth !== null &&
+      auth.token?.email != null &&
+      (auth.token.email === "tranquanghai@tdtu.edu.vn" ||
+        auth.token.email.toLowerCase() === "tranquanghai@tdtu.edu.vn");
+
+    const isOwner = (auth: any, userDoc?: any) =>
+      auth !== null &&
+      (isBootstrapOwner(auth) || (userDoc && userDoc.role === "owner" && userDoc.active === true));
+
+    const isAdmin = (auth: any, userDoc?: any) =>
+      isOwner(auth, userDoc) ||
+      (auth !== null && userDoc && userDoc.role === "admin" && userDoc.active === true);
+
+    const isLecturer = (auth: any, userDoc?: any) =>
+      auth !== null && userDoc && userDoc.role === "lecturer" && userDoc.active === true;
+
+    // Schema validators matching firestore.rules
+    const isValidSystemConfig = (data: Record<string, any>) => {
+      const keys = Object.keys(data);
+      if (keys.length > 100) return false;
+      if ("isPublic" in data && typeof data.isPublic !== "boolean") return false;
+      if ("updatedAt" in data && typeof data.updatedAt !== "string" && !(data.updatedAt instanceof Date))
+        return false;
+      return true;
+    };
+
+    const isValidOpportunityCandidate = (data: Record<string, any>) => {
+      const requiredKeys = [
+        "title", "organizer", "country", "type", "level", "topic",
+        "field", "tags", "deadline", "content", "sourceType",
+        "status", "normalizedTitle", "createdAt", "updatedAt"
+      ];
+      if (!requiredKeys.every((k) => k in data)) return false;
+
+      const allowedKeys = new Set([
+        "id", "title", "organizer", "country", "type", "level", "topic",
+        "field", "tags", "deadline", "abstractDeadline", "fullPaperDeadline",
+        "registrationDeadline", "eventDate", "location", "fee", "publicationFormat",
+        "indexing", "content", "submissionUrl", "sourceUrl", "directions",
+        "suitability", "notes", "runId", "discoveredAt", "sheetStatus",
+        "sourceType", "status", "rejectionReason", "reviewedBy", "reviewedAt",
+        "normalizedTitle", "createdAt", "updatedAt",
+        "publicationFee", "registrationFee", "feeStatus", "feeSourceUrl",
+        "detailedContent", "topicsDetailed",
+        "publishedOpportunityId", "recalledAt", "recalledBy", "updatedBy",
+        "createdBy", "editedByAdmin", "manualOverrides"
+      ]);
+      if (!Object.keys(data).every((k) => allowedKeys.has(k))) return false;
+
+      if (typeof data.title !== "string" || data.title.length < 1 || data.title.length > 300) return false;
+      if (typeof data.organizer !== "string" || data.organizer.length < 1 || data.organizer.length > 200) return false;
+      if (typeof data.country !== "string" || data.country.length < 1 || data.country.length > 100) return false;
+      if (typeof data.topic !== "string" || data.topic.length > 300) return false;
+      if (typeof data.field !== "string" || data.field.length > 200) return false;
+      if (!Array.isArray(data.tags) || data.tags.length > 30) return false;
+      if (typeof data.deadline !== "string" || data.deadline.length > 200) return false;
+      if (typeof data.content !== "string" || data.content.length > 50000) return false;
+      if (data.sourceType !== "SPARK") return false;
+      if (!["pending", "approved", "rejected", "needs_review"].includes(data.status)) return false;
+      if (typeof data.normalizedTitle !== "string" || data.normalizedTitle.length < 1 || data.normalizedTitle.length > 500)
+        return false;
+      return true;
+    };
+
+    const isValidImportBatch = (data: Record<string, any>) => {
+      const required = ["timestamp", "importedBy", "fileName", "type", "totalRows", "successCount", "errorCount"];
+      if (!required.every((k) => k in data)) return false;
+      if (typeof data.totalRows !== "number" || data.totalRows < 0 || !Number.isInteger(data.totalRows)) return false;
+      if (typeof data.successCount !== "number" || data.successCount < 0 || !Number.isInteger(data.successCount)) return false;
+      if (typeof data.errorCount !== "number" || data.errorCount < 0 || !Number.isInteger(data.errorCount)) return false;
+      if ("skippedCount" in data && (typeof data.skippedCount !== "number" || data.skippedCount < 0 || !Number.isInteger(data.skippedCount))) return false;
+      return true;
+    };
+
+    const ownerAuthUpper = { uid: "owner_123", token: { email: "TranQuangHai@tdtu.edu.vn" } };
+    const ownerAuthLower = { uid: "owner_123", token: { email: "tranquanghai@tdtu.edu.vn" } };
+    const adminAuth = { uid: "admin_456", token: { email: "ha.ntt@tdtu.edu.vn" } };
+    const adminDoc = { role: "admin", active: true };
+    const lecturerAuth = { uid: "lec_789", token: { email: "lecturer@tdtu.edu.vn" } };
+    const lecturerDoc = { role: "lecturer", active: true };
+
+    const sampleCandidate = {
+      title: "Hội thảo quốc tế CIEMB 2026",
+      organizer: "Trường Đại học Kinh tế Quốc dân",
+      country: "Việt Nam",
+      type: "Hội thảo",
+      level: "Quốc tế",
+      topic: "Kinh tế và Quản trị",
+      field: "Thiết kế đồ họa",
+      tags: ["CIEMB", "Design"],
+      deadline: "Nhận bài thường xuyên (liên tục các đợt trong năm)",
+      content: "Nội dung tóm tắt hội thảo",
+      sourceType: "SPARK",
+      status: "pending",
+      normalizedTitle: "hoi thao quoc te ciemb 2026",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    // 1. Owner reads systemConfig
+    it("1. allows Owner (even with uppercase Google email) to read systemConfig", () => {
+      expect(isOwner(ownerAuthUpper)).toBe(true);
+      expect(isOwner(ownerAuthLower)).toBe(true);
+    });
+
+    // 2. Owner reads candidates
+    it("2. allows Owner to read opportunityCandidates", () => {
+      const canReadCandidates = (auth: any, doc?: any) => isAdmin(auth, doc);
+      expect(canReadCandidates(ownerAuthUpper)).toBe(true);
+      expect(canReadCandidates(ownerAuthLower)).toBe(true);
+    });
+
+    // 3. Owner creates new candidate (including with deadline = 'Nhận bài thường xuyên')
+    it("3. allows Owner to create new candidate with 'Nhận bài thường xuyên' deadline", () => {
+      const canCreate = (auth: any, doc: any, payload: any) =>
+        isAdmin(auth, doc) && isValidOpportunityCandidate(payload);
+      expect(canCreate(ownerAuthUpper, null, sampleCandidate)).toBe(true);
+    });
+
+    // 4. Owner updates existing candidate (including updatedBy and empty topic/content)
+    it("4. allows Owner to update existing candidate with updatedBy and notes", () => {
+      const updatedPayload = {
+        ...sampleCandidate,
+        updatedBy: "SPARK_SYNC",
+        notes: "Ghi chú bổ sung từ Spark",
+        deadline: "", // Empty deadline case
+        topic: "", // Empty topic case
+      };
+      const canUpdate = (auth: any, doc: any, payload: any) =>
+        isAdmin(auth, doc) && isValidOpportunityCandidate(payload);
+      expect(canUpdate(ownerAuthUpper, null, updatedPayload)).toBe(true);
+    });
+
+    // 5. Owner writes import history
+    it("5. allows Owner to record import history with skippedCount", () => {
+      const importPayload = {
+        timestamp: new Date().toISOString(),
+        importedBy: "tranquanghai@tdtu.edu.vn",
+        fileName: "IFA Faculty Research (HỘI THẢO)",
+        type: "opportunities",
+        totalRows: 11,
+        successCount: 11,
+        errorCount: 0,
+        skippedCount: 2,
+      };
+      const canWriteImport = (auth: any, doc: any, payload: any) =>
+        isAdmin(auth, doc) && isValidImportBatch(payload);
+      expect(canWriteImport(ownerAuthUpper, null, importPayload)).toBe(true);
+    });
+
+    // 6. Owner updates sync state in systemConfig
+    it("6. allows Owner to update sync state with up to 100 metadata fields", () => {
+      const syncStatePayload = {
+        syncInProgress: false,
+        lastSyncStatus: "success",
+        lastSyncSource: "manual_admin",
+        lastSyncAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const canUpdateState = (auth: any, doc: any, payload: any) =>
+        (isOwner(auth, doc) || isAdmin(auth, doc)) && isValidSystemConfig(payload);
+      expect(canUpdateState(ownerAuthUpper, null, syncStatePayload)).toBe(true);
+    });
+
+    // 7. Legitimate Admin can perform admin operations
+    it("7. allows active Admin to perform review and sync operations", () => {
+      expect(isAdmin(adminAuth, adminDoc)).toBe(true);
+      expect(isValidOpportunityCandidate(sampleCandidate)).toBe(true);
+    });
+
+    // 8. Lecturer CANNOT perform administrative sync or write candidates
+    it("8. denies Lecturer from creating candidates or writing systemConfig", () => {
+      const canCreateCand = (auth: any, doc: any) => isAdmin(auth, doc);
+      expect(canCreateCand(lecturerAuth, lecturerDoc)).toBe(false);
+
+      const canWriteConfig = (auth: any, doc: any) => isOwner(auth, doc) || isAdmin(auth, doc);
+      expect(canWriteConfig(lecturerAuth, lecturerDoc)).toBe(false);
+    });
+
+    // 9. Unauthenticated users cannot read candidates or write any data
+    it("9. strictly denies unauthenticated users from reading candidates or writing data", () => {
+      expect(isAdmin(null)).toBe(false);
+      expect(isOwner(null)).toBe(false);
+    });
+
+    // 10. Invalid payloads are strictly rejected by security validators
+    it("10. rejects invalid candidates (missing title, invalid sourceType, unknown keys)", () => {
+      // Missing required title
+      const missingTitle = { ...sampleCandidate, title: undefined };
+      expect(isValidOpportunityCandidate(missingTitle as any)).toBe(false);
+
+      // Invalid sourceType
+      const invalidSource = { ...sampleCandidate, sourceType: "HACKER" };
+      expect(isValidOpportunityCandidate(invalidSource as any)).toBe(false);
+
+      // Disallowed key
+      const disallowedKey = { ...sampleCandidate, maliciousInjectedField: true };
+      expect(isValidOpportunityCandidate(disallowedKey as any)).toBe(false);
+    });
   });
 });
 

@@ -273,7 +273,10 @@ service cloud.firestore {
     function isBootstrapOwner() {
       return isAuthenticated() &&
         request.auth.token.email != null &&
-        request.auth.token.email == 'tranquanghai@tdtu.edu.vn';
+        (
+          request.auth.token.email == 'tranquanghai@tdtu.edu.vn' ||
+          request.auth.token.email.lower() == 'tranquanghai@tdtu.edu.vn'
+        );
     }
 
     // Verify if caller has owner privileges
@@ -378,7 +381,8 @@ service cloud.firestore {
           'createdBy', 'updatedBy',
           'publicationFee', 'registrationFee', 'feeStatus', 'feeSourceUrl',
           'detailedContent', 'topicsDetailed',
-          'recalledAt', 'recalledBy', 'hiddenAt', 'hiddenBy'
+          'recalledAt', 'recalledBy', 'hiddenAt', 'hiddenBy',
+          'normalizedTitle', 'editedByAdmin', 'manualOverrides'
         ]) &&
         validString(data.title, 1, 300) &&
         validString(data.organizer, 1, 200) &&
@@ -388,11 +392,11 @@ service cloud.firestore {
           'Book Chapter', 'Seminar', 'Hợp tác nghiên cứu', 'Đổi mới sáng tạo', 'Khác'
         ] &&
         data.level in ['Quốc tế', 'Quốc gia', 'Cấp Trường', 'Cấp Khoa', 'Khác'] &&
-        validString(data.topic, 1, 300) &&
-        validString(data.field, 1, 200) &&
+        validString(data.topic, 0, 300) &&
+        validString(data.field, 0, 200) &&
         validList(data.tags, 30) &&
-        validString(data.deadline, 1, 50) &&
-        validString(data.content, 1, 50000) &&
+        validString(data.deadline, 0, 200) &&
+        validString(data.content, 0, 50000) &&
         data.sourceType in ['SPARK', 'ADMIN'] &&
         data.status in ['published', 'archived', 'hidden', 'recalled'] &&
         validString(data.createdBy, 1, 100) &&
@@ -426,6 +430,9 @@ service cloud.firestore {
         (!('hiddenAt' in data) || validString(data.hiddenAt, 0, 50) || data.hiddenAt is timestamp) &&
         (!('hiddenBy' in data) || validString(data.hiddenBy, 0, 100)) &&
         (!('updatedBy' in data) || validString(data.updatedBy, 0, 100)) &&
+        (!('normalizedTitle' in data) || validString(data.normalizedTitle, 0, 500)) &&
+        (!('editedByAdmin' in data) || data.editedByAdmin is bool) &&
+        (!('manualOverrides' in data) || (data.manualOverrides is list && data.manualOverrides.size() <= 50)) &&
         (!('id' in data) || validString(data.id, 0, 100));
     }
 
@@ -446,7 +453,8 @@ service cloud.firestore {
           'normalizedTitle', 'createdAt', 'updatedAt',
           'publicationFee', 'registrationFee', 'feeStatus', 'feeSourceUrl',
           'detailedContent', 'topicsDetailed',
-          'publishedOpportunityId', 'recalledAt', 'recalledBy', 'updatedBy'
+          'publishedOpportunityId', 'recalledAt', 'recalledBy', 'updatedBy',
+          'createdBy', 'editedByAdmin', 'manualOverrides'
         ]) &&
         validString(data.title, 1, 300) &&
         validString(data.organizer, 1, 200) &&
@@ -456,11 +464,11 @@ service cloud.firestore {
           'Book Chapter', 'Seminar', 'Hợp tác nghiên cứu', 'Đổi mới sáng tạo', 'Khác'
         ] &&
         data.level in ['Quốc tế', 'Quốc gia', 'Cấp Trường', 'Cấp Khoa', 'Khác'] &&
-        validString(data.topic, 1, 300) &&
-        validString(data.field, 1, 200) &&
+        validString(data.topic, 0, 300) &&
+        validString(data.field, 0, 200) &&
         validList(data.tags, 30) &&
-        validString(data.deadline, 0, 50) &&
-        validString(data.content, 1, 50000) &&
+        validString(data.deadline, 0, 200) &&
+        validString(data.content, 0, 50000) &&
         data.sourceType == 'SPARK' &&
         data.status in ['pending', 'approved', 'rejected', 'needs_review'] &&
         validString(data.normalizedTitle, 1, 500) &&
@@ -495,6 +503,9 @@ service cloud.firestore {
         (!('recalledAt' in data) || validString(data.recalledAt, 0, 50) || data.recalledAt is timestamp) &&
         (!('recalledBy' in data) || validString(data.recalledBy, 0, 100)) &&
         (!('updatedBy' in data) || validString(data.updatedBy, 0, 100)) &&
+        (!('createdBy' in data) || validString(data.createdBy, 0, 100)) &&
+        (!('editedByAdmin' in data) || data.editedByAdmin is bool) &&
+        (!('manualOverrides' in data) || (data.manualOverrides is list && data.manualOverrides.size() <= 50)) &&
         (!('id' in data) || validString(data.id, 0, 100));
     }
 
@@ -624,7 +635,7 @@ service cloud.firestore {
 
     // Validates systemConfig/{configId} schema and constraints
     function isValidSystemConfig(data) {
-      return data.keys().size() <= 50 &&
+      return data.keys().size() <= 100 &&
         (!('isPublic' in data) || data.isPublic is bool) &&
         (!('updatedAt' in data) || validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp);
     }
