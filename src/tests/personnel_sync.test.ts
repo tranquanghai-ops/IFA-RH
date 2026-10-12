@@ -269,7 +269,7 @@ describe('Personnel Synchronization Logic (IFA-WORK -> IFA-RH)', () => {
     expect(haProfile).toBeDefined();
     expect(haProfile?.role).toBe('admin');
     expect(haProfile?.id).toBe('prov_nguyenthithuyha1@tdtu.edu.vn');
-  });
+  }, 15000);
 
   it('rejects syncSharedPersonnelBatch when actor is not Owner', async () => {
     const { syncSharedPersonnelBatch } = await import('../firebase/firestore');

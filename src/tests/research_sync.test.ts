@@ -17,6 +17,7 @@ import {
 import {
   executeResearchSync,
   cleanUndefined,
+  ResearchSyncStageError,
   type ResearchSyncSdk,
 } from "../services/researchSyncService";
 import { mapRowToCandidate } from "../services/facultyResearchData";
@@ -334,6 +335,66 @@ describe("Research Data Sync Suite", () => {
       expect(outcome.skipped).toBe(false);
       expect(outcome.status).toBe("success");
       expect(outcome.stats?.read).toBeGreaterThan(0);
+    });
+
+    it("throws ResearchSyncStageError with READ_CANDIDATES when reading candidate collection is rejected", async () => {
+      const rejectingSdk: ResearchSyncSdk = {
+        ...mockSdk,
+        getDocs: async () => {
+          const err = new Error("Missing or insufficient permissions.");
+          (err as any).code = "permission-denied";
+          throw err;
+        },
+      };
+
+      await expect(
+        executeResearchSync({
+          db: {},
+          sdk: rejectingSdk,
+          user: { uid: "u_lecturer", email: "gv@tdtu.edu.vn", role: "lecturer" },
+          options: { dryRun: false, force: true },
+        })
+      ).rejects.toThrow(ResearchSyncStageError);
+
+      try {
+        await executeResearchSync({
+          db: {},
+          sdk: rejectingSdk,
+          user: { uid: "u_lecturer", email: "gv@tdtu.edu.vn", role: "lecturer" },
+          options: { dryRun: false, force: true },
+        });
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ResearchSyncStageError);
+        expect(err.stage).toBe("READ_CANDIDATES");
+        expect(err.collectionName).toContain("opportunityCandidates");
+        expect(err.message).toContain("READ_CANDIDATES");
+        expect(err.message).toContain("permission-denied");
+      }
+    });
+
+    it("throws ResearchSyncStageError with WRITE_NEW_CANDIDATE when creating a candidate fails", async () => {
+      const rejectingSdk: ResearchSyncSdk = {
+        ...mockSdk,
+        addDoc: async () => {
+          const err = new Error("Missing or insufficient permissions.");
+          (err as any).code = "permission-denied";
+          throw err;
+        },
+      };
+
+      try {
+        await executeResearchSync({
+          db: {},
+          sdk: rejectingSdk,
+          user: { uid: "u_admin", email: "admin@tdtu.edu.vn", role: "admin" },
+          options: { dryRun: false, force: true },
+        });
+      } catch (err: any) {
+        expect(err).toBeInstanceOf(ResearchSyncStageError);
+        expect(err.stage).toBe("WRITE_NEW_CANDIDATE");
+        expect(err.collectionName).toBe("opportunityCandidates");
+        expect(err.message).toContain("WRITE_NEW_CANDIDATE");
+      }
     });
   });
 });
