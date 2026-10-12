@@ -1536,3 +1536,99 @@ export async function setResearchTrackingStatusBatch(
   return validEmails.length;
 }
 
+// ======================== FACULTY RESEARCH SYNC (SPAK -> IFA-RH) ========================
+export interface FacultyResearchSyncState {
+  syncInProgress?: boolean;
+  lockId?: string;
+  syncStartedAt?: string;
+  syncStartedAtMs?: number;
+  syncStartedBy?: string;
+  lastSyncAt?: string;
+  lastSyncDate?: string;
+  lastSyncStatus?: "running" | "success" | "partial_success" | "failed";
+  lastSyncSource?: "github_schedule" | "github_dispatch" | "manual_admin" | "manual_cli";
+  lastSyncStats?: {
+    read: number;
+    valid: number;
+    created: number;
+    matched: number;
+    updated: number;
+    preservedAdmin: number;
+    duplicates: number;
+    errorCount: number;
+  };
+  durationMs?: number;
+  diagnostics?: Array<{
+    row: number;
+    stt: number | string;
+    title: string;
+    status: "created" | "matched" | "updated" | "preserved_admin" | "skipped" | "invalid";
+    action: string;
+    reason: string;
+    targetId?: string;
+  }>;
+  lastError?: string;
+  updatedAt?: string;
+}
+
+export async function fetchFacultyResearchSyncState(): Promise<FacultyResearchSyncState | null> {
+  try {
+    const snap = await getDoc(doc(firestore, "systemConfig", "facultyResearchSync"));
+    if (snap.exists()) {
+      return snap.data() as FacultyResearchSyncState;
+    }
+  } catch (err) {
+    console.warn("Could not fetch facultyResearchSync state:", err);
+  }
+  return null;
+}
+
+export function subscribeFacultyResearchSyncState(
+  callback: (state: FacultyResearchSyncState | null) => void
+): () => void {
+  const docRef = doc(firestore, "systemConfig", "facultyResearchSync");
+  return onSnapshot(
+    docRef,
+    (snap) => {
+      if (snap.exists()) {
+        callback(snap.data() as FacultyResearchSyncState);
+      } else {
+        callback(null);
+      }
+    },
+    (err) => {
+      console.warn("Subscription error on facultyResearchSync:", err);
+    }
+  );
+}
+
+export async function runFacultyResearchSyncClient(
+  user: { uid: string; email: string; role?: UserRole },
+  options?: { force?: boolean; dryRun?: boolean; sheetConfig?: { sheetId?: string; sheetName?: string } }
+) {
+  const { executeResearchSync } = await import("../services/researchSyncService");
+  const sdk = {
+    doc,
+    getDoc,
+    setDoc,
+    updateDoc,
+    collection,
+    getDocs,
+    addDoc,
+    serverTimestamp,
+  };
+  return executeResearchSync({
+    db: firestore,
+    sdk,
+    user: { uid: user.uid, email: user.email, role: user.role },
+    options: {
+      manual: true,
+      runSource: "manual_admin",
+      force: options?.force,
+      dryRun: options?.dryRun,
+      sheetConfig: options?.sheetConfig,
+    },
+  });
+}
+
+

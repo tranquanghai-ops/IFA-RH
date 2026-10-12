@@ -11,6 +11,7 @@ import {
 import type { OpportunityCandidate, Opportunity } from "../types";
 import { CandidateReviewModal } from "../components/CandidateReviewModal";
 import { FacultyResearchSyncModal } from "../components/FacultyResearchSyncModal";
+import { FacultyResearchSyncDashboard } from "../components/FacultyResearchSyncDashboard";
 import { formatDateVN } from "../utils/date";
 import { isDuplicateOpportunity } from "../utils/dedupe";
 import {
@@ -182,6 +183,12 @@ export const AdminCandidatesPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Automated Research Sync Dashboard */}
+      <FacultyResearchSyncDashboard
+        onSyncComplete={loadData}
+        onOpenSyncModal={() => setIsSyncModalOpen(true)}
+      />
 
       {/* Filter and Search Bar */}
       <div className="card" style={{ marginBottom: 20, padding: 16 }}>
