@@ -40,6 +40,94 @@ function cleanUndefined<T = any>(obj: T): T {
 }
 
 /**
+ * Sort journals by maxScore descending, then by Vietnamese name ascending.
+ */
+export function sortJournalsList(items: Journal[]): Journal[] {
+  return [...items].sort((a, b) => {
+    const scoreDiff = (b.maxScore || 0) - (a.maxScore || 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    return (a.name || "").localeCompare(b.name || "", "vi");
+  });
+}
+
+export interface JournalFilterCriteria {
+  category?: "domestic" | "international" | "all";
+  onlyActive?: boolean;
+  searchQuery?: string;
+  selectedField?: string;
+  selectedScore?: string;
+  selectedYear?: string;
+  selectedGuidelineStatus?: string;
+}
+
+/**
+ * Pure helper to filter and sort journals according to UI search/filter criteria.
+ */
+export function filterJournalsList(
+  journals: Journal[],
+  criteria: JournalFilterCriteria
+): Journal[] {
+  const {
+    category = "domestic",
+    onlyActive = false,
+    searchQuery = "",
+    selectedField = "all",
+    selectedScore = "all",
+    selectedYear = "all",
+    selectedGuidelineStatus = "all",
+  } = criteria;
+
+  const filtered = journals.filter((j) => {
+    if (onlyActive && j.status !== "active") return false;
+    if (category !== "all" && j.category !== category) return false;
+
+    if (searchQuery.trim().length > 0) {
+      const q = searchQuery.toLowerCase().trim();
+      const matchName = j.name?.toLowerCase().includes(q);
+      const matchEng = j.englishName?.toLowerCase().includes(q);
+      const matchPub = j.publisher?.toLowerCase().includes(q);
+      const matchIssnP = j.issnPrint?.toLowerCase().includes(q);
+      const matchIssnO = j.issnOnline?.toLowerCase().includes(q);
+      const matchField =
+        j.primaryField?.toLowerCase().includes(q) ||
+        (j.fields || []).some((f) => f.toLowerCase().includes(q)) ||
+        (j.scores || []).some((s) => s.councilName?.toLowerCase().includes(q));
+      if (!matchName && !matchEng && !matchPub && !matchIssnP && !matchIssnO && !matchField) {
+        return false;
+      }
+    }
+
+    if (selectedField !== "all") {
+      const inPrimary = j.primaryField === selectedField;
+      const inFields = (j.fields || []).includes(selectedField);
+      const inScores = (j.scores || []).some((s) => s.councilName === selectedField);
+      if (!inPrimary && !inFields && !inScores) return false;
+    }
+
+    if (selectedScore !== "all") {
+      const targetScore = parseFloat(selectedScore);
+      if (!isNaN(targetScore) && j.maxScore < targetScore) return false;
+    }
+
+    if (selectedYear !== "all") {
+      const targetYear = parseInt(selectedYear, 10);
+      const hasYearInScores = (j.scores || []).some((s) => s.year === targetYear);
+      if (j.maxScoreYear !== targetYear && !hasYearInScores) return false;
+    }
+
+    if (selectedGuidelineStatus === "has_guidelines") {
+      if (!j.guidelines?.hasGuidelines) return false;
+    } else if (selectedGuidelineStatus === "no_guidelines") {
+      if (j.guidelines?.hasGuidelines) return false;
+    }
+
+    return true;
+  });
+
+  return sortJournalsList(filtered);
+}
+
+/**
  * Subscribes to journals collection.
  * Public/lecturers receive only active journals. Admins receive all.
  */
@@ -48,11 +136,9 @@ export function subscribeJournals(
   options?: { includeHidden?: boolean }
 ) {
   const journalsRef = collection(firestore, "journals");
-  let q = query(journalsRef, orderBy("maxScore", "desc"));
-
-  if (!options?.includeHidden) {
-    q = query(journalsRef, where("status", "==", "active"), orderBy("maxScore", "desc"));
-  }
+  const q = !options?.includeHidden
+    ? query(journalsRef, where("status", "==", "active"))
+    : query(journalsRef);
 
   return onSnapshot(
     q,
@@ -61,7 +147,7 @@ export function subscribeJournals(
       snapshot.forEach((d) => {
         items.push({ id: d.id, ...(d.data() as any) });
       });
-      callback(items);
+      callback(sortJournalsList(items));
     },
     (error) => {
       console.warn("subscribeJournals snapshot error:", error);
@@ -79,18 +165,16 @@ export async function fetchJournals(options?: {
 }): Promise<Journal[]> {
   try {
     const journalsRef = collection(firestore, "journals");
-    let q = query(journalsRef, orderBy("maxScore", "desc"));
-
-    if (!options?.includeHidden) {
-      q = query(journalsRef, where("status", "==", "active"), orderBy("maxScore", "desc"));
-    }
+    const q = !options?.includeHidden
+      ? query(journalsRef, where("status", "==", "active"))
+      : query(journalsRef);
 
     const snapshot = await getDocs(q);
     const items: Journal[] = [];
     snapshot.forEach((d) => {
       items.push({ id: d.id, ...(d.data() as any) });
     });
-    return items;
+    return sortJournalsList(items);
   } catch (error) {
     console.error("fetchJournals error:", error);
     return [];

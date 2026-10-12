@@ -104,7 +104,7 @@ export const JournalDetailModal: React.FC<JournalDetailModalProps> = ({
               }}
             >
               <Award size={14} />
-              MÃ ĐỊNH DANH: {journal.journalId} · ĐIỂM TỐI ĐA: {journal.maxScore > 0 ? journal.maxScore.toFixed(2) : "0"} ({journal.maxScoreYear})
+              KHUNG ĐIỂM HĐGSNN ({journal.maxScoreYear || 2025}): TỐI ĐA {journal.maxScore > 0 ? journal.maxScore.toFixed(2) : "0"} ĐIỂM
             </div>
             <h2
               style={{
@@ -235,15 +235,25 @@ export const JournalDetailModal: React.FC<JournalDetailModalProps> = ({
                 fontSize: "0.95rem",
                 fontWeight: 700,
                 color: "#0f172a",
-                marginBottom: "10px",
+                marginBottom: "8px",
                 display: "flex",
                 alignItems: "center",
                 gap: "6px",
               }}
             >
               <Award size={17} color="#2563eb" />
-              2. Lịch sử điểm HĐGSNN & Nhóm ngành công nhận
+              2. Điểm công trình theo từng Hội đồng Giáo sư ngành / liên ngành
             </h4>
+            <p
+              style={{
+                fontSize: "0.82rem",
+                color: "#475569",
+                margin: "0 0 12px 0",
+                lineHeight: 1.5,
+              }}
+            >
+              Lưu ý: Khung điểm tối đa trên thẻ là mức điểm cao nhất được ghi nhận. Mức điểm cụ thể của bài báo phụ thuộc vào từng Hội đồng Giáo sư ngành/liên ngành và phân loại ấn phẩm/chuyên mục được công nhận dưới đây:
+            </p>
 
             {/* List of Disciplines */}
             <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "14px" }}>
@@ -307,7 +317,9 @@ export const JournalDetailModal: React.FC<JournalDetailModalProps> = ({
                       <th style={{ padding: "10px 12px", fontWeight: 600, color: "#475569" }}>
                         Văn bản phê duyệt
                       </th>
-                      <th style={{ padding: "10px 12px", fontWeight: 600, color: "#475569" }}>Ghi chú</th>
+                      <th style={{ padding: "10px 12px", fontWeight: 600, color: "#475569" }}>
+                        Loại ấn phẩm / Ghi chú
+                      </th>
                     </tr>
                   </thead>
                   <tbody>

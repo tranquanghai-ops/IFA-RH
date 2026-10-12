@@ -31,6 +31,7 @@ export const JournalCard: React.FC<JournalCardProps> = ({
   const hasWebsite = Boolean(journal.website && journal.website.trim().length > 0);
   const isValidUrl =
     hasWebsite &&
+    journal.websiteVerified !== false &&
     (journal.website?.startsWith("http://") || journal.website?.startsWith("https://"));
 
   const hasGuidelines = journal.guidelines?.hasGuidelines === true;
