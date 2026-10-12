@@ -911,15 +911,15 @@ export function buildJournalCandidatesFromSheet(
     const candidateStatus = isManualCheck ? "needs_review" : "pending";
 
     if (!matched) {
-      // Case A: Completely NEW journal!
-      newCount++;
-
       // Check if already in pending queue
       const existingPending = activePendingMap.get(incoming.journalId);
       if (existingPending) {
         skippedDuplicates++;
         return;
       }
+
+      // Case A: Completely NEW journal!
+      newCount++;
 
       // Deterministic ID for idempotency
       const candId = `cand_new_${incoming.journalId}`;

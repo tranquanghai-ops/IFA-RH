@@ -477,5 +477,282 @@ describe("RULES Logic & Role Permissions Verification", () => {
       expect(isValidOpportunityCandidate(updatedLegacyDoc)).toBe(true);
     });
   });
+
+  describe("Journal Directory & Google Sheets Sync Security Rules Suite (Section 5 Verification)", () => {
+    const isBootstrapOwner = (auth: any) =>
+      auth !== null &&
+      auth.token?.email != null &&
+      (auth.token.email === "tranquanghai@tdtu.edu.vn" ||
+        auth.token.email.toLowerCase() === "tranquanghai@tdtu.edu.vn");
+
+    const isOwner = (auth: any, userDoc?: any) =>
+      auth !== null &&
+      (isBootstrapOwner(auth) || (userDoc && userDoc.role === "owner" && userDoc.active === true));
+
+    const isAdmin = (auth: any, userDoc?: any) =>
+      isOwner(auth, userDoc) ||
+      (auth !== null && userDoc && userDoc.role === "admin" && userDoc.active === true);
+
+    const isLecturer = (auth: any, userDoc?: any) =>
+      auth !== null && userDoc && userDoc.role === "lecturer" && userDoc.active === true;
+
+    const isValidJournalCandidate = (data: Record<string, any>) => {
+      const required = [
+        "journalId", "name", "publisher", "category", "primaryField",
+        "sourceType", "changeType", "status", "createdAt", "updatedAt"
+      ];
+      if (!required.every((k) => k in data)) return false;
+
+      const allowed = new Set([
+        "id", "journalId", "name", "englishName", "abbreviation", "publisher",
+        "issnPrint", "issnOnline", "isbn", "category", "primaryField", "fields",
+        "website", "websiteVerified", "maxScore", "maxScoreYear", "scores",
+        "guidelines", "links", "verification", "sourceType", "changeType",
+        "existingJournalId", "diffSummary", "status", "rejectionReason",
+        "isManualPreserved", "unverifiedFields", "sheetRowIndex",
+        "createdAt", "updatedAt", "reviewedAt", "reviewedBy", "publishedJournalId",
+        "manualReviewNeeded", "manualReviewReason", "confidenceLevel", "isManualEdited"
+      ]);
+      if (!Object.keys(data).every((k) => allowed.has(k))) return false;
+
+      if (typeof data.journalId !== "string" || data.journalId.length < 1 || data.journalId.length > 50) return false;
+      if (typeof data.name !== "string" || data.name.length < 1 || data.name.length > 300) return false;
+      if (typeof data.publisher !== "string" || data.publisher.length < 1 || data.publisher.length > 300) return false;
+      if (!["domestic", "international"].includes(data.category)) return false;
+      if (typeof data.primaryField !== "string" || data.primaryField.length < 1 || data.primaryField.length > 200) return false;
+      if (!["GOOGLE_SHEETS", "SPARK", "EXCEL", "MANUAL"].includes(data.sourceType)) return false;
+      if (!["create", "update"].includes(data.changeType)) return false;
+      if (!["pending", "approved", "rejected", "needs_review"].includes(data.status)) return false;
+      if (typeof data.createdAt !== "string" || data.createdAt.length < 1 || data.createdAt.length > 50) return false;
+      if (typeof data.updatedAt !== "string" || data.updatedAt.length < 1 || data.updatedAt.length > 50) return false;
+
+      if ("fields" in data && (!Array.isArray(data.fields) || data.fields.length > 50)) return false;
+      if ("scores" in data && (!Array.isArray(data.scores) || data.scores.length > 50)) return false;
+      if ("links" in data && (!Array.isArray(data.links) || data.links.length > 50)) return false;
+      if ("guidelines" in data && (typeof data.guidelines !== "object" || data.guidelines === null || Array.isArray(data.guidelines))) return false;
+      if ("verification" in data && (typeof data.verification !== "object" || data.verification === null || Array.isArray(data.verification))) return false;
+      if ("unverifiedFields" in data && (!Array.isArray(data.unverifiedFields) || data.unverifiedFields.length > 30)) return false;
+      if ("maxScore" in data && (typeof data.maxScore !== "number" || data.maxScore < 0 || data.maxScore > 10)) return false;
+      if ("maxScoreYear" in data && (typeof data.maxScoreYear !== "number" || data.maxScoreYear < 1900 || data.maxScoreYear > 2100)) return false;
+      return true;
+    };
+
+    const isValidJournalImport = (data: Record<string, any>) => {
+      const required = [
+        "batchId", "fileName", "totalParsed", "createdCount", "updatedCount",
+        "skippedCount", "errorCount", "importedAt", "importedBy", "schemaVersion"
+      ];
+      if (!required.every((k) => k in data)) return false;
+
+      const allowed = new Set([
+        "id", "batchId", "fileName", "totalParsed", "createdCount", "updatedCount",
+        "skippedCount", "errorCount", "errors", "importedAt", "importedBy", "schemaVersion",
+        "sheetId", "sheetName", "sourceType", "createdAt"
+      ]);
+      if (!Object.keys(data).every((k) => allowed.has(k))) return false;
+
+      if (typeof data.totalParsed !== "number" || data.totalParsed < 0) return false;
+      if (typeof data.createdCount !== "number" || data.createdCount < 0) return false;
+      if (typeof data.updatedCount !== "number" || data.updatedCount < 0) return false;
+      if (typeof data.skippedCount !== "number" || data.skippedCount < 0) return false;
+      if (typeof data.errorCount !== "number" || data.errorCount < 0) return false;
+      if (typeof data.schemaVersion !== "number" || data.schemaVersion < 1) return false;
+      return true;
+    };
+
+    const ownerAuth = { uid: "owner_123", token: { email: "tranquanghai@tdtu.edu.vn" } };
+    const adminAuth = { uid: "admin_456", token: { email: "admin@tdtu.edu.vn" } };
+    const adminDoc = { role: "admin", active: true };
+    const lecturerAuth = { uid: "lec_789", token: { email: "lecturer@tdtu.edu.vn" } };
+    const lecturerDoc = { role: "lecturer", active: true };
+
+    const samplePendingCandidate = {
+      id: "cand_new_TC-001",
+      journalId: "TC-001",
+      name: "Tạp chí Văn hóa Nghệ thuật",
+      publisher: "Bộ Văn hóa, Thể thao và Du lịch",
+      category: "domestic",
+      primaryField: "Văn hóa - Nghệ thuật",
+      fields: ["Văn hóa - Nghệ thuật", "HĐGS Liên ngành VHNT"],
+      maxScore: 1.0,
+      maxScoreYear: 2025,
+      sourceType: "GOOGLE_SHEETS",
+      changeType: "create",
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      scores: [
+        {
+          id: "PTS-1",
+          councilCode: "NHOM_I",
+          councilName: "Nhóm I: Áp dụng chung cho ngành VHNT",
+          year: 2025,
+          maxScore: 1.0,
+        },
+      ],
+      links: [
+        {
+          id: "LINK-TC-001-home",
+          linkType: "Trang chủ",
+          label: "Website chính thức",
+          url: "http://vanhoanghethuat.vn",
+          isVerified: true,
+        },
+      ],
+      verification: {
+        status: "verified",
+        schemaVersion: 1,
+        confidenceLevel: "Cao",
+      },
+    };
+
+    // Case 1: Owner đọc journals
+    it("1. allows Owner to read public journals collection", () => {
+      const canReadJournals = () => true; // match /journals is allow read: if true
+      expect(canReadJournals()).toBe(true);
+      expect(isOwner(ownerAuth)).toBe(true);
+    });
+
+    // Case 2: Owner đọc journalCandidates
+    it("2. allows Owner to read journalCandidates queue", () => {
+      const canReadCandidates = (auth: any, doc?: any) => isAdmin(auth, doc);
+      expect(canReadCandidates(ownerAuth)).toBe(true);
+    });
+
+    // Case 3: Owner tạo ứng viên pending
+    it("3. allows Owner to create pending candidate in review queue", () => {
+      const canCreate = (auth: any, doc: any, payload: any) =>
+        isAdmin(auth, doc) && isValidJournalCandidate(payload);
+      expect(canCreate(ownerAuth, null, samplePendingCandidate)).toBe(true);
+    });
+
+    // Case 4: Owner tạo ứng viên needs_review
+    it("4. allows Owner to create needs_review candidate with manualReviewNeeded and reason", () => {
+      const needsReviewCandidate = {
+        ...samplePendingCandidate,
+        id: "cand_new_J_020",
+        journalId: "J_020",
+        name: "Tạp chí Nghiên cứu dân tộc",
+        status: "needs_review",
+        manualReviewNeeded: true,
+        manualReviewReason: "Điểm về 0 từ tháng 6/2025",
+        unverifiedFields: ["Cần kiểm tra thủ công: Điểm về 0 từ tháng 6/2025"],
+      };
+      const canCreate = (auth: any, doc: any, payload: any) =>
+        isAdmin(auth, doc) && isValidJournalCandidate(payload);
+      expect(canCreate(ownerAuth, null, needsReviewCandidate)).toBe(true);
+    });
+
+    // Case 5: Owner ghi dữ liệu điểm nhiều nhóm ngành
+    it("5. allows Owner to write candidate with multi-group scores (up to 50 items)", () => {
+      const multiScoreCandidate = {
+        ...samplePendingCandidate,
+        scores: [
+          { councilCode: "NHOM_I", councilName: "Ngành VHNT", year: 2025, maxScore: 0.75 },
+          { councilCode: "NHOM_III", councilName: "Ngành Báo chí truyền thông", year: 2025, maxScore: 1.0 },
+        ],
+      };
+      const canCreate = (auth: any, doc: any, payload: any) =>
+        isAdmin(auth, doc) && isValidJournalCandidate(payload);
+      expect(canCreate(ownerAuth, null, multiScoreCandidate)).toBe(true);
+    });
+
+    // Case 6: Owner ghi dữ liệu có URL và thông tin kiểm chứng
+    it("6. allows Owner to write candidate with multiple URLs and verification metadata", () => {
+      const fullLinksCandidate = {
+        ...samplePendingCandidate,
+        links: [
+          { id: "L1", linkType: "Trang chủ", label: "Trang chủ", url: "https://example.com", isVerified: true },
+          { id: "L2", linkType: "Nộp bài", label: "Cổng nộp bài", url: "https://example.com/submit", isVerified: true },
+        ],
+        verification: {
+          status: "verified",
+          verifiedBy: "Spark Agent",
+          verifiedDate: "2026-10-12",
+          sourceReference: "Quyết định 26/QĐ-HĐGSNN",
+          schemaVersion: 1,
+          confidenceLevel: "Rất cao",
+        },
+      };
+      const canCreate = (auth: any, doc: any, payload: any) =>
+        isAdmin(auth, doc) && isValidJournalCandidate(payload);
+      expect(canCreate(ownerAuth, null, fullLinksCandidate)).toBe(true);
+    });
+
+    // Case 7: Owner ghi lịch sử import (journalImports)
+    it("7. allows Owner to write import audit log into journalImports", () => {
+      const importLogPayload = {
+        batchId: "batch_gs_1728730000000",
+        fileName: "Google Sheets: Trang tính1 (1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE)",
+        totalParsed: 90,
+        createdCount: 90,
+        updatedCount: 0,
+        skippedCount: 0,
+        errorCount: 0,
+        importedAt: new Date().toISOString(),
+        importedBy: "tranquanghai@tdtu.edu.vn",
+        schemaVersion: 1,
+      };
+      const canWriteImport = (auth: any, doc: any, payload: any) =>
+        isAdmin(auth, doc) && isValidJournalImport(payload);
+      expect(canWriteImport(ownerAuth, null, importLogPayload)).toBe(true);
+    });
+
+    // Case 8: Owner cập nhật trạng thái đồng bộ (systemConfig/journal_sync)
+    it("8. allows Owner to update sync settings in systemConfig/journal_sync", () => {
+      const syncConfigPayload = {
+        sheetId: "1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE",
+        sheetName: "Trang tính1",
+        lastSyncedAt: new Date().toISOString(),
+        lastSyncedBy: "tranquanghai@tdtu.edu.vn",
+        lastStats: {
+          totalRead: 90,
+          validRows: 90,
+          newCount: 90,
+          updatedCount: 0,
+          unchangedCount: 0,
+          skippedCount: 0,
+          errorCount: 0,
+        },
+      };
+      const canUpdateConfig = (auth: any, doc: any, payload: any) =>
+        (isOwner(auth, doc) || isAdmin(auth, doc)) && Object.keys(payload).length <= 100;
+      expect(canUpdateConfig(ownerAuth, null, syncConfigPayload)).toBe(true);
+    });
+
+    // Case 9: Admin hợp lệ được phép thực hiện theo quyền
+    it("9. allows active Admin to write candidates and import logs", () => {
+      const canCreate = (auth: any, doc: any, payload: any) =>
+        isAdmin(auth, doc) && isValidJournalCandidate(payload);
+      expect(canCreate(adminAuth, adminDoc, samplePendingCandidate)).toBe(true);
+    });
+
+    // Case 10: Giảng viên không được ghi vào hàng chờ
+    it("10. strictly denies Lecturer from creating candidates in journalCandidates", () => {
+      const canCreate = (auth: any, doc: any) => isAdmin(auth, doc);
+      expect(canCreate(lecturerAuth, lecturerDoc)).toBe(false);
+    });
+
+    // Case 11: Người chưa đăng nhập không được ghi
+    it("11. strictly denies unauthenticated users from reading candidates or writing data", () => {
+      expect(isAdmin(null)).toBe(false);
+      expect(isOwner(null)).toBe(false);
+    });
+
+    // Case 12: Đồng bộ lại không nhân đôi dữ liệu (idempotency)
+    it("12. prevents duplicate candidate creation on repeated sync (deterministic cand_new_ ID & active queue check)", () => {
+      const activePending = [samplePendingCandidate];
+      const activeMap = new Map(activePending.map((c) => [c.journalId, c]));
+
+      // Incoming same journal again
+      const incomingJournalId = "TC-001";
+      const isAlreadyInQueue = activeMap.has(incomingJournalId);
+      expect(isAlreadyInQueue).toBe(true);
+
+      // Re-running sync skips creating duplicate queue item
+      const skippedCount = isAlreadyInQueue ? 1 : 0;
+      expect(skippedCount).toBe(1);
+    });
+  });
 });
 

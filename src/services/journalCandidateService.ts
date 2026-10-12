@@ -88,6 +88,53 @@ export async function fetchJournalCandidates(): Promise<JournalCandidate[]> {
   }
 }
 
+export type JournalSyncStage =
+  | "FETCH_SHEET"
+  | "READ_JOURNALS"
+  | "READ_CANDIDATES"
+  | "DIFF_ANALYSIS"
+  | "WRITE_CANDIDATE"
+  | "WRITE_IMPORT_LOG"
+  | "WRITE_CONFIG";
+
+export class JournalSyncStageError extends Error {
+  stage: JournalSyncStage;
+  collectionName: string;
+  documentId?: string;
+  operationType: "get" | "list" | "create" | "update" | "delete";
+  originalError: any;
+  userSummary: string;
+  actorUid?: string;
+  actorRole?: string;
+
+  constructor(params: {
+    stage: JournalSyncStage;
+    collectionName: string;
+    documentId?: string;
+    operationType: "get" | "list" | "create" | "update" | "delete";
+    originalError: any;
+    userSummary?: string;
+    actorUid?: string;
+    actorRole?: string;
+  }) {
+    const code = params.originalError?.code || (String(params.originalError?.message || "").includes("permission") ? "permission-denied" : "unknown");
+    const baseMsg = params.originalError?.message || String(params.originalError);
+    const friendlyMsg = `Lỗi tại bước ${params.stage} — Không đủ quyền thao tác trên ${params.collectionName}${
+      params.documentId ? `/${params.documentId}` : ""
+    } (${params.operationType}) — [${code}]: ${params.userSummary || baseMsg}`;
+    super(friendlyMsg);
+    this.name = "JournalSyncStageError";
+    this.stage = params.stage;
+    this.collectionName = params.collectionName;
+    this.documentId = params.documentId;
+    this.operationType = params.operationType;
+    this.originalError = params.originalError;
+    this.userSummary = params.userSummary || baseMsg;
+    this.actorUid = params.actorUid;
+    this.actorRole = params.actorRole;
+  }
+}
+
 /**
  * Save Google Sheets sync settings to systemConfig/journal_sync.
  */
@@ -134,55 +181,195 @@ export async function syncJournalsFromGoogleSheetsToQueue({
   skippedDuplicates: number;
   manualReviewCount: number;
   warnings: string[];
+  writtenCount: number;
+  batchId?: string;
 }> {
   const effectiveSheetId = sheetId || DEFAULT_JOURNAL_SPREADSHEET_ID;
   const effectiveSheetName = sheetName || DEFAULT_JOURNAL_SHEET_NAME;
 
   // 1. Fetch rows from Google Sheets
-  const sheetResult = await fetchJournalGoogleSheetRows(effectiveSheetId, effectiveSheetName);
-
-  // 2. Fetch existing journals and active pending candidates
-  const [existingJournals, existingCandidates] = await Promise.all([
-    fetchJournals({ includeHidden: true }),
-    fetchJournalCandidates(),
-  ]);
-
-  // 3. Build candidate diffs
-  const {
-    candidatesToCreate,
-    newCount,
-    updatedCount,
-    unchangedCount,
-    skippedDuplicates,
-  } = buildJournalCandidatesFromSheet(
-    sheetResult.validJournals,
-    existingJournals,
-    existingCandidates
-  );
-
-  // 4. Write candidates to Firestore
-  for (const cand of candidatesToCreate) {
-    const docRef = doc(firestore, "journalCandidates", cand.id);
-    await setDoc(docRef, cleanUndefined(cand));
+  let sheetResult: any;
+  try {
+    sheetResult = await fetchJournalGoogleSheetRows(effectiveSheetId, effectiveSheetName);
+    if (!sheetResult || !Array.isArray(sheetResult.validJournals)) {
+      throw new Error("Không có dữ liệu hợp lệ trả về từ Google Sheets.");
+    }
+  } catch (sheetErr: any) {
+    throw new JournalSyncStageError({
+      stage: "FETCH_SHEET",
+      collectionName: "google_sheets",
+      operationType: "get",
+      originalError: sheetErr,
+      userSummary: `Lỗi kết nối hoặc đọc Google Sheets (${effectiveSheetName}): ${sheetErr.message || "Không thể đọc dữ liệu"}`,
+      actorUid: user.uid,
+      actorRole: user.email,
+    });
   }
 
-  // 5. Update sync settings and history log
+  // 2. Fetch existing journals and active pending candidates
+  let existingJournals: Journal[] = [];
+  try {
+    existingJournals = await fetchJournals({ includeHidden: true });
+  } catch (jErr: any) {
+    throw new JournalSyncStageError({
+      stage: "READ_JOURNALS",
+      collectionName: "journals",
+      operationType: "list",
+      originalError: jErr,
+      userSummary: "Không đủ quyền đọc danh mục tạp chí đã công bố",
+      actorUid: user.uid,
+      actorRole: user.email,
+    });
+  }
+
+  let existingCandidates: JournalCandidate[] = [];
+  try {
+    const colRef = collection(firestore, "journalCandidates");
+    const q = query(colRef, orderBy("createdAt", "desc"));
+    const snap = await getDocs(q);
+    snap.forEach((d) => {
+      existingCandidates.push({ id: d.id, ...(d.data() as any) });
+    });
+  } catch (cErr: any) {
+    throw new JournalSyncStageError({
+      stage: "READ_CANDIDATES",
+      collectionName: "journalCandidates",
+      operationType: "list",
+      originalError: cErr,
+      userSummary: "Không đủ quyền đọc danh sách ứng viên trong hàng chờ duyệt",
+      actorUid: user.uid,
+      actorRole: user.email,
+    });
+  }
+
+  // 3. Build candidate diffs
+  let candidatesToCreate: JournalCandidate[] = [];
+  let newCount = 0;
+  let updatedCount = 0;
+  let unchangedCount = 0;
+  let skippedDuplicates = 0;
+  try {
+    const diff = buildJournalCandidatesFromSheet(
+      sheetResult.validJournals,
+      existingJournals,
+      existingCandidates
+    );
+    candidatesToCreate = diff.candidatesToCreate;
+    newCount = diff.newCount;
+    updatedCount = diff.updatedCount;
+    unchangedCount = diff.unchangedCount;
+    skippedDuplicates = diff.skippedDuplicates;
+  } catch (diffErr: any) {
+    throw new JournalSyncStageError({
+      stage: "DIFF_ANALYSIS",
+      collectionName: "in_memory",
+      operationType: "get",
+      originalError: diffErr,
+      userSummary: "Lỗi trong quá trình phân tích và so khớp hồ sơ tạp chí",
+      actorUid: user.uid,
+      actorRole: user.email,
+    });
+  }
+
+  // 4. Write candidates to Firestore with granular per-document diagnostics
+  let writtenCount = 0;
+  const existingMap = new Map(existingCandidates.map((c) => [c.id, c]));
+
+  for (const cand of candidatesToCreate) {
+    const docRef = doc(firestore, "journalCandidates", cand.id);
+    const existing = existingMap.get(cand.id);
+
+    // If candidate already exists in queue, preserve original createdAt to ensure immutability compliance
+    const candidatePayload: JournalCandidate = {
+      ...cand,
+      createdAt: existing?.createdAt || cand.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await setDoc(docRef, cleanUndefined(candidatePayload));
+      writtenCount++;
+    } catch (writeErr: any) {
+      throw new JournalSyncStageError({
+        stage: "WRITE_CANDIDATE",
+        collectionName: "journalCandidates",
+        documentId: cand.id,
+        operationType: existing ? "update" : "create",
+        originalError: writeErr,
+        userSummary: `Không đủ quyền lưu ứng viên "${cand.name}" (ID: ${cand.journalId}, Trạng thái: ${cand.status}). Đã lưu thành công ${writtenCount}/${candidatesToCreate.length} bản ghi trước khi gặp lỗi.`,
+        actorUid: user.uid,
+        actorRole: user.email,
+      });
+    }
+  }
+
+  // 5. Write audit log entry in journalImports
   const now = new Date().toISOString();
-  await saveJournalSyncSettings({
-    sheetId,
-    sheetName,
-    lastSyncedAt: now,
-    lastSyncedBy: user.email || user.uid,
-    lastStats: {
-      totalRead: sheetResult.totalRows,
-      validRows: sheetResult.validJournals.length,
-      newCount,
+  const batchId = `batch_gs_${Date.now()}`;
+  try {
+    const importLog = {
+      batchId,
+      fileName: `Google Sheets: ${effectiveSheetName} (${effectiveSheetId})`,
+      totalParsed: sheetResult.totalRows,
+      createdCount: newCount,
       updatedCount,
-      unchangedCount,
       skippedCount: skippedDuplicates,
       errorCount: sheetResult.warnings.length,
-    },
-  });
+      errors: sheetResult.warnings.map((w: string) => ({ message: w })),
+      importedAt: now,
+      importedBy: user.email || user.uid,
+      schemaVersion: 1,
+      sheetId: effectiveSheetId,
+      sheetName: effectiveSheetName,
+      sourceType: "GOOGLE_SHEETS",
+      createdAt: now,
+    };
+    const logRef = doc(firestore, "journalImports", batchId);
+    await setDoc(logRef, cleanUndefined(importLog));
+  } catch (importErr: any) {
+    console.warn("Lỗi ghi nhật ký journalImports:", importErr);
+    throw new JournalSyncStageError({
+      stage: "WRITE_IMPORT_LOG",
+      collectionName: "journalImports",
+      documentId: batchId,
+      operationType: "create",
+      originalError: importErr,
+      userSummary: `Không đủ quyền ghi lịch sử đồng bộ vào journalImports. (Lưu ý: ${writtenCount} ứng viên đã được đưa vào hàng chờ duyệt thành công).`,
+      actorUid: user.uid,
+      actorRole: user.email,
+    });
+  }
+
+  // 6. Update sync settings in systemConfig/journal_sync
+  try {
+    await saveJournalSyncSettings({
+      sheetId: effectiveSheetId,
+      sheetName: effectiveSheetName,
+      lastSyncedAt: now,
+      lastSyncedBy: user.email || user.uid,
+      lastStats: {
+        totalRead: sheetResult.totalRows,
+        validRows: sheetResult.validJournals.length,
+        newCount,
+        updatedCount,
+        unchangedCount,
+        skippedCount: skippedDuplicates,
+        errorCount: sheetResult.warnings.length,
+      },
+    });
+  } catch (configErr: any) {
+    console.warn("Lỗi ghi cấu hình systemConfig/journal_sync:", configErr);
+    throw new JournalSyncStageError({
+      stage: "WRITE_CONFIG",
+      collectionName: "systemConfig",
+      documentId: "journal_sync",
+      operationType: "update",
+      originalError: configErr,
+      userSummary: `Không đủ quyền cập nhật cấu hình đồng bộ trong systemConfig/journal_sync. (Lưu ý: ${writtenCount} ứng viên đã được đưa vào hàng chờ duyệt thành công).`,
+      actorUid: user.uid,
+      actorRole: user.email,
+    });
+  }
 
   return {
     success: true,
@@ -193,6 +380,8 @@ export async function syncJournalsFromGoogleSheetsToQueue({
     skippedDuplicates,
     manualReviewCount: sheetResult.manualReviewCount,
     warnings: sheetResult.warnings,
+    writtenCount,
+    batchId,
   };
 }
 
