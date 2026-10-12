@@ -604,8 +604,8 @@ async function main() {
         db.collection('opportunities').get(),
       ]);
 
-      existingCandidates = candsSnap.docs.map(d => ({ id: d.id, _targetType: 'candidate', ...d.data() }));
-      existingOpportunities = oppsSnap.docs.map(d => ({ id: d.id, _targetType: 'opportunity', ...d.data() }));
+      existingCandidates = candsSnap.docs.map(d => ({ ...d.data(), id: d.id, _targetType: 'candidate' }));
+      existingOpportunities = oppsSnap.docs.map(d => ({ ...d.data(), id: d.id, _targetType: 'opportunity' }));
       console.log(`Tìm thấy: ${existingCandidates.length} ứng viên chờ duyệt, ${existingOpportunities.length} cơ hội đã đăng.`);
     }
 

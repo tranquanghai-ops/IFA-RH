@@ -396,5 +396,32 @@ describe("Research Data Sync Suite", () => {
         expect(err.message).toContain("WRITE_NEW_CANDIDATE");
       }
     });
+
+    it("strips synthetic spark_opp_* id on addDoc and prioritizes real Firestore d.id over legacy internal data.id", async () => {
+      // Seed an existing candidate with real doc ID "c5zPwXoY2SJNjwDgEDZw" but legacy internal id "spark_opp_20261012-01_1"
+      mockStore.opportunityCandidates["c5zPwXoY2SJNjwDgEDZw"] = {
+        id: "spark_opp_20261012-01_1",
+        title: "Hội thảo khoa học quốc tế lần thứ 3 về Tương tác Người – AI và Thiết kế Trải nghiệm (HAXD 2027)",
+        sourceUrl: "https://haxd2027.example.org",
+        organizer: "Old Organizer",
+        status: "pending",
+        updatedBy: "SPARK_SYNC",
+      };
+
+      const outcome = await executeResearchSync({
+        db: {},
+        sdk: mockSdk,
+        user: { uid: "u_admin", email: "nguyenthithuyha1@tdtu.edu.vn", role: "admin" },
+        options: { dryRun: false, force: true },
+      });
+
+      expect(outcome.status).toBe("success");
+      // Verify newly created candidates in mockStore do NOT have a synthetic "spark_opp_*" id stored inside their fields
+      for (const [docId, docData] of Object.entries(mockStore.opportunityCandidates)) {
+        if (docId !== "c5zPwXoY2SJNjwDgEDZw") {
+          expect(docData.id).toBeUndefined();
+        }
+      }
+    });
   });
 });

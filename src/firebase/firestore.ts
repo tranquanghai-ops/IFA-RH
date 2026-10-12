@@ -66,7 +66,7 @@ export async function fetchAuditLogs(limitCount = 100): Promise<AuditLog[]> {
     limit(limitCount)
   );
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as AuditLog));
+  return snap.docs.map((d) => ({ ...d.data(), id: d.id } as AuditLog));
 }
 
 export function deduplicateUsers(users: UserProfile[]): UserProfile[] {
@@ -118,7 +118,7 @@ export function deduplicateUsers(users: UserProfile[]): UserProfile[] {
 // ======================== USERS & ROLES ========================
 export async function fetchAllUsers(): Promise<UserProfile[]> {
   const snap = await getDocs(collection(firestore, "users"));
-  const rawList = snap.docs.map((d) => ({ id: d.id, ...d.data() } as UserProfile));
+  const rawList = snap.docs.map((d) => ({ ...d.data(), id: d.id } as UserProfile));
   return deduplicateUsers(rawList);
 }
 
@@ -199,7 +199,7 @@ export async function fetchActiveLecturers(): Promise<UserProfile[]> {
     console.warn("fetchActiveLecturers error, falling back to users collection:", err);
     const snap = await getDocs(collection(firestore, "users"));
     const rawList = snap.docs
-      .map((d) => ({ id: d.id, ...d.data() } as UserProfile))
+      .map((d) => ({ ...d.data(), id: d.id } as UserProfile))
       .filter((u) => u.active === true);
     return deduplicateUsers(rawList).sort((a, b) =>
       (a.name || "").localeCompare(b.name || "", "vi")
@@ -211,7 +211,7 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
   const docRef = doc(firestore, "users", uid);
   const snap = await getDoc(docRef);
   if (snap.exists()) {
-    return { id: snap.id, ...snap.data() } as UserProfile;
+    return { ...snap.data(), id: snap.id } as UserProfile;
   }
   return null;
 }
@@ -404,14 +404,14 @@ export async function fetchPublishedOpportunities(): Promise<Opportunity[]> {
     where("status", "==", "published")
   );
   const snap = await getDocs(q);
-  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Opportunity));
+  const list = snap.docs.map((d) => ({ ...d.data(), id: d.id } as Opportunity));
   // Sort descending by deadline or createdAt
   return list.sort((a, b) => (b.deadline || b.createdAt).localeCompare(a.deadline || a.createdAt));
 }
 
 export async function fetchAllOpportunities(): Promise<Opportunity[]> {
   const snap = await getDocs(collection(firestore, "opportunities"));
-  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Opportunity));
+  const list = snap.docs.map((d) => ({ ...d.data(), id: d.id } as Opportunity));
   return list.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
 }
 
@@ -632,9 +632,32 @@ export async function recallOpportunityToCandidateQueue(
 export async function fetchOpportunityCandidates(): Promise<OpportunityCandidate[]> {
   const snap = await getDocs(collection(firestore, "opportunityCandidates"));
   const list = snap.docs.map(
-    (d) => ({ id: d.id, ...d.data() } as OpportunityCandidate)
+    (d) => ({ ...d.data(), id: d.id } as OpportunityCandidate)
   );
-  return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return list.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+}
+
+async function resolveCandidateDocRef(candidateId: string): Promise<DocumentReference> {
+  const directRef = doc(firestore, "opportunityCandidates", candidateId);
+  try {
+    const directSnap = await getDoc(directRef);
+    if (directSnap.exists()) {
+      return directRef;
+    }
+    const fallbackSnap = await getDocs(
+      query(
+        collection(firestore, "opportunityCandidates"),
+        where("id", "==", candidateId),
+        limit(1)
+      )
+    );
+    if (!fallbackSnap.empty) {
+      return fallbackSnap.docs[0].ref;
+    }
+  } catch {
+    // Fallback to directRef if lookup fails
+  }
+  return directRef;
 }
 
 export async function addCandidate(
@@ -643,10 +666,10 @@ export async function addCandidate(
 ): Promise<string> {
   const now = new Date().toISOString();
   
-  // Clean undefined properties for Firestore safety
+  // Clean undefined properties and any conflicting internal id for Firestore safety
   const cleanData: any = {};
   for (const [k, v] of Object.entries(data)) {
-    if (v !== undefined) {
+    if (v !== undefined && k !== "id") {
       cleanData[k] = v;
     }
   }
@@ -676,29 +699,47 @@ export async function approveCandidate(
 ) {
   const now = new Date().toISOString();
 
-  const requiredText = [
-    ["tiêu đề", candidate.title], ["đơn vị tổ chức", candidate.organizer],
-    ["chủ đề", candidate.topic], ["ngành phù hợp", candidate.field],
-    ["hạn nộp", candidate.deadline], ["mô tả", candidate.content],
-  ] as const;
-  const missing = requiredText.find(([, value]) => !String(value || "").trim());
-  if (missing) throw new Error(`Chưa thể công bố: thiếu ${missing[0]}. Vui lòng bổ sung thông tin trước khi duyệt.`);
+  const resolvedTitle = String(candidate.title || "").trim();
+  if (!resolvedTitle) {
+    throw new Error("Chưa thể công bố: thiếu tiêu đề hội thảo / cơ hội NCKH.");
+  }
+
+  const resolvedOrganizer = String(candidate.organizer || "Đang cập nhật").trim();
+  const resolvedCountry = String(candidate.country || "Việt Nam").trim();
+  const resolvedType = candidate.type || "Hội thảo";
+  const resolvedLevel = candidate.level || "Quốc tế";
+  const resolvedTopic = String(candidate.topic || candidate.field || resolvedTitle || "Nghiên cứu khoa học").trim();
+  const resolvedField = String(candidate.field || "Chung Khoa MTCN").trim();
+  const resolvedDeadline = String(
+    candidate.deadline ||
+      candidate.fullPaperDeadline ||
+      candidate.abstractDeadline ||
+      candidate.registrationDeadline ||
+      candidate.eventDate ||
+      "Đang cập nhật"
+  ).trim();
+  const resolvedContent = String(
+    candidate.content || candidate.detailedContent || resolvedTitle || "Thông tin cơ hội NCKH"
+  ).trim();
+
+  const candRef = await resolveCandidateDocRef(candidate.id);
+  const resolvedCandId = candRef.id;
 
   // 1. Create published opportunity
   const oppData: any = {
-    title: candidate.title,
-    organizer: candidate.organizer,
-    country: candidate.country || "Việt Nam",
-    type: candidate.type,
-    level: candidate.level,
-    topic: candidate.topic || "",
-    field: candidate.field || "",
-    tags: candidate.tags || [],
-    deadline: candidate.deadline,
-    content: candidate.content || "",
+    title: resolvedTitle,
+    organizer: resolvedOrganizer,
+    country: resolvedCountry,
+    type: resolvedType,
+    level: resolvedLevel,
+    topic: resolvedTopic,
+    field: resolvedField,
+    tags: Array.isArray(candidate.tags) ? candidate.tags : [],
+    deadline: resolvedDeadline,
+    content: resolvedContent,
     sourceType: "SPARK",
     status: "published",
-    candidateId: candidate.id,
+    candidateId: resolvedCandId,
     createdBy: actor.email,
   };
 
@@ -729,17 +770,17 @@ export async function approveCandidate(
   // mark its candidate. Reuse that document instead of creating a duplicate.
   const previous = await getDocs(query(
     collection(firestore, "opportunities"),
-    where("candidateId", "==", candidate.id),
+    where("candidateId", "==", resolvedCandId),
     limit(1)
   ));
   if (!previous.empty && previous.docs[0].data().status !== "published") {
     throw new Error("Cơ hội này đã có bản công bố được lưu trữ. Vui lòng kiểm tra trước khi duyệt lại.");
   }
   const oppRef = previous.empty ? doc(collection(firestore, "opportunities")) : previous.docs[0].ref;
-  const candRef = doc(firestore, "opportunityCandidates", candidate.id);
   const batch = writeBatch(firestore);
   if (previous.empty) batch.set(oppRef, { ...oppData, createdAt: now, updatedAt: now });
   batch.update(candRef, {
+    id: resolvedCandId,
     status: "approved",
     reviewedBy: actor.email,
     reviewedAt: now,
@@ -752,8 +793,8 @@ export async function approveCandidate(
     actor,
     "APPROVE_CANDIDATE",
     "candidate",
-    candidate.id,
-    `Duyệt cơ hội Spark: "${candidate.title}" -> công bố sang Opportunities (${oppRef.id})`
+    resolvedCandId,
+    `Duyệt cơ hội Spark: "${resolvedTitle}" -> công bố sang Opportunities (${oppRef.id})`
   );
 }
 
@@ -764,8 +805,9 @@ export async function rejectCandidate(
   actor: { uid: string; email: string; role: UserRole }
 ) {
   const now = new Date().toISOString();
-  const candRef = doc(firestore, "opportunityCandidates", candidateId);
+  const candRef = await resolveCandidateDocRef(candidateId);
   await updateDoc(candRef, {
+    id: candRef.id,
     status: "rejected",
     rejectionReason: reason,
     reviewedBy: actor.email,
@@ -777,7 +819,7 @@ export async function rejectCandidate(
     actor,
     "REJECT_CANDIDATE",
     "candidate",
-    candidateId,
+    candRef.id,
     `Từ chối ứng viên cơ hội Spark: "${candidateTitle}" (Lý do: ${reason})`
   );
 }
@@ -789,8 +831,9 @@ export async function markCandidateNeedsReview(
   actor: { uid: string; email: string; role: UserRole }
 ) {
   const now = new Date().toISOString();
-  const candRef = doc(firestore, "opportunityCandidates", candidateId);
+  const candRef = await resolveCandidateDocRef(candidateId);
   await updateDoc(candRef, {
+    id: candRef.id,
     status: "needs_review",
     rejectionReason: reason || "Yêu cầu hiệu chỉnh thông tin",
     reviewedBy: actor.email,
@@ -802,7 +845,7 @@ export async function markCandidateNeedsReview(
     actor,
     "UPDATE_CANDIDATE",
     "candidate",
-    candidateId,
+    candRef.id,
     `Yêu cầu hiệu chỉnh ứng viên cơ hội Spark: "${candidateTitle}" (Lý do: ${reason || "Không có"})`
   );
 }
@@ -812,12 +855,13 @@ export async function deleteCandidate(
   candidateTitle: string,
   actor: { uid: string; email: string; role: UserRole }
 ) {
-  await deleteDoc(doc(firestore, "opportunityCandidates", candidateId));
+  const candRef = await resolveCandidateDocRef(candidateId);
+  await deleteDoc(candRef);
   await logAudit(
     actor,
     "DELETE_CANDIDATE",
     "candidate",
-    candidateId,
+    candRef.id,
     `Xóa ứng viên cơ hội: "${candidateTitle}"`
   );
 }
@@ -860,7 +904,7 @@ export async function fetchResearchWorks(
     q = query(collection(firestore, "researchWorks"), where("userId", "==", targetIdentifier));
   }
   const snap = await getDocs(q);
-  let list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ResearchWork));
+  let list = snap.docs.map((d) => ({ ...d.data(), id: d.id } as ResearchWork));
 
   if (isStaff && targetIdentifier && targetIdentifier !== "all") {
     const term = targetIdentifier.trim().toLowerCase();
@@ -1013,7 +1057,7 @@ export async function fetchResearchProgressHistory(
     where("researchId", "==", researchId)
   );
   const snap = await getDocs(q);
-  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as ResearchProgress));
+  const list = snap.docs.map((d) => ({ ...d.data(), id: d.id } as ResearchProgress));
   return list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
@@ -1027,7 +1071,7 @@ export async function fetchPublications(
     q = query(collection(firestore, "publications"), where("userId", "==", targetIdentifier));
   }
   const snap = await getDocs(q);
-  let list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as Publication));
+  let list = snap.docs.map((d) => ({ ...d.data(), id: d.id } as Publication));
 
   if (isStaff && targetIdentifier && targetIdentifier !== "all") {
     const term = targetIdentifier.trim().toLowerCase();
@@ -1207,7 +1251,7 @@ export async function fetchImports(limitCount = 50): Promise<ImportBatch[]> {
     limit(limitCount)
   );
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as ImportBatch));
+  return snap.docs.map((d) => ({ ...d.data(), id: d.id } as ImportBatch));
 }
 
 // ======================== SHARED PERSONNEL MIRROR ========================

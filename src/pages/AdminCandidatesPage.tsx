@@ -85,6 +85,13 @@ export const AdminCandidatesPage: React.FC = () => {
   const [selectedCandidate, setSelectedCandidate] = useState<OpportunityCandidate | null>(null);
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
   const [bulkApproving, setBulkApproving] = useState(false);
+  const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [actionMessage, setActionMessage] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
+  const [hasInitializedTab, setHasInitializedTab] = useState(false);
 
   const loadData = async () => {
     setLoading(true);
@@ -95,8 +102,23 @@ export const AdminCandidatesPage: React.FC = () => {
       ]);
       setCandidates(cands);
       setPublishedOpps(opps);
+      if (!hasInitializedTab) {
+        const pendingCount = cands.filter((c) => getCandidatePrimaryCategory(c) === "pending").length;
+        const todayCount = cands.filter((c) => getCandidatePrimaryCategory(c) === "today").length;
+        const needsReviewCount = cands.filter((c) => getCandidatePrimaryCategory(c) === "needs_review").length;
+        if (pendingCount === 0 && todayCount > 0) {
+          setActiveTab("today");
+        } else if (pendingCount === 0 && todayCount === 0 && needsReviewCount > 0) {
+          setActiveTab("needs_review");
+        }
+        setHasInitializedTab(true);
+      }
     } catch (err: any) {
       console.error(err);
+      setActionMessage({
+        type: "error",
+        text: "Không thể tải danh sách ứng viên: " + (err?.message || String(err)),
+      });
     } finally {
       setLoading(false);
     }
@@ -148,7 +170,101 @@ export const AdminCandidatesPage: React.FC = () => {
     });
   }, [candidates, activeTab, searchQuery]);
 
+  const approvableInView = useMemo(
+    () => filteredCandidates.filter((c) => c.status !== "approved"),
+    [filteredCandidates]
+  );
+
   if (!profile) return null;
+
+  const toggleSelectOne = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllInView = () => {
+    if (approvableInView.length === 0) return;
+    const allSelected = approvableInView.every((c) => selectedIds.has(c.id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        approvableInView.forEach((c) => next.delete(c.id));
+      } else {
+        approvableInView.forEach((c) => next.add(c.id));
+      }
+      return next;
+    });
+  };
+
+  const handleQuickApprove = async (cand: OpportunityCandidate) => {
+    setApprovingId(cand.id);
+    setActionMessage(null);
+    try {
+      await approveCandidate(cand, {
+        uid: profile.uid,
+        email: profile.email,
+        role: profile.role,
+      });
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(cand.id);
+        return next;
+      });
+      setActionMessage({
+        type: "success",
+        text: `Đã duyệt và công bố "${cand.title}" lên Cổng thông tin NCKH.`,
+      });
+      await loadData();
+    } catch (err: any) {
+      console.error("Failed to quick approve candidate:", err);
+      setActionMessage({
+        type: "error",
+        text: `Lỗi khi duyệt "${cand.title}": ${err?.message || String(err)}`,
+      });
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
+  const handleApproveSelected = async () => {
+    const selectedCands = candidates.filter(
+      (c) => selectedIds.has(c.id) && c.status !== "approved"
+    );
+    if (selectedCands.length === 0) return;
+
+    setBulkApproving(true);
+    setActionMessage(null);
+    let okCount = 0;
+    try {
+      for (const cand of selectedCands) {
+        await approveCandidate(cand, {
+          uid: profile.uid,
+          email: profile.email,
+          role: profile.role,
+        });
+        okCount++;
+      }
+      setSelectedIds(new Set());
+      setActionMessage({
+        type: "success",
+        text: `Đã duyệt và công bố thành công ${okCount} hội thảo / cơ hội NCKH.`,
+      });
+      await loadData();
+    } catch (err: any) {
+      console.error("Failed to approve selected candidates:", err);
+      setActionMessage({
+        type: "error",
+        text: `Đã duyệt ${okCount}/${selectedCands.length} mục. Lỗi: ${err?.message || String(err)}`,
+      });
+      await loadData();
+    } finally {
+      setBulkApproving(false);
+    }
+  };
 
   const handleBulkApproveOpen = async () => {
     const openCandidates = candidates.filter((c) => {
@@ -156,15 +272,10 @@ export const AdminCandidatesPage: React.FC = () => {
       return cat === "pending" || cat === "today";
     });
     if (openCandidates.length === 0) return;
-    if (
-      !window.confirm(
-        `Duyệt và xuất bản ${openCandidates.length} cơ hội đang mở sang Cổng NCKH công khai?`
-      )
-    ) {
-      return;
-    }
 
     setBulkApproving(true);
+    setActionMessage(null);
+    let okCount = 0;
     try {
       for (const cand of openCandidates) {
         await approveCandidate(cand, {
@@ -172,11 +283,21 @@ export const AdminCandidatesPage: React.FC = () => {
           email: profile.email,
           role: profile.role,
         });
+        okCount++;
       }
+      setSelectedIds(new Set());
+      setActionMessage({
+        type: "success",
+        text: `Đã duyệt và công bố thành công toàn bộ ${okCount} cơ hội đang mở sang Cổng NCKH công khai.`,
+      });
       await loadData();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert("Lỗi khi duyệt hàng loạt: " + err);
+      setActionMessage({
+        type: "error",
+        text: `Lỗi khi duyệt hàng loạt (${okCount}/${openCandidates.length}): ${err?.message || String(err)}`,
+      });
+      await loadData();
     } finally {
       setBulkApproving(false);
     }
@@ -219,6 +340,27 @@ export const AdminCandidatesPage: React.FC = () => {
           >
             <Sparkles size={14} /> Đồng bộ từ IFA Faculty Research
           </button>
+
+          {selectedIds.size > 0 && (
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={handleApproveSelected}
+              disabled={bulkApproving}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                background: "#16a34a",
+                color: "#ffffff",
+                border: "none",
+                fontWeight: 600,
+              }}
+            >
+              <CheckCircle size={14} />
+              {bulkApproving ? "Đang duyệt..." : `Duyệt & Công bố (${selectedIds.size} mục)`}
+            </button>
+          )}
 
           {candidates.some((c) => {
             const cat = getCandidatePrimaryCategory(c);
@@ -337,6 +479,52 @@ export const AdminCandidatesPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Action Status Banner */}
+      {actionMessage && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: "12px 16px",
+            borderRadius: 8,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            background: actionMessage.type === "success" ? "#dcfce7" : "#fee2e2",
+            color: actionMessage.type === "success" ? "#166534" : "#991b1b",
+            border:
+              actionMessage.type === "success"
+                ? "1px solid #86efac"
+                : "1px solid #fca5a5",
+            fontSize: "0.9rem",
+            fontWeight: 500,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {actionMessage.type === "success" ? (
+              <CheckCircle size={18} />
+            ) : (
+              <AlertTriangle size={18} />
+            )}
+            <span>{actionMessage.text}</span>
+          </div>
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => setActionMessage(null)}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "inherit",
+              fontWeight: 700,
+              padding: "2px 8px",
+            }}
+          >
+            Đóng
+          </button>
+        </div>
+      )}
+
       {/* Content Area */}
       {loading ? (
         <div style={{ textAlign: "center", padding: 48, color: "var(--muted)" }}>
@@ -357,13 +545,25 @@ export const AdminCandidatesPage: React.FC = () => {
           <table className="table" style={{ width: "100%" }}>
             <thead>
               <tr>
+                <th style={{ width: 40, textAlign: "center" }}>
+                  <input
+                    type="checkbox"
+                    checked={
+                      approvableInView.length > 0 &&
+                      approvableInView.every((c) => selectedIds.has(c.id))
+                    }
+                    onChange={toggleSelectAllInView}
+                    disabled={approvableInView.length === 0}
+                    title="Chọn tất cả mục chưa duyệt trong trang này"
+                  />
+                </th>
                 <th style={{ minWidth: 260 }}>Tiêu đề hội thảo / Cơ hội</th>
                 <th style={{ minWidth: 160 }}>Đơn vị tổ chức</th>
                 <th style={{ width: 140, textAlign: "center" }}>Loại / Cấp độ</th>
                 <th style={{ width: 160 }}>Hạn nộp & Diễn ra</th>
                 <th style={{ width: 90, textAlign: "center" }}>Trùng lặp?</th>
                 <th style={{ width: 120, textAlign: "center" }}>Trạng thái</th>
-                <th style={{ width: 100, textAlign: "right" }}>Thao tác</th>
+                <th style={{ width: 190, textAlign: "right" }}>Thao tác</th>
               </tr>
             </thead>
             <tbody>
@@ -380,9 +580,20 @@ export const AdminCandidatesPage: React.FC = () => {
                 );
 
                 const primaryCat = getCandidatePrimaryCategory(cand);
+                const isApproved = cand.status === "approved";
+                const isApprovingThis = approvingId === cand.id;
 
                 return (
                   <tr key={cand.id}>
+                    <td style={{ textAlign: "center" }}>
+                      {!isApproved && (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(cand.id)}
+                          onChange={() => toggleSelectOne(cand.id)}
+                        />
+                      )}
+                    </td>
                     <td>
                       <div style={{ fontWeight: 600, color: "var(--primary)", marginBottom: 2 }}>
                         {cand.title}
@@ -491,13 +702,35 @@ export const AdminCandidatesPage: React.FC = () => {
                       )}
                     </td>
                     <td style={{ textAlign: "right" }}>
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-sm"
-                        onClick={() => setSelectedCandidate(cand)}
-                      >
-                        Kiểm duyệt
-                      </button>
+                      <div style={{ display: "inline-flex", gap: 6, justifyContent: "flex-end" }}>
+                        {!isApproved && (
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() => handleQuickApprove(cand)}
+                            disabled={isApprovingThis || bulkApproving}
+                            style={{
+                              background: "#16a34a",
+                              color: "#ffffff",
+                              border: "none",
+                              fontWeight: 600,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                            }}
+                          >
+                            <CheckCircle size={13} />
+                            {isApprovingThis ? "Đang duyệt..." : "Duyệt"}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          onClick={() => setSelectedCandidate(cand)}
+                        >
+                          Kiểm duyệt
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -526,6 +759,8 @@ export const AdminCandidatesPage: React.FC = () => {
             );
 
             const primaryCat = getCandidatePrimaryCategory(cand);
+            const isApproved = cand.status === "approved";
+            const isApprovingThis = approvingId === cand.id;
 
             return (
               <div
@@ -544,6 +779,13 @@ export const AdminCandidatesPage: React.FC = () => {
                   }}
                 >
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    {!isApproved && (
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(cand.id)}
+                        onChange={() => toggleSelectOne(cand.id)}
+                      />
+                    )}
                     <span className="badge badge-neutral">{cand.type}</span>
                     {cand.level && (
                       <span
@@ -646,13 +888,35 @@ export const AdminCandidatesPage: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => setSelectedCandidate(cand)}
-                  >
-                    Chi tiết & Duyệt
-                  </button>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {!isApproved && (
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => handleQuickApprove(cand)}
+                        disabled={isApprovingThis || bulkApproving}
+                        style={{
+                          background: "#16a34a",
+                          color: "#ffffff",
+                          border: "none",
+                          fontWeight: 600,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                        }}
+                      >
+                        <CheckCircle size={13} />
+                        {isApprovingThis ? "Đang duyệt..." : "Duyệt"}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setSelectedCandidate(cand)}
+                    >
+                      Chi tiết
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -670,6 +934,15 @@ export const AdminCandidatesPage: React.FC = () => {
             email: profile.email,
             role: profile.role,
           });
+          setSelectedIds((prev) => {
+            const next = new Set(prev);
+            next.delete(cand.id);
+            return next;
+          });
+          setActionMessage({
+            type: "success",
+            text: `Đã duyệt và công bố "${cand.title}" lên Cổng thông tin NCKH.`,
+          });
           await loadData();
         }}
         onReject={async (candId, candTitle, reason) => {
@@ -677,6 +950,10 @@ export const AdminCandidatesPage: React.FC = () => {
             uid: profile.uid,
             email: profile.email,
             role: profile.role,
+          });
+          setActionMessage({
+            type: "success",
+            text: `Đã từ chối ứng viên "${candTitle}".`,
           });
           await loadData();
         }}
@@ -686,6 +963,10 @@ export const AdminCandidatesPage: React.FC = () => {
             email: profile.email,
             role: profile.role,
           });
+          setActionMessage({
+            type: "success",
+            text: `Đã chuyển "${candTitle}" sang trạng thái Cần hiệu chỉnh.`,
+          });
           await loadData();
         }}
         onDelete={async (candId, candTitle) => {
@@ -693,6 +974,10 @@ export const AdminCandidatesPage: React.FC = () => {
             uid: profile.uid,
             email: profile.email,
             role: profile.role,
+          });
+          setActionMessage({
+            type: "success",
+            text: `Đã xóa ứng viên "${candTitle}".`,
           });
           await loadData();
         }}

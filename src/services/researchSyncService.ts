@@ -265,13 +265,13 @@ export async function executeResearchSync({
     }
 
     const candidates: OpportunityCandidate[] = (candsSnap?.docs || []).map((d: any) => ({
-      id: d.id,
       ...(typeof d.data === "function" ? d.data() : d),
+      id: d.id,
     }));
 
     const opportunities: Opportunity[] = (oppsSnap?.docs || []).map((d: any) => ({
-      id: d.id,
       ...(typeof d.data === "function" ? d.data() : d),
+      id: d.id,
     }));
 
     // Build unified target list for matching
@@ -401,6 +401,9 @@ export async function executeResearchSync({
                 safeUpdates.status = "pending";
               }
 
+              // Ensure internal id field (if present) always matches the real Firestore document ID
+              safeUpdates.id = target.id;
+
               await sdk.updateDoc(
                 docRef,
                 cleanUndefined(safeUpdates)
@@ -441,8 +444,8 @@ export async function executeResearchSync({
           });
         }
       } else {
-        // Completely new record: create candidate
-        const candidate = mapRowToCandidate(row, i);
+        // Completely new record: create candidate (omit synthetic slug id so Firestore auto-ID is never shadowed)
+        const { id: _ignoreSlugId, ...candidateFields } = mapRowToCandidate(row, i);
         let newCandidateId = "";
 
         if (!isDryRun) {
@@ -451,7 +454,7 @@ export async function executeResearchSync({
             const addedDoc = await sdk.addDoc(
               colRef,
               cleanUndefined({
-                ...candidate,
+                ...candidateFields,
                 status: "pending",
                 sourceType: "SPARK",
                 createdAt: new Date().toISOString(),

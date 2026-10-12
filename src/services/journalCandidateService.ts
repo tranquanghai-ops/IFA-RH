@@ -58,7 +58,7 @@ export function subscribeJournalCandidates(
     (snapshot) => {
       const items: JournalCandidate[] = [];
       snapshot.forEach((d) => {
-        items.push({ id: d.id, ...(d.data() as any) });
+        items.push({ ...(d.data() as any), id: d.id });
       });
       callback(items);
     },
@@ -79,7 +79,7 @@ export async function fetchJournalCandidates(): Promise<JournalCandidate[]> {
     const snap = await getDocs(q);
     const items: JournalCandidate[] = [];
     snap.forEach((d) => {
-      items.push({ id: d.id, ...(d.data() as any) });
+      items.push({ ...(d.data() as any), id: d.id });
     });
     return items;
   } catch (error) {
@@ -228,7 +228,7 @@ export async function syncJournalsFromGoogleSheetsToQueue({
     const q = query(colRef, orderBy("createdAt", "desc"));
     const snap = await getDocs(q);
     snap.forEach((d) => {
-      existingCandidates.push({ id: d.id, ...(d.data() as any) });
+      existingCandidates.push({ ...(d.data() as any), id: d.id });
     });
   } catch (cErr: any) {
     throw new JournalSyncStageError({

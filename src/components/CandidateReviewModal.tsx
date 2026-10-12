@@ -41,6 +41,15 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  React.useEffect(() => {
+    setError("");
+    setRejecting(false);
+    setRejectReason("");
+    setNeedsReviewing(false);
+    setNeedsReviewReason("");
+    setLoading(false);
+  }, [candidate?.id]);
+
   if (!candidate) return null;
 
   const handleApprove = async () => {
@@ -112,55 +121,72 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
       title="Kiểm duyệt Cơ hội AI / Spark tìm được"
       maxWidth="large"
       footer={
-        <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
-          <div>
-            <button
-              type="button"
-              className="btn btn-outline-danger btn-sm"
-              onClick={handleDelete}
-              disabled={loading}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%" }}>
+          {error && (
+            <div
+              style={{
+                background: "#fee2e2",
+                color: "#991b1b",
+                border: "1px solid #fca5a5",
+                padding: "8px 12px",
+                borderRadius: 6,
+                fontSize: "0.85rem",
+                fontWeight: 600,
+              }}
             >
-              Xóa bỏ
-            </button>
-          </div>
+              {error}
+            </div>
+          )}
+          <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <div>
+              <button
+                type="button"
+                className="btn btn-outline-danger btn-sm"
+                onClick={handleDelete}
+                disabled={loading}
+              >
+                Xóa bỏ
+              </button>
+            </div>
 
-          <div style={{ display: "flex", gap: 10 }}>
-            {(candidate.status === "pending" || candidate.status === "needs_review") && !rejecting && !needsReviewing && (
-              <>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => setRejecting(true)}
-                  disabled={loading}
-                >
-                  <XCircle size={16} />
-                  Từ chối
-                </button>
-                {onNeedsReview && (
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {candidate.status !== "approved" && !rejecting && !needsReviewing && (
+                <>
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
-                    onClick={() => setNeedsReviewing(true)}
+                    onClick={() => setRejecting(true)}
                     disabled={loading}
-                    style={{ color: "#d97706" }}
                   >
-                    Cần hiệu chỉnh
+                    <XCircle size={16} />
+                    Từ chối
                   </button>
-                )}
-                <button
-                  type="button"
-                  className="btn btn-success btn-sm"
-                  onClick={handleApprove}
-                  disabled={loading}
-                >
-                  <CheckCircle size={16} />
-                  Duyệt & Công bố Public
-                </button>
-              </>
-            )}
-            <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
-              Đóng
-            </button>
+                  {onNeedsReview && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setNeedsReviewing(true)}
+                      disabled={loading}
+                      style={{ color: "#d97706" }}
+                    >
+                      Cần hiệu chỉnh
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-success btn-sm"
+                    onClick={handleApprove}
+                    disabled={loading}
+                  >
+                    <CheckCircle size={16} />
+                    {loading ? "Đang duyệt & công bố..." : "Duyệt & Công bố Public"}
+                  </button>
+                </>
+              )}
+              <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
+                Đóng
+              </button>
+            </div>
           </div>
         </div>
       }
