@@ -15,6 +15,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 concurrency:
   group: ifa-rh-research-sync
   cancel-in-progress: false
@@ -23,6 +26,7 @@ jobs:
   sync:
     name: Sync Faculty Research Data
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -38,7 +42,7 @@ jobs:
 
       - name: Run Research Sync
         env:
-          IFA_RH_SA_KEY: ${{ secrets.IFA_RH_SA_KEY }}
+          IFA_RH_SA_KEY: ${{ secrets.IFA_RH_SA_KEY || secrets.FIREBASE_SERVICE_ACCOUNT_IFA_RH || secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
           EXTRA_FLAGS=""
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then

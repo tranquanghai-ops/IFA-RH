@@ -524,10 +524,10 @@ async function main() {
 
   // Initialize Firebase Admin
   let db = null;
-  const rhKeyStr = process.env.IFA_RH_SA_KEY;
+  const rhKeyStr = process.env.IFA_RH_SA_KEY || process.env.FIREBASE_SERVICE_ACCOUNT_IFA_RH || process.env.FIREBASE_SERVICE_ACCOUNT;
 
   if (rhKeyStr) {
-    console.log('Đang khởi tạo Firebase Admin SDK bằng IFA_RH_SA_KEY...');
+    console.log('Đang khởi tạo Firebase Admin SDK bằng Service Account key...');
     const rhApp = admin.initializeApp(
       { credential: admin.credential.cert(JSON.parse(rhKeyStr)) },
       'ifa-rh-admin'
