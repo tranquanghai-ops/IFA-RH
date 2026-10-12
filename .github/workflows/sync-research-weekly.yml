@@ -1,0 +1,61 @@
+name: Weekly Research Data Sync (SPAK -> IFA-RH)
+
+on:
+  schedule:
+    # 03:00 AM VN Time (UTC+7) every Monday = 20:00 UTC Sunday
+    - cron: '0 20 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Chỉ chạy kiểm tra thử nghiệm (Dry run), không ghi vào Firestore'
+        type: boolean
+        default: false
+      force:
+        description: 'Bỏ qua kiểm tra khóa đồng bộ nếu phiên trước bị gián đoạn'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ifa-rh-research-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync Faculty Research Data
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Research Sync
+        env:
+          IFA_RH_SA_KEY: ${{ secrets.IFA_RH_SA_KEY || secrets.FIREBASE_SERVICE_ACCOUNT_IFA_RH || secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          EXTRA_FLAGS=""
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            EXTRA_FLAGS="$EXTRA_FLAGS --dry-run"
+          fi
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            EXTRA_FLAGS="$EXTRA_FLAGS --force"
+          fi
+          
+          TRIGGER_SOURCE="github_schedule"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TRIGGER_SOURCE="github_dispatch"
+          fi
+
+          echo "Bắt đầu chạy đồng bộ NCKH với cờ: $EXTRA_FLAGS, nguồn: $TRIGGER_SOURCE"
+          node scripts/sync-research.mjs $TRIGGER_SOURCE $EXTRA_FLAGS
