@@ -134,7 +134,7 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
           }}
         >
           <div>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", marginBottom: "6px" }}>
               <span
                 style={{
                   fontSize: "0.75rem",
@@ -148,13 +148,15 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
               >
                 {isUpdate ? "YÊU CẦU CẬP NHẬT" : "TẠP CHÍ MỚI"}
               </span>
-              <span style={{ fontSize: "0.8rem", color: "#64748b" }}>
-                Mã: <strong>{candidate.journalId}</strong> · Hàng {candidate.sheetRowIndex || "?"} trên Google Sheets
-              </span>
             </div>
-            <h3 style={{ margin: 0, fontSize: "1.25rem", fontWeight: 700, color: "#0f172a" }}>
+            <h3 style={{ margin: 0, fontSize: "1.25rem", fontWeight: 700, color: "#0f172a", lineHeight: 1.35 }}>
               {candidate.name}
             </h3>
+            {candidate.englishName && (
+              <p style={{ margin: "3px 0 0 0", fontSize: "0.85rem", color: "#64748b", fontStyle: "italic" }}>
+                {candidate.englishName}
+              </p>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -441,6 +443,29 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
               </div>
             </div>
           )}
+
+          {/* Subtle Technical Metadata for Admin */}
+          <div
+            style={{
+              padding: "10px 12px",
+              borderRadius: "6px",
+              backgroundColor: "#f8fafc",
+              border: "1px dashed #cbd5e1",
+              fontSize: "0.75rem",
+              color: "#64748b",
+              display: "flex",
+              flexWrap: "wrap",
+              justifyContent: "space-between",
+              gap: "8px",
+            }}
+          >
+            <span>
+              Thông tin kỹ thuật nội bộ (Admin): Mã đối soát <code>{candidate.journalId}</code>
+            </span>
+            <span>
+              Hàng nguồn Google Sheets: #{candidate.sheetRowIndex || "—"}
+            </span>
+          </div>
         </div>
 
         {/* Footer Actions */}

@@ -28,7 +28,7 @@ export const App: React.FC = () => {
   const [isMobileOpen, setIsMobileOpen] = useState<boolean>(false);
   const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
 
-  // Sync tab with URL pathname or hash (/own, #research_progress, etc.)
+  // Sync tab with URL pathname, query or hash (/own, /?tab=journals, #research_progress, etc.)
   useEffect(() => {
     const parseUrlRoute = () => {
       const pathname = window.location.pathname;
@@ -39,15 +39,24 @@ export const App: React.FC = () => {
         return;
       }
 
+      // If unauthenticated visitor visits #journal_directory or #journals, unify with PublicHome (?tab=journals)
+      if (!profile && (cleanHash === "journal_directory" || cleanHash === "journals")) {
+        window.history.replaceState({ tab: "public", homeTab: "journals" }, "", "/?tab=journals");
+        setCurrentTab("public");
+        window.dispatchEvent(new Event("ifa-home-tab-change"));
+        return;
+      }
+
       // If specific non-public hash is provided, navigate to that workspace tab
       if (cleanHash && cleanHash !== "public") {
         setCurrentTab(cleanHash);
         return;
       }
 
-      // Root path ('/' or '#public' or '#/public'):
+      // Root path ('/' or '/?tab=journals' or '#public'):
       // MUST ALWAYS stay on public home, regardless of whether user is authenticated or not!
       setCurrentTab("public");
+      window.dispatchEvent(new Event("ifa-home-tab-change"));
     };
 
     if (!loading) {
@@ -57,14 +66,23 @@ export const App: React.FC = () => {
     const handlePopState = () => parseUrlRoute();
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [loading]);
+  }, [loading, profile]);
 
   const handleSelectTab = (tab: string) => {
+    if (tab === "public_journals") {
+      setCurrentTab("public");
+      window.history.pushState({ tab: "public", homeTab: "journals" }, "", "/?tab=journals");
+      window.dispatchEvent(new Event("ifa-home-tab-change"));
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
     setCurrentTab(tab);
     if (tab === "owner") {
       window.history.pushState({ tab }, "", "/own");
     } else if (tab === "public") {
-      window.history.pushState({ tab }, "", "/");
+      window.history.pushState({ tab, homeTab: "conferences" }, "", "/");
+      window.dispatchEvent(new Event("ifa-home-tab-change"));
     } else {
       window.history.pushState({ tab }, "", `/#${tab}`);
     }
@@ -147,8 +165,8 @@ export const App: React.FC = () => {
     );
   }
 
-  // A. PUBLIC PORTAL VIEW (Homepage / Opportunities Portal / Journal Directory)
-  if (currentTab === "public" || (currentTab === "journal_directory" && !profile) || !profile) {
+  // A. PUBLIC PORTAL VIEW (Homepage with Hội thảo & Tạp chí tabs)
+  if (currentTab === "public" || !profile) {
     return (
       <div className="public-portal-layout">
         <PublicHeader onSelectTab={handleSelectTab} />
@@ -157,8 +175,6 @@ export const App: React.FC = () => {
             <LoginPage />
           ) : currentTab === "public" ? (
             <PublicHome />
-          ) : currentTab === "journal_directory" ? (
-            <JournalDirectoryPage />
           ) : (
             <LoginPage />
           )}

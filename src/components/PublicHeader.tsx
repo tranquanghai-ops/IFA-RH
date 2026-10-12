@@ -123,18 +123,19 @@ export const PublicHeader: React.FC<PublicHeaderProps> = ({ onSelectTab }) => {
                   type="button"
                   className="btn btn-secondary btn-sm public-btn-portal"
                   onClick={() => onSelectTab("public")}
+                  title="Xem danh mục Hội thảo & Công bố học thuật"
                 >
                   <Compass size={16} />
-                  <span>Cổng NCKH</span>
+                  <span>Hội thảo</span>
                 </button>
                 <button
                   type="button"
                   className="btn btn-secondary btn-sm public-btn-portal"
-                  onClick={() => onSelectTab("journal_directory")}
-                  title="Tra cứu danh mục tạp chí khoa học HĐGSNN"
+                  onClick={() => onSelectTab("public_journals")}
+                  title="Tra cứu danh mục Tạp chí khoa học trong nước tính điểm HĐGSNN"
                 >
                   <BookOpen size={16} />
-                  <span>Tạp chí HĐGSNN</span>
+                  <span>Tạp chí</span>
                 </button>
                 <button
                   type="button"
