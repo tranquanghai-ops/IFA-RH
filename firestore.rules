@@ -386,10 +386,11 @@ service cloud.firestore {
         ]) &&
         validString(data.title, 1, 300) &&
         validString(data.organizer, 1, 200) &&
-        validString(data.country, 1, 100) &&
+        (!('country' in data) || validString(data.country, 0, 100)) &&
         data.type in [
           'Hội thảo', 'Hội nghị', 'Call for Papers', 'Special Issue',
-          'Book Chapter', 'Seminar', 'Hợp tác nghiên cứu', 'Đổi mới sáng tạo', 'Khác'
+          'Book Chapter', 'Seminar', 'Hợp tác nghiên cứu', 'Đổi mới sáng tạo', 'Khác',
+          'Hội thảo khoa học quốc tế', 'Hội thảo quốc tế', 'Hội thảo quốc gia'
         ] &&
         data.level in ['Quốc tế', 'Quốc gia', 'Cấp Trường', 'Cấp Khoa', 'Khác'] &&
         validString(data.topic, 0, 300) &&
@@ -439,9 +440,8 @@ service cloud.firestore {
     // Validates opportunityCandidates/{candidateId} schema and constraints
     function isValidOpportunityCandidate(data) {
       return data.keys().hasAll([
-          'title', 'organizer', 'country', 'type', 'level', 'topic',
-          'field', 'tags', 'deadline', 'content', 'sourceType',
-          'status', 'normalizedTitle', 'createdAt', 'updatedAt'
+          'title', 'organizer', 'type', 'level',
+          'sourceType', 'status', 'createdAt', 'updatedAt'
         ]) &&
         data.keys().hasOnly([
           'id', 'title', 'organizer', 'country', 'type', 'level', 'topic',
@@ -454,24 +454,31 @@ service cloud.firestore {
           'publicationFee', 'registrationFee', 'feeStatus', 'feeSourceUrl',
           'detailedContent', 'topicsDetailed',
           'publishedOpportunityId', 'recalledAt', 'recalledBy', 'updatedBy',
-          'createdBy', 'editedByAdmin', 'manualOverrides'
+          'createdBy', 'editedByAdmin', 'manualOverrides',
+          'stt', 'candidateId', 'hiddenAt', 'hiddenBy', 'sheetRowIndex',
+          'unverifiedFields', 'manualReviewNeeded', 'manualReviewReason', 'confidenceLevel',
+          'diffSummary'
         ]) &&
         validString(data.title, 1, 300) &&
         validString(data.organizer, 1, 200) &&
-        validString(data.country, 1, 100) &&
+        (!('country' in data) || validString(data.country, 0, 100)) &&
         data.type in [
           'Hội thảo', 'Hội nghị', 'Call for Papers', 'Special Issue',
-          'Book Chapter', 'Seminar', 'Hợp tác nghiên cứu', 'Đổi mới sáng tạo', 'Khác'
+          'Book Chapter', 'Seminar', 'Hợp tác nghiên cứu', 'Đổi mới sáng tạo', 'Khác',
+          'Hội thảo khoa học quốc tế', 'Hội thảo quốc tế', 'Hội thảo quốc gia'
         ] &&
         data.level in ['Quốc tế', 'Quốc gia', 'Cấp Trường', 'Cấp Khoa', 'Khác'] &&
-        validString(data.topic, 0, 300) &&
-        validString(data.field, 0, 200) &&
-        validList(data.tags, 30) &&
-        validString(data.deadline, 0, 200) &&
-        validString(data.content, 0, 50000) &&
+        (!('topic' in data) || validString(data.topic, 0, 300)) &&
+        (!('field' in data) || validString(data.field, 0, 200)) &&
+        (!('tags' in data) || validList(data.tags, 30)) &&
+        (!('deadline' in data) || validString(data.deadline, 0, 200)) &&
+        (!('content' in data) || validString(data.content, 0, 50000)) &&
         data.sourceType == 'SPARK' &&
-        data.status in ['pending', 'approved', 'rejected', 'needs_review'] &&
-        validString(data.normalizedTitle, 1, 500) &&
+        data.status in [
+          'pending', 'approved', 'rejected', 'needs_review',
+          'MỚI', 'moi', 'new'
+        ] &&
+        (!('normalizedTitle' in data) || validString(data.normalizedTitle, 0, 500)) &&
         (validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
         (validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
         (!('abstractDeadline' in data) || validString(data.abstractDeadline, 0, 50)) &&
@@ -506,6 +513,16 @@ service cloud.firestore {
         (!('createdBy' in data) || validString(data.createdBy, 0, 100)) &&
         (!('editedByAdmin' in data) || data.editedByAdmin is bool) &&
         (!('manualOverrides' in data) || (data.manualOverrides is list && data.manualOverrides.size() <= 50)) &&
+        (!('stt' in data) || (data.stt is number || data.stt is string)) &&
+        (!('candidateId' in data) || validString(data.candidateId, 0, 100)) &&
+        (!('hiddenAt' in data) || validString(data.hiddenAt, 0, 50) || data.hiddenAt is timestamp) &&
+        (!('hiddenBy' in data) || validString(data.hiddenBy, 0, 100)) &&
+        (!('sheetRowIndex' in data) || data.sheetRowIndex is int) &&
+        (!('unverifiedFields' in data) || (data.unverifiedFields is list && data.unverifiedFields.size() <= 30)) &&
+        (!('manualReviewNeeded' in data) || data.manualReviewNeeded is bool) &&
+        (!('manualReviewReason' in data) || validString(data.manualReviewReason, 0, 1000)) &&
+        (!('confidenceLevel' in data) || validString(data.confidenceLevel, 0, 50)) &&
+        (!('diffSummary' in data) || (data.diffSummary is list && data.diffSummary.size() <= 30)) &&
         (!('id' in data) || validString(data.id, 0, 100));
     }
 
