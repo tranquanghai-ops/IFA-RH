@@ -1,6 +1,6 @@
 # ĐẶC TẢ HỢP ĐỒNG DỮ LIỆU DANH MỤC TẠP CHÍ KHOA HỌC (IFA-RH)
 ## Phiên bản: `schema_version = 1`
-**Áp dụng cho**: Điều tra danh mục tạp chí theo Quyết định 26/QĐ-HĐGSNN ngày 11/7/2025  
+**Áp dụng cho**: Điều tra danh mục tạp chí theo Quyết định 26/QĐ-HĐGSNN ngày 11/7/2025
 **Đơn vị phối hợp**: Anti (IFA-RH System) & Spark (Investigation Agent)
 
 ---

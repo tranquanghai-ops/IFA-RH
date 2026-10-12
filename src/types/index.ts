@@ -346,4 +346,3 @@ export interface ResearchPersonnelSettings {
 }
 
 export * from "./journal";
-

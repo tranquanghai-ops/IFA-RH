@@ -185,4 +185,3 @@ export interface JournalSyncSettings {
     errorCount: number;
   };
 }
-
