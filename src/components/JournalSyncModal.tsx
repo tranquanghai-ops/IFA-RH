@@ -21,6 +21,7 @@ import {
 import {
   syncJournalsFromGoogleSheetsToQueue,
   getJournalSyncSettings,
+  JournalSyncStageError,
 } from "../services/journalCandidateService";
 import { fetchJournals } from "../services/journalService";
 import { fetchJournalCandidates } from "../services/journalCandidateService";
@@ -46,6 +47,7 @@ export const JournalSyncModal: React.FC<JournalSyncModalProps> = ({
   const [isLoadingSettings, setIsLoadingSettings] = useState(true);
   const [isChecking, setIsChecking] = useState(false);
   const [checkError, setCheckError] = useState("");
+  const [stageError, setStageError] = useState<JournalSyncStageError | null>(null);
   const [previewResult, setPreviewResult] = useState<{
     totalRead: number;
     newCount: number;
@@ -89,6 +91,7 @@ export const JournalSyncModal: React.FC<JournalSyncModalProps> = ({
     }
 
     setCheckError("");
+    setStageError(null);
     setPreviewResult(null);
     setSyncOutcome(null);
     setIsChecking(true);
@@ -121,7 +124,13 @@ export const JournalSyncModal: React.FC<JournalSyncModalProps> = ({
         sampleCandidates: analysis.candidatesToCreate.slice(0, 30),
       });
     } catch (err: any) {
-      setCheckError(err.message || "Không thể nạp dữ liệu từ Google Sheets.");
+      if (err instanceof JournalSyncStageError) {
+        setStageError(err);
+        setCheckError(err.message);
+      } else {
+        setStageError(null);
+        setCheckError(err.message || "Không thể nạp dữ liệu từ Google Sheets.");
+      }
     } finally {
       setIsChecking(false);
     }
@@ -132,6 +141,7 @@ export const JournalSyncModal: React.FC<JournalSyncModalProps> = ({
 
     setIsSyncing(true);
     setCheckError("");
+    setStageError(null);
     try {
       const res = await syncJournalsFromGoogleSheetsToQueue({
         sheetId,
@@ -146,7 +156,13 @@ export const JournalSyncModal: React.FC<JournalSyncModalProps> = ({
       );
       onSyncComplete();
     } catch (err: any) {
-      setCheckError(err.message || "Đồng bộ thất bại.");
+      if (err instanceof JournalSyncStageError) {
+        setStageError(err);
+        setCheckError(err.message);
+      } else {
+        setStageError(null);
+        setCheckError(err.message || "Đồng bộ thất bại.");
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -336,26 +352,86 @@ export const JournalSyncModal: React.FC<JournalSyncModalProps> = ({
             </button>
           </div>
 
-          {/* Error display */}
-          {checkError && (
+          {/* Error display with multi-stage diagnostic breakdown */}
+          {(checkError || stageError) && (
             <div
               style={{
-                padding: "12px 16px",
+                padding: "14px 18px",
                 borderRadius: "8px",
                 backgroundColor: "#fef2f2",
                 border: "1px solid #fecaca",
                 color: "#991b1b",
                 fontSize: "0.85rem",
                 display: "flex",
-                alignItems: "flex-start",
+                flexDirection: "column",
                 gap: "8px",
               }}
             >
-              <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: "2px" }} />
-              <div>
-                <strong>Lỗi kết nối / Đọc dữ liệu:</strong>
-                <p style={{ margin: "2px 0 0 0" }}>{checkError}</p>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+                <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: "2px" }} />
+                <div>
+                  <strong style={{ fontSize: "0.9rem" }}>
+                    {stageError
+                      ? stageError.stage === "FETCH_SHEET"
+                        ? "Lỗi kết nối / Đọc Google Sheets:"
+                        : stageError.stage === "READ_JOURNALS" || stageError.stage === "READ_CANDIDATES"
+                        ? "Lỗi đọc dữ liệu Firestore:"
+                        : stageError.stage === "WRITE_CANDIDATE"
+                        ? "Lỗi phân quyền Firestore khi ghi Hàng chờ duyệt (journalCandidates):"
+                        : stageError.stage === "WRITE_IMPORT_LOG"
+                        ? "Lỗi ghi nhật ký đồng bộ (journalImports):"
+                        : stageError.stage === "WRITE_CONFIG"
+                        ? "Lỗi cập nhật cấu hình đồng bộ (systemConfig):"
+                        : "Lỗi đồng bộ Firestore:"
+                      : "Lỗi kết nối / Thao tác dữ liệu:"}
+                  </strong>
+                  <p style={{ margin: "4px 0 0 0", color: "#7f1d1d" }}>
+                    {stageError ? stageError.userSummary : checkError}
+                  </p>
+                </div>
               </div>
+
+              {stageError && (
+                <div
+                  style={{
+                    marginTop: "6px",
+                    padding: "8px 12px",
+                    borderRadius: "6px",
+                    backgroundColor: "#ffffff",
+                    border: "1px solid #fee2e2",
+                    fontSize: "0.8rem",
+                    color: "#475569",
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                    gap: "6px",
+                  }}
+                >
+                  <div>
+                    <span style={{ fontWeight: 600, color: "#64748b" }}>Giai đoạn (Stage): </span>
+                    <code style={{ color: "#b91c1c", fontWeight: 600 }}>{stageError.stage}</code>
+                  </div>
+                  <div>
+                    <span style={{ fontWeight: 600, color: "#64748b" }}>Collection: </span>
+                    <code style={{ color: "#1e3a8a" }}>{stageError.collectionName}</code>
+                  </div>
+                  {stageError.documentId && (
+                    <div>
+                      <span style={{ fontWeight: 600, color: "#64748b" }}>Document ID: </span>
+                      <code style={{ color: "#0f172a" }}>{stageError.documentId}</code>
+                    </div>
+                  )}
+                  <div>
+                    <span style={{ fontWeight: 600, color: "#64748b" }}>Thao tác: </span>
+                    <span style={{ textTransform: "uppercase", fontWeight: 600 }}>{stageError.operationType}</span>
+                  </div>
+                  <div>
+                    <span style={{ fontWeight: 600, color: "#64748b" }}>Mã lỗi Firebase: </span>
+                    <code style={{ color: "#dc2626" }}>
+                      {stageError.originalError?.code || "permission-denied"}
+                    </code>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

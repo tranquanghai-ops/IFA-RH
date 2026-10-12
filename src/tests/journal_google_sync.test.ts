@@ -383,4 +383,147 @@ describe("Hệ thống Adapter 47 Cột và Xử lý Điểm Chuyên sâu (QĐ 2
     expect(cand.status).toBe("needs_review");
     expect(cand.unverifiedFields.some((f) => f.includes("Điểm về 0 từ tháng 6/2025"))).toBe(true);
   });
+
+  it("phân tích và kiểm tra tính hợp lệ của toàn bộ 90 tạp chí từ Google Sheets Spark", async () => {
+    const { fetchJournalGoogleSheetRows, buildJournalCandidatesFromSheet } = await import(
+      "../services/journalGoogleSheetService"
+    );
+
+    const sheetResult = await fetchJournalGoogleSheetRows(
+      "1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE",
+      "Trang tính1"
+    );
+
+    expect(sheetResult.totalRows).toBe(90);
+    expect(sheetResult.validJournals.length).toBe(90);
+    expect(sheetResult.manualReviewCount).toBe(17);
+
+    const analysis = buildJournalCandidatesFromSheet(sheetResult.validJournals, [], []);
+    expect(analysis.newCount).toBe(90);
+    expect(analysis.candidatesToCreate.length).toBe(90);
+
+    // Validate every candidate against firestore.rules isValidJournalCandidate
+    const allowedKeys = new Set([
+      'id', 'journalId', 'name', 'englishName', 'abbreviation', 'publisher',
+      'issnPrint', 'issnOnline', 'isbn', 'category', 'primaryField', 'fields',
+      'website', 'websiteVerified', 'maxScore', 'maxScoreYear', 'scores',
+      'guidelines', 'links', 'verification', 'sourceType', 'changeType',
+      'existingJournalId', 'diffSummary', 'status', 'rejectionReason',
+      'isManualPreserved', 'unverifiedFields', 'sheetRowIndex',
+      'createdAt', 'updatedAt', 'reviewedAt', 'reviewedBy', 'publishedJournalId'
+    ]);
+
+    const failures: Array<{ id: string; name: string; reason: string; val?: any }> = [];
+
+    analysis.candidatesToCreate.forEach((cand, idx) => {
+      // Check required
+      const required = [
+        'journalId', 'name', 'publisher', 'category', 'primaryField',
+        'sourceType', 'changeType', 'status', 'createdAt', 'updatedAt'
+      ];
+      for (const req of required) {
+        if (!(req in cand)) {
+          failures.push({ id: cand.journalId, name: cand.name, reason: `Missing required: ${req}` });
+        }
+      }
+
+      // Check hasOnly
+      for (const k of Object.keys(cand)) {
+        if (!allowedKeys.has(k)) {
+          failures.push({ id: cand.journalId, name: cand.name, reason: `Disallowed key: ${k}` });
+        }
+      }
+
+      // Check lengths and constraints
+      if (typeof cand.name !== 'string' || cand.name.length < 1 || cand.name.length > 300) {
+        failures.push({ id: cand.journalId, name: cand.name, reason: `name invalid length: ${cand.name?.length}` });
+      }
+      if (typeof cand.publisher !== 'string' || cand.publisher.length < 1 || cand.publisher.length > 300) {
+        failures.push({ id: cand.journalId, name: cand.name, reason: `publisher invalid length: ${cand.publisher?.length}` });
+      }
+      if (!['domestic', 'international'].includes(cand.category)) {
+        failures.push({ id: cand.journalId, name: cand.name, reason: `category invalid: ${cand.category}` });
+      }
+      if (typeof cand.primaryField !== 'string' || cand.primaryField.length < 1 || cand.primaryField.length > 200) {
+        failures.push({ id: cand.journalId, name: cand.name, reason: `primaryField invalid: ${cand.primaryField}` });
+      }
+      if (!['GOOGLE_SHEETS', 'SPARK', 'EXCEL', 'MANUAL'].includes(cand.sourceType)) {
+        failures.push({ id: cand.journalId, name: cand.name, reason: `sourceType invalid: ${cand.sourceType}` });
+      }
+      if (!['create', 'update'].includes(cand.changeType)) {
+        failures.push({ id: cand.journalId, name: cand.name, reason: `changeType invalid: ${cand.changeType}` });
+      }
+      if (!['pending', 'approved', 'rejected', 'needs_review'].includes(cand.status)) {
+        failures.push({ id: cand.journalId, name: cand.name, reason: `status invalid: ${cand.status}` });
+      }
+      if ('fields' in cand && (!Array.isArray(cand.fields) || cand.fields.length > 30)) {
+        failures.push({ id: cand.journalId, name: cand.name, reason: `fields invalid count: ${cand.fields?.length}` });
+      }
+      if ('scores' in cand && (!Array.isArray(cand.scores) || cand.scores.length > 50)) {
+        failures.push({ id: cand.journalId, name: cand.name, reason: `scores invalid count: ${cand.scores?.length}` });
+      }
+      if ('unverifiedFields' in cand && (!Array.isArray(cand.unverifiedFields) || cand.unverifiedFields.length > 20)) {
+        failures.push({ id: cand.journalId, name: cand.name, reason: `unverifiedFields count: ${cand.unverifiedFields?.length}` });
+      }
+      if ('maxScoreYear' in cand && (typeof cand.maxScoreYear !== 'number' || cand.maxScoreYear < 2000 || cand.maxScoreYear > 2100)) {
+        failures.push({ id: cand.journalId, name: cand.name, reason: `maxScoreYear invalid: ${cand.maxScoreYear}`, val: cand.maxScoreYear });
+      }
+      if ('maxScore' in cand && (typeof cand.maxScore !== 'number' || cand.maxScore < 0 || cand.maxScore > 10)) {
+        failures.push({ id: cand.journalId, name: cand.name, reason: `maxScore invalid: ${cand.maxScore}` });
+      }
+    });
+
+    if (failures.length > 0) {
+      console.error("FAILURES DETECTED IN 90 CANDIDATES:", JSON.stringify(failures, null, 2));
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("khởi tạo và định dạng JournalSyncStageError chính xác với từng giai đoạn và collection", async () => {
+    const { JournalSyncStageError } = await import("../services/journalCandidateService");
+
+    const err = new JournalSyncStageError({
+      stage: "WRITE_CANDIDATE",
+      collectionName: "journalCandidates",
+      documentId: "cand_new_TC-001",
+      operationType: "create",
+      originalError: new Error("Missing or insufficient permissions."),
+      userSummary: 'Không đủ quyền lưu ứng viên "Tạp chí Văn hóa Nghệ thuật" (ID: TC-001)',
+      actorUid: "owner_123",
+      actorRole: "tranquanghai@tdtu.edu.vn",
+    });
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe("JournalSyncStageError");
+    expect(err.stage).toBe("WRITE_CANDIDATE");
+    expect(err.collectionName).toBe("journalCandidates");
+    expect(err.documentId).toBe("cand_new_TC-001");
+    expect(err.message).toContain("WRITE_CANDIDATE");
+    expect(err.message).toContain("journalCandidates/cand_new_TC-001");
+    expect(err.message).toContain("permission-denied");
+  });
+
+  it("đảm bảo đồng bộ lại 90 tạp chí không tạo ứng viên trùng lặp (Idempotency Verification)", async () => {
+    const { fetchJournalGoogleSheetRows, buildJournalCandidatesFromSheet } = await import(
+      "../services/journalGoogleSheetService"
+    );
+
+    const sheetResult = await fetchJournalGoogleSheetRows(
+      "1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE",
+      "Trang tính1"
+    );
+
+    // Initial sync
+    const firstSync = buildJournalCandidatesFromSheet(sheetResult.validJournals, [], []);
+    expect(firstSync.candidatesToCreate.length).toBe(90);
+
+    // Simulate existing pending candidates already populated from first sync
+    const activePending = firstSync.candidatesToCreate;
+
+    // Second sync: incoming same 90 journals
+    const secondSync = buildJournalCandidatesFromSheet(sheetResult.validJournals, [], activePending);
+    expect(secondSync.candidatesToCreate.length).toBe(0);
+    expect(secondSync.skippedDuplicates).toBe(90);
+    expect(secondSync.newCount).toBe(0);
+  });
 });

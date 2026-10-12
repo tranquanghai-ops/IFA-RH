@@ -835,16 +835,17 @@ service cloud.firestore {
         ]) &&
         data.keys().hasOnly([
           'id', 'batchId', 'fileName', 'totalParsed', 'createdCount', 'updatedCount',
-          'skippedCount', 'errorCount', 'errors', 'importedAt', 'importedBy', 'schemaVersion'
+          'skippedCount', 'errorCount', 'errors', 'importedAt', 'importedBy', 'schemaVersion',
+          'sheetId', 'sheetName', 'sourceType', 'createdAt'
         ]) &&
         validString(data.batchId, 1, 100) &&
         validString(data.fileName, 1, 200) &&
-        data.totalParsed is int && data.totalParsed >= 0 &&
-        data.createdCount is int && data.createdCount >= 0 &&
-        data.updatedCount is int && data.updatedCount >= 0 &&
-        data.skippedCount is int && data.skippedCount >= 0 &&
-        data.errorCount is int && data.errorCount >= 0 &&
-        data.schemaVersion is int && data.schemaVersion >= 1 &&
+        (data.totalParsed is int || data.totalParsed is number) && data.totalParsed >= 0 &&
+        (data.createdCount is int || data.createdCount is number) && data.createdCount >= 0 &&
+        (data.updatedCount is int || data.updatedCount is number) && data.updatedCount >= 0 &&
+        (data.skippedCount is int || data.skippedCount is number) && data.skippedCount >= 0 &&
+        (data.errorCount is int || data.errorCount is number) && data.errorCount >= 0 &&
+        (data.schemaVersion is int || data.schemaVersion is number) && data.schemaVersion >= 1 &&
         (validString(data.importedAt, 1, 50) || data.importedAt is timestamp) &&
         validString(data.importedBy, 1, 100);
     }
@@ -862,7 +863,8 @@ service cloud.firestore {
           'guidelines', 'links', 'verification', 'sourceType', 'changeType',
           'existingJournalId', 'diffSummary', 'status', 'rejectionReason',
           'isManualPreserved', 'unverifiedFields', 'sheetRowIndex',
-          'createdAt', 'updatedAt', 'reviewedAt', 'reviewedBy', 'publishedJournalId'
+          'createdAt', 'updatedAt', 'reviewedAt', 'reviewedBy', 'publishedJournalId',
+          'manualReviewNeeded', 'manualReviewReason', 'confidenceLevel', 'isManualEdited'
         ]) &&
         validString(data.journalId, 1, 50) &&
         validString(data.name, 1, 300) &&
@@ -880,11 +882,11 @@ service cloud.firestore {
         (!('issnPrint' in data) || validString(data.issnPrint, 0, 50)) &&
         (!('issnOnline' in data) || validString(data.issnOnline, 0, 50)) &&
         (!('isbn' in data) || validString(data.isbn, 0, 50)) &&
-        (!('fields' in data) || (data.fields is list && data.fields.size() <= 30)) &&
+        (!('fields' in data) || (data.fields is list && data.fields.size() <= 50)) &&
         (!('website' in data) || validString(data.website, 0, 500)) &&
         (!('websiteVerified' in data) || data.websiteVerified is bool) &&
         (!('maxScore' in data) || (data.maxScore is number && data.maxScore >= 0 && data.maxScore <= 10)) &&
-        (!('maxScoreYear' in data) || (data.maxScoreYear is int && data.maxScoreYear >= 2000 && data.maxScoreYear <= 2100)) &&
+        (!('maxScoreYear' in data) || ((data.maxScoreYear is int || data.maxScoreYear is number) && data.maxScoreYear >= 1900 && data.maxScoreYear <= 2100)) &&
         (!('scores' in data) || (data.scores is list && data.scores.size() <= 50)) &&
         (!('guidelines' in data) || data.guidelines is map) &&
         (!('links' in data) || (data.links is list && data.links.size() <= 50)) &&
@@ -893,8 +895,12 @@ service cloud.firestore {
         (!('diffSummary' in data) || (data.diffSummary is list && data.diffSummary.size() <= 30)) &&
         (!('rejectionReason' in data) || validString(data.rejectionReason, 0, 1000)) &&
         (!('isManualPreserved' in data) || data.isManualPreserved is bool) &&
-        (!('unverifiedFields' in data) || (data.unverifiedFields is list && data.unverifiedFields.size() <= 20)) &&
-        (!('sheetRowIndex' in data) || data.sheetRowIndex is int) &&
+        (!('isManualEdited' in data) || data.isManualEdited is bool) &&
+        (!('manualReviewNeeded' in data) || data.manualReviewNeeded is bool) &&
+        (!('manualReviewReason' in data) || validString(data.manualReviewReason, 0, 1000)) &&
+        (!('confidenceLevel' in data) || validString(data.confidenceLevel, 0, 50)) &&
+        (!('unverifiedFields' in data) || (data.unverifiedFields is list && data.unverifiedFields.size() <= 30)) &&
+        (!('sheetRowIndex' in data) || (data.sheetRowIndex is int || data.sheetRowIndex is number || data.sheetRowIndex is string)) &&
         (!('reviewedAt' in data) || validString(data.reviewedAt, 0, 50) || data.reviewedAt is timestamp) &&
         (!('reviewedBy' in data) || validString(data.reviewedBy, 0, 100)) &&
         (!('publishedJournalId' in data) || validString(data.publishedJournalId, 0, 100));
@@ -1116,7 +1122,7 @@ service cloud.firestore {
     match /journalCandidates/{candidateId} {
       allow read: if isAdmin();
       allow create: if isAdmin() && isValidJournalCandidate(request.resource.data);
-      allow update: if isAdmin() && isValidJournalCandidate(request.resource.data) && areImmutableFieldsUnchanged(['createdAt']);
+      allow update: if isAdmin() && isValidJournalCandidate(request.resource.data);
       allow delete: if isAdmin();
     }
 
