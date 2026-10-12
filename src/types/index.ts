@@ -344,3 +344,5 @@ export interface ResearchPersonnelSettings {
   archiveReason?: string | null;
   updatedAt: string;
 }
+
+export * from "./journal";

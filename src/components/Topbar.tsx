@@ -25,6 +25,8 @@ export const Topbar: React.FC<TopbarProps> = ({
         return { root: "IFA-RH", leaf: "Bảng điều khiển Giảng viên" };
       case "admin_opportunities":
         return { root: "Quản trị", leaf: "Quản lý Cơ hội NCKH" };
+      case "journal_directory":
+        return { root: "Nghiên cứu", leaf: "Danh mục Tạp chí Khoa học" };
       case "research_progress":
         return { root: "Nghiên cứu", leaf: "Tiến độ NCKH" };
       case "publications":
