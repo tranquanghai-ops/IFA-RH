@@ -11,10 +11,9 @@ import {
   DEFAULT_JOURNAL_DRIVE_FOLDER_URL,
   DEFAULT_JOURNAL_SHEET_NAME,
   DEFAULT_JOURNAL_SPREADSHEET_ID,
-  DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID,
-  DEFAULT_MULTI_COUNCIL_SHEET_NAME,
   EXPECTED_FILE_NAME,
-  EXPECTED_MULTI_COUNCIL_FILE_NAME,
+  sanitizePublicJournalSpreadsheetId,
+  sanitizePublicJournalSheetName,
 } from "../services/journalGoogleSheetService";
 import {
   getJournalSyncSettings,
@@ -40,12 +39,6 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
 }) => {
   const [sheetId, setSheetId] = useState(DEFAULT_JOURNAL_SPREADSHEET_ID);
   const [sheetName, setSheetName] = useState(DEFAULT_JOURNAL_SHEET_NAME);
-  const [multiCouncilSheetId, setMultiCouncilSheetId] = useState(
-    DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID
-  );
-  const [multiCouncilSheetName, setMultiCouncilSheetName] = useState(
-    DEFAULT_MULTI_COUNCIL_SHEET_NAME
-  );
   const [lastSettings, setLastSettings] = useState<JournalSyncSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -61,19 +54,11 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
         .then((settings) => {
           if (settings) {
             setLastSettings(settings);
-            setSheetId(settings.sheetId || DEFAULT_JOURNAL_SPREADSHEET_ID);
-            setSheetName(settings.sheetName || DEFAULT_JOURNAL_SHEET_NAME);
-            setMultiCouncilSheetId(
-              settings.multiCouncilSheetId || DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID
-            );
-            setMultiCouncilSheetName(
-              settings.multiCouncilSheetName || DEFAULT_MULTI_COUNCIL_SHEET_NAME
-            );
+            setSheetId(sanitizePublicJournalSpreadsheetId(settings.sheetId));
+            setSheetName(sanitizePublicJournalSheetName(settings.sheetName));
           } else {
             setSheetId(DEFAULT_JOURNAL_SPREADSHEET_ID);
             setSheetName(DEFAULT_JOURNAL_SHEET_NAME);
-            setMultiCouncilSheetId(DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID);
-            setMultiCouncilSheetName(DEFAULT_MULTI_COUNCIL_SHEET_NAME);
           }
         })
         .catch((err) => {
@@ -89,7 +74,7 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
 
   const handleSave = async () => {
     if (!sheetId.trim() || !sheetName.trim()) {
-      setErrorMsg("Vui lòng nhập đầy đủ Spreadsheet ID và Tên tab cho Danh mục chuẩn.");
+      setErrorMsg("Vui lòng nhập đầy đủ Spreadsheet ID và Tên tab của Google Sheets IFA-RH.");
       return;
     }
 
@@ -98,13 +83,13 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
     setSaveSuccess(false);
 
     try {
+      const cleanSheetId = sanitizePublicJournalSpreadsheetId(sheetId.trim());
+      const cleanSheetName = sanitizePublicJournalSheetName(sheetName.trim());
       const nextPayload = {
-        sheetId: sheetId.trim(),
-        sheetName: sheetName.trim(),
-        multiCouncilSheetId:
-          multiCouncilSheetId.trim() || DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID,
-        multiCouncilSheetName:
-          multiCouncilSheetName.trim() || DEFAULT_MULTI_COUNCIL_SHEET_NAME,
+        sheetId: cleanSheetId,
+        sheetName: cleanSheetName,
+        multiCouncilSheetId: cleanSheetId,
+        multiCouncilSheetName: cleanSheetName,
       };
       await saveJournalSyncSettings(nextPayload);
       setSaveSuccess(true);
@@ -145,7 +130,7 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
         style={{
           backgroundColor: "#ffffff",
           borderRadius: "12px",
-          maxWidth: "660px",
+          maxWidth: "620px",
           width: "100%",
           maxHeight: "92vh",
           display: "flex",
@@ -183,10 +168,10 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
             </div>
             <div>
               <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
-                Cấu hình 2 nguồn Google Sheets
+                Nguồn dữ liệu: Google Sheets IFA-RH
               </h3>
               <p style={{ margin: "2px 0 0 0", fontSize: "0.8rem", color: "#64748b" }}>
-                Quản lý nguồn Danh mục Tạp chí chuẩn và nguồn Điểm HĐGSNN nhiều Hội đồng
+                Nguồn công khai duy nhất dùng cho Đồng bộ Google Sheets và Cập nhật điểm HĐGSNN
               </p>
             </div>
           </div>
@@ -214,12 +199,9 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
           >
             <FolderOpen size={18} color="#16a34a" style={{ flexShrink: 0, marginTop: "2px" }} />
             <div style={{ flex: 1, fontSize: "0.82rem", color: "#166534" }}>
-              <div style={{ fontWeight: 600 }}>Thư mục Google Drive của Khoa:</div>
-              <div style={{ color: "#334155", margin: "2px 0 4px 0" }}>
-                • File 1 (Danh mục chuẩn): <strong>{EXPECTED_FILE_NAME}</strong>
-              </div>
-              <div style={{ color: "#334155", margin: "0 0 6px 0" }}>
-                • File 2 (Điểm HĐGSNN 53 cột): <strong>{EXPECTED_MULTI_COUNCIL_FILE_NAME}</strong>
+              <div style={{ fontWeight: 600 }}>Nguồn dữ liệu: Google Sheets IFA-RH</div>
+              <div style={{ color: "#334155", margin: "2px 0 6px 0" }}>
+                • Bảng tính chính thức của ứng dụng: <strong>{EXPECTED_FILE_NAME}</strong> (Tab <strong>{DEFAULT_JOURNAL_SHEET_NAME}</strong>, 53 cột A:BA)
               </div>
               <a
                 href={DEFAULT_JOURNAL_DRIVE_FOLDER_URL}
@@ -246,7 +228,6 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-              {/* Sheet 1: Official Catalog */}
               <div
                 style={{
                   padding: "14px",
@@ -259,7 +240,7 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
                 }}
               >
                 <div style={{ fontSize: "0.86rem", fontWeight: 700, color: "#1e3a8a" }}>
-                  1. Nguồn &ldquo;Đồng bộ Google Sheets&rdquo; (Danh mục tạp chí chuẩn)
+                  Cấu hình bảng Google Sheets IFA-RH (dùng chung cho cả 2 nút đồng bộ)
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "10px" }}>
                   <div>
@@ -309,66 +290,6 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
                     {lastSettings.lastSyncedBy && <span> bởi {lastSettings.lastSyncedBy}</span>}
                   </div>
                 )}
-              </div>
-
-              {/* Sheet 2: Spark Multi-Council HDGSNN Scores */}
-              <div
-                style={{
-                  padding: "14px",
-                  borderRadius: "8px",
-                  backgroundColor: "#eff6ff",
-                  border: "1px solid #bfdbfe",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "10px",
-                }}
-              >
-                <div style={{ fontSize: "0.86rem", fontWeight: 700, color: "#1e3a8a" }}>
-                  2. Nguồn &ldquo;Cập nhật điểm HĐGSNN&rdquo; (Bảng điểm nhiều Hội đồng 53 cột)
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "10px" }}>
-                  <div>
-                    <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#334155", marginBottom: "4px" }}>
-                      Spreadsheet ID (Điểm HĐGSNN)
-                    </label>
-                    <input
-                      type="text"
-                      value={multiCouncilSheetId}
-                      onChange={(e) => setMultiCouncilSheetId(e.target.value)}
-                      placeholder={DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID}
-                      style={{
-                        width: "100%",
-                        padding: "7px 10px",
-                        borderRadius: "6px",
-                        border: "1px solid #93c5fd",
-                        fontSize: "0.82rem",
-                        fontFamily: "monospace",
-                        boxSizing: "border-box",
-                        backgroundColor: "#ffffff",
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#334155", marginBottom: "4px" }}>
-                      Tên tab
-                    </label>
-                    <input
-                      type="text"
-                      value={multiCouncilSheetName}
-                      onChange={(e) => setMultiCouncilSheetName(e.target.value)}
-                      placeholder={DEFAULT_MULTI_COUNCIL_SHEET_NAME}
-                      style={{
-                        width: "100%",
-                        padding: "7px 10px",
-                        borderRadius: "6px",
-                        border: "1px solid #93c5fd",
-                        fontSize: "0.82rem",
-                        boxSizing: "border-box",
-                        backgroundColor: "#ffffff",
-                      }}
-                    />
-                  </div>
-                </div>
                 {lastSettings?.lastMultiCouncilSyncedAt && (
                   <div style={{ fontSize: "0.75rem", color: "#1e40af" }}>
                     Cập nhật điểm HĐGSNN gần nhất:{" "}

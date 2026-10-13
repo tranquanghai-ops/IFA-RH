@@ -22,17 +22,12 @@ export const DEFAULT_JOURNAL_SPREADSHEET_ID =
 export const DEFAULT_JOURNAL_SHEET_NAME = "TAP_CHI";
 export const FALLBACK_JOURNAL_SHEET_NAME = "Trang tính1";
 export const EXPECTED_FILE_NAME = "IFA-RH_DANH_MUC_TAP_CHI";
-
-export const DEFAULT_SPARK_HDGSNN_SPREADSHEET_ID =
-  "1KqLzOaUsynoMd7oBhe3Fxlvo1ssX4lC4TkD_8Duqm0c";
-export const DEFAULT_SPARK_HDGSNN_SHEET_NAME = "Untitled";
-export const EXPECTED_HDGSNN_FILE_NAME = "IFA-RH_DANH_MUC_TAP_CHI_HDGSNN";
+export const PUBLIC_JOURNAL_DATA_SOURCE_LABEL = "Google Sheets IFA-RH";
 
 export const DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID =
-  DEFAULT_SPARK_HDGSNN_SPREADSHEET_ID;
-export const DEFAULT_MULTI_COUNCIL_SHEET_NAME =
-  DEFAULT_SPARK_HDGSNN_SHEET_NAME;
-export const EXPECTED_MULTI_COUNCIL_FILE_NAME = EXPECTED_HDGSNN_FILE_NAME;
+  DEFAULT_JOURNAL_SPREADSHEET_ID;
+export const DEFAULT_MULTI_COUNCIL_SHEET_NAME = DEFAULT_JOURNAL_SHEET_NAME;
+export const EXPECTED_MULTI_COUNCIL_FILE_NAME = EXPECTED_FILE_NAME;
 
 export const DEFAULT_COUNCIL_ID = "HD24";
 export const DEFAULT_FACULTY_COUNCIL_ID = "HD24";
@@ -667,6 +662,72 @@ export function parseSpreadsheetId(input?: string | null): string {
 }
 
 /**
+ * Ensures the application only reads from the public IFA-RH Google Sheet
+ * (`1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE`). Any legacy reference to
+ * Spark's private research sheet is automatically redirected to the public IFA-RH sheet.
+ */
+export function sanitizePublicJournalSpreadsheetId(input?: string | null): string {
+  const parsed = parseSpreadsheetId(input);
+  if (!parsed || parsed.startsWith("1KqLzOaUsynoMd7o")) {
+    return DEFAULT_JOURNAL_SPREADSHEET_ID;
+  }
+  return parsed;
+}
+
+/**
+ * Normalizes sheet tab name, redirecting legacy "Untitled" tab references to "TAP_CHI".
+ */
+export function sanitizePublicJournalSheetName(input?: string | null): string {
+  const trimmed = String(input || "").trim();
+  if (!trimmed || trimmed.toLowerCase() === "untitled") {
+    return DEFAULT_JOURNAL_SHEET_NAME;
+  }
+  return trimmed;
+}
+
+const FORMULA_ERROR_TOKENS = [
+  "#REF!",
+  "#N/A",
+  "#ERROR!",
+  "#VALUE!",
+  "#LOADING!",
+  "#LOADING...",
+  "#NAME?",
+  "#DIV/0!",
+  "#NUM!",
+];
+
+/**
+ * Detects Google Sheets / IMPORTRANGE formula error tokens in a cell or header string.
+ */
+export function detectFormulaErrorToken(value?: string | null): string | null {
+  if (value === undefined || value === null) return null;
+  const trimmed = String(value).trim();
+  if (!trimmed) return null;
+  const upper = trimmed.toUpperCase();
+  for (const token of FORMULA_ERROR_TOKENS) {
+    if (upper === token || upper.startsWith(token)) {
+      return token;
+    }
+  }
+  if (
+    upper.includes("#REF!") ||
+    upper.includes("#ERROR!") ||
+    upper.includes("#VALUE!") ||
+    upper.includes("#LOADING")
+  ) {
+    return upper.includes("#LOADING")
+      ? "#LOADING!"
+      : upper.includes("#REF!")
+      ? "#REF!"
+      : upper.includes("#ERROR!")
+      ? "#ERROR!"
+      : "#VALUE!";
+  }
+  return null;
+}
+
+/**
  * Adapts Google Sheets text score fields into structured JournalScoreItem[].
  * Handles:
  * - Single group with standard score (e.g. 0.5, 0.75, 1.0)
@@ -971,19 +1032,30 @@ export function parseGuidelinesValue(
  * Supports primary tab "TAP_CHI", fallback "Trang tính1", and "Untitled".
  * Fully parses all 47 base columns AND the 6 new multi-council score columns (53 columns total).
  */
-export async function fetchJournalGoogleSheetRows(
-  sheetId: string,
-  sheetName: string = DEFAULT_JOURNAL_SHEET_NAME,
-  { fetchImpl = fetch }: { fetchImpl?: typeof fetch } = {}
-): Promise<FetchJournalSheetResult> {
-  const cleanId = parseSpreadsheetId(sheetId) || DEFAULT_JOURNAL_SPREADSHEET_ID;
-  if (!cleanId) {
-    throw new Error(
-      "Spreadsheet ID không hợp lệ hoặc để trống. Vui lòng cung cấp Spreadsheet ID do Spark tạo."
-    );
-  }
+export interface FetchJournalSheetOptions {
+  fetchImpl?: typeof fetch;
+  requireMultiCouncilColumns?: boolean;
+  previousValidRowCount?: number;
+}
 
-  let effectiveSheetName = sheetName || DEFAULT_JOURNAL_SHEET_NAME;
+/**
+ * Fetches and parses Google Sheets rows via GViz endpoint from the single public IFA-RH Sheet
+ * (`1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE`, primary tab `TAP_CHI`).
+ * Performs strict IMPORTRANGE readiness and data integrity validation before returning records.
+ */
+export async function fetchJournalGoogleSheetRows(
+  sheetId: string = DEFAULT_JOURNAL_SPREADSHEET_ID,
+  sheetName: string = DEFAULT_JOURNAL_SHEET_NAME,
+  options: FetchJournalSheetOptions = {}
+): Promise<FetchJournalSheetResult> {
+  const {
+    fetchImpl = fetch,
+    requireMultiCouncilColumns = false,
+    previousValidRowCount,
+  } = options;
+
+  const cleanId = sanitizePublicJournalSpreadsheetId(sheetId);
+  let effectiveSheetName = sanitizePublicJournalSheetName(sheetName);
 
   const tryFetchGviz = async (targetTab: string) => {
     const url = `https://docs.google.com/spreadsheets/d/${cleanId}/gviz/tq?sheet=${encodeURIComponent(
@@ -992,13 +1064,13 @@ export async function fetchJournalGoogleSheetRows(
     const response = await fetchImpl(url, { signal: AbortSignal.timeout(25000) });
     if (!response.ok) {
       throw new Error(
-        `Lỗi kết nối Google Sheets HTTP ${response.status}: ${response.statusText} (File ID: ${cleanId}, Tab: ${targetTab}). Kiểm tra xem file đã được chia sẻ quyền xem công khai (Anyone with the link can view) chưa.`
+        `Lỗi kết nối Google Sheets IFA-RH (HTTP ${response.status}: ${response.statusText}, Tab: ${targetTab}). Vui lòng kiểm tra quyền chia sẻ công khai của Sheet IFA-RH và thử lại.`
       );
     }
     const text = await response.text();
     const start = text.indexOf("google.visualization.Query.setResponse(");
     if (start < 0) {
-      throw new Error("Google Sheets không trả về định dạng bảng hợp lệ.");
+      throw new Error("Google Sheets IFA-RH không trả về định dạng bảng hợp lệ.");
     }
     const jsonStr = text
       .slice(start + "google.visualization.Query.setResponse(".length)
@@ -1015,8 +1087,8 @@ export async function fetchJournalGoogleSheetRows(
       throw new Error(resObj.errors?.[0]?.message || "Lỗi nạp tab chính");
     }
   } catch (primaryErr) {
-    // Try fallback tabs
-    const fallbackCandidates = ["TAP_CHI", "Trang tính1", "Untitled"].filter(
+    // Try fallback tabs within the same public IFA-RH spreadsheet
+    const fallbackCandidates = ["TAP_CHI", "Trang tính1"].filter(
       (t) => t !== effectiveSheetName
     );
     let recovered = false;
@@ -1040,12 +1112,30 @@ export async function fetchJournalGoogleSheetRows(
 
   if (resObj.status !== "ok" || !resObj.table) {
     throw new Error(
-      `Lỗi bảng tính Google: ${resObj.errors?.[0]?.message || resObj.status || "Không có dữ liệu"}`
+      `Lỗi bảng tính Google Sheets IFA-RH: ${resObj.errors?.[0]?.message || resObj.status || "Không có dữ liệu"}`
     );
   }
 
   const cols = resObj.table.cols || [];
   const rows = resObj.table.rows || [];
+
+  // 1. Validate non-empty table (IMPORTRANGE readiness)
+  if (cols.length === 0 || rows.length === 0) {
+    throw new Error(
+      "Sheet IFA-RH chưa tải xong dữ liệu IMPORTRANGE hoặc đang có lỗi công thức (bảng dữ liệu trống). Vui lòng kiểm tra Google Sheets và thử lại."
+    );
+  }
+
+  // 2. Check column headers for formula error tokens (#REF!, #LOADING!, #ERROR!, #N/A, #VALUE!)
+  for (let c = 0; c < cols.length; c++) {
+    const rawHeader = String(cols[c]?.label || cols[c]?.id || "").trim();
+    const headerErr = detectFormulaErrorToken(rawHeader);
+    if (headerErr) {
+      throw new Error(
+        `Sheet IFA-RH chưa tải xong dữ liệu IMPORTRANGE hoặc đang có lỗi công thức (${headerErr} tại tiêu đề cột ${c + 1}). Vui lòng kiểm tra Google Sheets và thử lại.`
+      );
+    }
+  }
 
   // Map header keys to column indices
   const colMap = new Map<string, number>();
@@ -1091,13 +1181,34 @@ export async function fetchJournalGoogleSheetRows(
   const cScoresJson = getCol(["scores", "scores_json", "diem_hdgsnn_json"]);
   const cFields = getCol(["fields", "nhom_nganh", "cac_hoi_dong", "hoi_dong_nganh"]);
 
-  // 6 NEW Multi-Council Score Columns (Columns 48..53 / indices 47..52)
+  // 6 NEW Multi-Council Score Columns (Columns 48..53 / AV..BA)
   const cDiemTheoHoiDongJson = getCol(["diem_theo_hoi_dong_json"]);
   const cSoHoiDongCongNhan = getCol(["so_hoi_dong_cong_nhan"]);
   const cHoiDongDaXacMinh = getCol(["hoi_dong_da_xac_minh"]);
   const cNamQuyetDinh = getCol(["nam_quyet_dinh"]);
   const cTrangThaiDoiSoatDiem = getCol(["trang_thai_doi_soat_diem"]);
   const cNguonDiemTheoHoiDong = getCol(["nguon_diem_theo_hoi_dong"]);
+
+  // 3. Validate required columns exist
+  if (cJournalId < 0 || cName < 0) {
+    throw new Error(
+      "Sheet IFA-RH chưa tải xong dữ liệu IMPORTRANGE hoặc đang có lỗi công thức (thiếu cột bắt buộc journal_id, ten_chinh_thuc_vn). Vui lòng kiểm tra Google Sheets và thử lại."
+    );
+  }
+
+  if (
+    requireMultiCouncilColumns &&
+    (cDiemTheoHoiDongJson < 0 ||
+      cSoHoiDongCongNhan < 0 ||
+      cHoiDongDaXacMinh < 0 ||
+      cNamQuyetDinh < 0 ||
+      cTrangThaiDoiSoatDiem < 0 ||
+      cNguonDiemTheoHoiDong < 0)
+  ) {
+    throw new Error(
+      "Sheet IFA-RH chưa có đủ các cột điểm đa Hội đồng (AV:BA - diem_theo_hoi_dong_json...). Vui lòng kiểm tra công thức IMPORTRANGE trên Google Sheets và thử lại."
+    );
+  }
 
   // Guidelines
   const cTheLe = getCol(["the_le_dang_bai", "guidelines", "huong_dan_tac_gia", "the_le"]);
@@ -1135,10 +1246,35 @@ export async function fetchJournalGoogleSheetRows(
   const validJournals: Journal[] = [];
   const warnings: string[] = [];
   let manualReviewCount = 0;
+  const seenSheetJournalIds = new Map<string, number>();
+  let seenEmptyRowAt: number | null = null;
 
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
-    if (!row || !Array.isArray(row.c)) continue;
+    const rowNumber = r + 2;
+
+    if (!row || !Array.isArray(row.c)) {
+      seenEmptyRowAt = seenEmptyRowAt ?? rowNumber;
+      continue;
+    }
+
+    // 4. Scan all cells in the row for formula error values (#REF!, #N/A, #ERROR!, #VALUE!, #LOADING!)
+    let hasAnyNonEmptyCell = false;
+    for (let cIdx = 0; cIdx < row.c.length; cIdx++) {
+      const cell = row.c[cIdx];
+      if (!cell) continue;
+      const cellFormatted = cell.f !== undefined && cell.f !== null ? String(cell.f).trim() : "";
+      const cellRaw = cell.v !== undefined && cell.v !== null ? String(cell.v).trim() : "";
+      if (cellFormatted || cellRaw) {
+        hasAnyNonEmptyCell = true;
+      }
+      const errToken = detectFormulaErrorToken(cellFormatted) || detectFormulaErrorToken(cellRaw);
+      if (errToken) {
+        throw new Error(
+          `Sheet IFA-RH chưa tải xong dữ liệu IMPORTRANGE hoặc đang có lỗi công thức (${errToken} tại dòng ${rowNumber}, cột ${cIdx + 1}). Vui lòng kiểm tra Google Sheets và thử lại.`
+        );
+      }
+    }
 
     const getVal = (idx: number): string => {
       if (idx < 0 || idx >= row.c.length) return "";
@@ -1152,16 +1288,42 @@ export async function fetchJournalGoogleSheetRows(
     let journalId = getVal(cJournalId);
     const name = getVal(cName);
 
-    if (!name && !journalId) continue;
+    if (!name && !journalId) {
+      if (hasAnyNonEmptyCell) {
+        throw new Error(
+          `Sheet IFA-RH chưa tải xong dữ liệu IMPORTRANGE hoặc có dòng dữ liệu khuyết mã và tên tạp chí tại dòng ${rowNumber}. Vui lòng kiểm tra Google Sheets và thử lại.`
+        );
+      }
+      seenEmptyRowAt = seenEmptyRowAt ?? rowNumber;
+      continue;
+    }
+
+    // Detect abnormal empty row in the middle of the table followed by data rows
+    if (seenEmptyRowAt !== null) {
+      throw new Error(
+        `Sheet IFA-RH chưa tải xong dữ liệu IMPORTRANGE hoặc có dòng trống bất thường tại dòng ${seenEmptyRowAt} (trước dòng dữ liệu ${rowNumber}). Vui lòng kiểm tra Google Sheets và thử lại.`
+      );
+    }
 
     if (!name) {
-      warnings.push(`Dòng ${r + 2}: Thiếu tên tạp chí, đã bỏ qua.`);
-      continue;
+      throw new Error(
+        `Sheet IFA-RH chưa tải xong dữ liệu IMPORTRANGE hoặc thiếu tên tạp chí tại dòng ${rowNumber} (mã ${journalId}). Vui lòng kiểm tra Google Sheets và thử lại.`
+      );
     }
 
     if (!journalId) {
       journalId = `TC-${(r + 1).toString().padStart(3, "0")}`;
     }
+
+    // 5. Check duplicate journal_id in the same Sheet
+    if (seenSheetJournalIds.has(journalId)) {
+      throw new Error(
+        `Phát hiện trùng mã tạp chí journal_id "${journalId}" trong cùng Sheet IFA-RH (dòng ${seenSheetJournalIds.get(
+          journalId
+        )} và dòng ${rowNumber}). Vui lòng kiểm tra Google Sheets và thử lại.`
+      );
+    }
+    seenSheetJournalIds.set(journalId, rowNumber);
 
     const hostAgency = getVal(cHostAgency);
     const pubAgency = getVal(cPublisher);
@@ -1188,7 +1350,28 @@ export async function fetchJournalGoogleSheetRows(
     const rawTrangThaiDoiSoat = getVal(cTrangThaiDoiSoatDiem);
     const rawNguonDiem = getVal(cNguonDiemTheoHoiDong);
 
+    // 6. Validate diem_theo_hoi_dong_json parseability
+    if (requireMultiCouncilColumns && !rawMultiCouncilJson) {
+      throw new Error(
+        `Dữ liệu điểm Hội đồng trong cột diem_theo_hoi_dong_json bị trống tại dòng ${rowNumber} (${journalId}). Có thể IMPORTRANGE chưa tải xong dữ liệu. Vui lòng kiểm tra Google Sheets và thử lại.`
+      );
+    }
+
     if (rawMultiCouncilJson) {
+      let parsedCheck: any;
+      try {
+        parsedCheck = JSON.parse(rawMultiCouncilJson);
+      } catch {
+        throw new Error(
+          `Dữ liệu điểm Hội đồng trong cột diem_theo_hoi_dong_json không hợp lệ tại dòng ${rowNumber} (${journalId}). Vui lòng kiểm tra Google Sheets và thử lại.`
+        );
+      }
+      if (!Array.isArray(parsedCheck)) {
+        throw new Error(
+          `Dữ liệu điểm Hội đồng trong cột diem_theo_hoi_dong_json không hợp lệ tại dòng ${rowNumber} (${journalId}): không phải mảng JSON.`
+        );
+      }
+
       const multiParsed = parseMultiCouncilScoresJson(rawMultiCouncilJson, {
         expectedCouncilCount: rawSoHoiDong,
         rawSparkStatus: rawTrangThaiDoiSoat,
@@ -1466,6 +1649,23 @@ export async function fetchJournalGoogleSheetRows(
     validJournals.push(journalObj);
   }
 
+  // 7. Check for empty validJournals or abnormal drop compared to previous valid sync
+  if (validJournals.length === 0) {
+    throw new Error(
+      "Sheet IFA-RH chưa tải xong dữ liệu IMPORTRANGE hoặc không có bản ghi tạp chí hợp lệ nào. Vui lòng kiểm tra Google Sheets và thử lại."
+    );
+  }
+
+  if (
+    typeof previousValidRowCount === "number" &&
+    previousValidRowCount > 0 &&
+    validJournals.length < Math.ceil(previousValidRowCount * 0.8)
+  ) {
+    throw new Error(
+      `Số lượng bản ghi trên Sheet IFA-RH tụt bất thường (${validJournals.length} bản ghi so với ${previousValidRowCount} bản ghi ở lần đồng bộ hợp lệ trước đó). Có thể IMPORTRANGE chưa tải xong dữ liệu. Vui lòng kiểm tra Google Sheets và thử lại.`
+    );
+  }
+
   const rowsWithJson = validJournals.filter((j) => (j.councilScores?.length || 0) > 0).length;
   const totalCouncilRecords = validJournals.reduce(
     (acc, j) => acc + (j.councilScores?.length || 0),
@@ -1522,52 +1722,27 @@ export async function fetchJournalGoogleSheetRows(
 }
 
 /**
- * Fetches multi-council HDGSNN 53-column rows from Sheet 2 (`1KqLzOaUsynoMd7oBhe3Fxlvo1ssX4lC4TkD_8Duqm0c`, tab `Untitled`).
- * If Sheet 2 returns HTTP 401/403 (not shared publicly yet) and `allowFallbackToCatalogSheet` is true,
- * falls back to reading the 53-column data from the official catalog sheet (`1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE`, tab `TAP_CHI`)
- * while recording an explicit transparency notice in `warnings`.
+ * Fetches multi-council HDGSNN 53-column rows from the single public IFA-RH Google Sheet
+ * (`1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE`, tab `TAP_CHI`).
+ * Never connects to Spark's private research spreadsheet.
  */
 export async function fetchMultiCouncilGoogleSheetRows(
-  sheetId: string = DEFAULT_SPARK_HDGSNN_SPREADSHEET_ID,
-  sheetName: string = DEFAULT_SPARK_HDGSNN_SHEET_NAME,
+  sheetId: string = DEFAULT_JOURNAL_SPREADSHEET_ID,
+  sheetName: string = DEFAULT_JOURNAL_SHEET_NAME,
   options: {
     fetchImpl?: typeof fetch;
-    allowFallbackToCatalogSheet?: boolean;
-    catalogSheetId?: string;
-    catalogSheetName?: string;
+    previousValidRowCount?: number;
   } = {}
 ): Promise<FetchJournalSheetResult> {
-  const {
-    fetchImpl = fetch,
-    allowFallbackToCatalogSheet = true,
-    catalogSheetId = DEFAULT_JOURNAL_SPREADSHEET_ID,
-    catalogSheetName = DEFAULT_JOURNAL_SHEET_NAME,
-  } = options;
-
-  try {
-    return await fetchJournalGoogleSheetRows(sheetId, sheetName, { fetchImpl });
-  } catch (err: any) {
-    const errMsg = String(err?.message || err);
-    if (allowFallbackToCatalogSheet && sheetId !== catalogSheetId) {
-      const fallbackRes = await fetchJournalGoogleSheetRows(catalogSheetId, catalogSheetName, {
-        fetchImpl,
-      });
-      const hasMultiCouncilCols = fallbackRes.validJournals.some(
-        (j) => (j.councilScores?.length || 0) > 0
-      );
-      if (hasMultiCouncilCols) {
-        const notice = `Lưu ý nguồn dữ liệu: Bảng phụ ${sheetId} (tab ${sheetName}) hiện chưa mở quyền xem công khai (${errMsg}). Hệ thống đã đọc 53 cột điểm đa Hội đồng từ bảng chính ${catalogSheetId} (tab ${fallbackRes.sheetName}).`;
-        return {
-          ...fallbackRes,
-          usedFallbackSheet: true,
-          usedFallbackCatalogSheet: true,
-          fallbackNotice: notice,
-          warnings: [notice, ...fallbackRes.warnings],
-        };
-      }
+  return fetchJournalGoogleSheetRows(
+    sanitizePublicJournalSpreadsheetId(sheetId),
+    sanitizePublicJournalSheetName(sheetName),
+    {
+      fetchImpl: options.fetchImpl,
+      requireMultiCouncilColumns: true,
+      previousValidRowCount: options.previousValidRowCount,
     }
-    throw err;
-  }
+  );
 }
 
 export interface JournalIdentityMatchResult {
@@ -1974,7 +2149,10 @@ export function buildJournalCandidatesFromSheet(
   incomingJournals: Journal[],
   existingJournals: Journal[],
   existingPendingCandidates: JournalCandidate[] = [],
-  options: { forceUpdateMultiCouncil?: boolean } = {}
+  options: {
+    forceUpdateMultiCouncil?: boolean;
+    onlyMultiCouncilScoreColumns?: boolean;
+  } = {}
 ): {
   candidatesToCreate: JournalCandidate[];
   newCount: number;
@@ -1995,6 +2173,8 @@ export function buildJournalCandidatesFromSheet(
     conflict: number;
   };
 } {
+  const isScoreOnlyMode = Boolean(options.onlyMultiCouncilScoreColumns);
+
   // Track currently active pending candidates to avoid duplicating pending queue items
   const activePendingMap = new Map<string, JournalCandidate>();
   existingPendingCandidates.forEach((c) => {
@@ -2077,41 +2257,46 @@ export function buildJournalCandidatesFromSheet(
       // Check if already in pending queue
       const existingPending = activePendingMap.get(incoming.journalId);
       if (existingPending) {
-        // If forceUpdateMultiCouncil is enabled and existingPending lacks councilScores, allow updating the pending candidate
+        const pendingScoreDiff = computeCouncilScoresDiff(
+          existingPending.councilScores || [],
+          incoming.councilScores || []
+        );
         const needsMultiCouncilEnrich =
-          options.forceUpdateMultiCouncil &&
+          (options.forceUpdateMultiCouncil || isScoreOnlyMode) &&
           (incoming.councilScores?.length || 0) > 0 &&
           (!existingPending.councilScores ||
-            existingPending.councilScores.length !== incoming.councilScores?.length);
+            existingPending.councilScores.length === 0 ||
+            pendingScoreDiff.hasScoreChanges);
         if (!needsMultiCouncilEnrich) {
           skippedDuplicates++;
           return;
         }
       }
 
-      // Case A: Completely NEW journal (or CONFLICT kept separate for Admin review)!
+      // Case A: Completely NEW journal (or updating scores on an existing pending new candidate)
       newCount++;
 
       const candId = `cand_new_${incoming.journalId}`;
       const newScoresCount = incoming.councilScores?.length || incoming.scores?.length || 0;
+      const baseCatalog = isScoreOnlyMode && existingPending ? existingPending : incoming;
 
       const candidateDoc: JournalCandidate = {
         id: candId,
         journalId: incoming.journalId,
-        name: incoming.name,
-        englishName: incoming.englishName,
-        abbreviation: incoming.abbreviation,
-        publisher: incoming.publisher,
-        hostAgency: incoming.hostAgency,
-        nameHistory: incoming.nameHistory,
-        issnPrint: incoming.issnPrint,
-        issnOnline: incoming.issnOnline,
-        isbn: incoming.isbn,
-        category: incoming.category,
-        primaryField: incoming.primaryField,
-        fields: incoming.fields,
-        website: incoming.website,
-        websiteVerified: Boolean(incoming.websiteVerified),
+        name: baseCatalog.name,
+        englishName: baseCatalog.englishName,
+        abbreviation: baseCatalog.abbreviation,
+        publisher: baseCatalog.publisher,
+        hostAgency: baseCatalog.hostAgency,
+        nameHistory: baseCatalog.nameHistory,
+        issnPrint: baseCatalog.issnPrint,
+        issnOnline: baseCatalog.issnOnline,
+        isbn: baseCatalog.isbn,
+        category: baseCatalog.category,
+        primaryField: baseCatalog.primaryField,
+        fields: baseCatalog.fields,
+        website: baseCatalog.website,
+        websiteVerified: Boolean(baseCatalog.websiteVerified),
         maxScore: incoming.maxScore ?? 0,
         maxScoreYear: incoming.maxScoreYear ?? 2025,
         scores: incoming.scores,
@@ -2126,8 +2311,8 @@ export function buildJournalCandidatesFromSheet(
         identityMatchNotes: identityMatch.notes,
         newScoresCount,
         changedScoresCount: 0,
-        guidelines: incoming.guidelines,
-        links: incoming.links,
+        guidelines: baseCatalog.guidelines,
+        links: baseCatalog.links,
         verification: incoming.verification
           ? {
               ...incoming.verification,
@@ -2140,51 +2325,88 @@ export function buildJournalCandidatesFromSheet(
         status: candidateStatus,
         unverifiedFields: unverifiedFields.slice(0, 45),
         sheetRowIndex: idx + 2,
-        createdAt: now,
+        createdAt: existingPending?.createdAt || now,
         updatedAt: now,
       };
 
       candidatesToCreate.push(candidateDoc);
     } else {
-      // Case B: Existing journal matched! Check if any changes
-      const diffs = computeJournalFieldDiffs(matched, incoming);
+      // Case B: Existing journal matched!
+      const allDiffs = computeJournalFieldDiffs(matched, incoming);
       const scoreDiff = computeCouncilScoresDiff(
         matched.councilScores || [],
         incoming.councilScores || []
       );
+      const scoreOnlyFields = new Set([
+        "maxScore",
+        "maxScoreYear",
+        "scores",
+        "recognizedCouncilCount",
+        "councilScores",
+      ]);
+      const effectiveDiffs = isScoreOnlyMode
+        ? allDiffs.filter((d) => scoreOnlyFields.has(d.field))
+        : allDiffs;
 
-      if (diffs.length === 0 && !scoreDiff.hasScoreChanges) {
-        unchangedCount++;
-        return;
+      const hasScoreMetadataChange =
+        scoreDiff.hasScoreChanges ||
+        ((matched.councilScores?.length || 0) === 0 && (incoming.councilScores?.length || 0) > 0) ||
+        (matched.recognizedCouncilCount || 0) !== (incoming.recognizedCouncilCount || 0);
+
+      if (isScoreOnlyMode) {
+        if (!hasScoreMetadataChange && effectiveDiffs.length === 0) {
+          unchangedCount++;
+          return;
+        }
+      } else {
+        if (allDiffs.length === 0 && !scoreDiff.hasScoreChanges) {
+          unchangedCount++;
+          return;
+        }
       }
 
       const existingPending = activePendingMap.get(matched.journalId);
-      if (existingPending && !options.forceUpdateMultiCouncil) {
-        skippedDuplicates++;
-        return;
+      if (existingPending) {
+        if (!options.forceUpdateMultiCouncil && !isScoreOnlyMode) {
+          skippedDuplicates++;
+          return;
+        }
+        const pendingScoreDiff = computeCouncilScoresDiff(
+          existingPending.councilScores || [],
+          incoming.councilScores || []
+        );
+        if (
+          !pendingScoreDiff.hasScoreChanges &&
+          (existingPending.councilScores?.length || 0) > 0
+        ) {
+          skippedDuplicates++;
+          return;
+        }
       }
 
       updatedCount++;
 
       const candId = `cand_upd_${matched.journalId}`;
+      // When in score-only mode ("Cập nhật điểm HĐGSNN"), preserve 100% of the published journal's non-score catalog fields
+      const catalogSource = isScoreOnlyMode ? matched : incoming;
 
       const candidateDoc: JournalCandidate = {
         id: candId,
         journalId: matched.journalId,
-        name: incoming.name,
-        englishName: incoming.englishName,
-        abbreviation: incoming.abbreviation,
-        publisher: incoming.publisher,
-        hostAgency: incoming.hostAgency,
-        nameHistory: incoming.nameHistory,
-        issnPrint: incoming.issnPrint,
-        issnOnline: incoming.issnOnline,
-        isbn: incoming.isbn,
-        category: incoming.category,
-        primaryField: incoming.primaryField,
-        fields: incoming.fields,
-        website: incoming.website,
-        websiteVerified: Boolean(incoming.websiteVerified),
+        name: catalogSource.name,
+        englishName: catalogSource.englishName,
+        abbreviation: catalogSource.abbreviation,
+        publisher: catalogSource.publisher,
+        hostAgency: catalogSource.hostAgency,
+        nameHistory: catalogSource.nameHistory,
+        issnPrint: catalogSource.issnPrint,
+        issnOnline: catalogSource.issnOnline,
+        isbn: catalogSource.isbn,
+        category: catalogSource.category,
+        primaryField: catalogSource.primaryField,
+        fields: catalogSource.fields,
+        website: catalogSource.website,
+        websiteVerified: Boolean(catalogSource.websiteVerified),
         maxScore: incoming.maxScore ?? 0,
         maxScoreYear: incoming.maxScoreYear ?? 2025,
         scores: incoming.scores,
@@ -2199,8 +2421,8 @@ export function buildJournalCandidatesFromSheet(
         identityMatchNotes: identityMatch.notes,
         newScoresCount: scoreDiff.newScoresCount,
         changedScoresCount: scoreDiff.changedScoresCount,
-        guidelines: incoming.guidelines,
-        links: incoming.links,
+        guidelines: catalogSource.guidelines,
+        links: catalogSource.links,
         verification: incoming.verification
           ? {
               ...incoming.verification,
@@ -2211,12 +2433,22 @@ export function buildJournalCandidatesFromSheet(
         sourceType: "GOOGLE_SHEETS",
         changeType: "update",
         existingJournalId: matched.id || matched.journalId,
-        diffSummary: diffs.slice(0, 45),
+        diffSummary: (effectiveDiffs.length > 0
+          ? effectiveDiffs
+          : [
+              {
+                field: "councilScores",
+                label: "Cập nhật điểm theo Hội đồng",
+                oldValue: `${matched.councilScores?.length || 0} bản ghi điểm`,
+                newValue: `${incoming.councilScores?.length || 0} bản ghi điểm`,
+              },
+            ]
+        ).slice(0, 45),
         status: candidateStatus,
         isManualPreserved: matched.isManualEdited,
         unverifiedFields: unverifiedFields.slice(0, 45),
         sheetRowIndex: idx + 2,
-        createdAt: now,
+        createdAt: existingPending?.createdAt || now,
         updatedAt: now,
       };
 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import type {
   Journal,
   JournalCandidate,
+  JournalSyncSettings,
 } from "../types/journal";
 import {
   subscribeJournals,
@@ -142,6 +143,7 @@ export const JournalDirectoryPage: React.FC = () => {
   const [isSyncResultOpen, setIsSyncResultOpen] = useState<boolean>(false);
   const [syncResultData, setSyncResultData] = useState<JournalSyncResultData | null>(null);
   const [syncErrorData, setSyncErrorData] = useState<JournalSyncErrorData | null>(null);
+  const [syncSettings, setSyncSettings] = useState<JournalSyncSettings | null>(null);
 
   // Subscribe to Firestore journals
   useEffect(() => {
@@ -157,9 +159,14 @@ export const JournalDirectoryPage: React.FC = () => {
     return () => unsubscribe();
   }, [isAdmin, showHidden]);
 
-  // Subscribe to Journal Candidates if Admin
+  // Subscribe to Journal Candidates & load Sync Settings if Admin
   useEffect(() => {
     if (!isAdmin) return;
+    getJournalSyncSettings()
+      .then((s) => {
+        if (s) setSyncSettings(s);
+      })
+      .catch(() => {});
     const unsub = subscribeJournalCandidates((cands) => {
       setCandidates(cands);
     });
@@ -391,6 +398,9 @@ export const JournalDirectoryPage: React.FC = () => {
         user: { uid: user.uid, email: user.email || "" },
       });
 
+      const refreshedSettings = await getJournalSyncSettings();
+      if (refreshedSettings) setSyncSettings(refreshedSettings);
+
       setSyncResultData({
         syncMode: "catalog",
         totalRead: res.totalRead,
@@ -401,6 +411,8 @@ export const JournalDirectoryPage: React.FC = () => {
         manualReviewCount: res.manualReviewCount,
         warnings: res.warnings,
         batchId: res.batchId,
+        sourceSpreadsheetId: sheetId,
+        sourceSheetName: sheetName,
       });
       setIsSyncResultOpen(true);
     } catch (err: any) {
@@ -416,7 +428,7 @@ export const JournalDirectoryPage: React.FC = () => {
       } else {
         setSyncErrorData({
           message: err.message || "Đồng bộ Google Sheets thất bại.",
-          userSummary: "Lỗi kết nối hoặc đọc dữ liệu từ Google Sheets",
+          userSummary: "Lỗi kết nối hoặc đọc dữ liệu từ Google Sheets IFA-RH",
         });
       }
       setIsSyncResultOpen(true);
@@ -434,16 +446,17 @@ export const JournalDirectoryPage: React.FC = () => {
 
     try {
       const savedSettings = await getJournalSyncSettings();
-      const sheetId =
-        savedSettings?.multiCouncilSheetId || DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID;
-      const sheetName =
-        savedSettings?.multiCouncilSheetName || DEFAULT_MULTI_COUNCIL_SHEET_NAME;
+      const sheetId = savedSettings?.sheetId || DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID;
+      const sheetName = savedSettings?.sheetName || DEFAULT_MULTI_COUNCIL_SHEET_NAME;
 
       const res = await syncMultiCouncilScoresFromGoogleSheetsToQueue({
         sheetId,
         sheetName,
         user: { uid: user.uid, email: user.email || "" },
       });
+
+      const refreshedSettings = await getJournalSyncSettings();
+      if (refreshedSettings) setSyncSettings(refreshedSettings);
 
       setSyncResultData({
         syncMode: "multi_council",
@@ -475,7 +488,7 @@ export const JournalDirectoryPage: React.FC = () => {
       } else {
         setSyncErrorData({
           message: err.message || "Cập nhật điểm HĐGSNN thất bại.",
-          userSummary: "Lỗi kết nối hoặc đọc bảng điểm HĐGSNN",
+          userSummary: "Lỗi kết nối hoặc đọc dữ liệu điểm HĐGSNN từ Google Sheets IFA-RH",
         });
       }
       setIsSyncResultOpen(true);
@@ -493,7 +506,7 @@ export const JournalDirectoryPage: React.FC = () => {
           justifyContent: "space-between",
           alignItems: "flex-start",
           gap: "16px",
-          marginBottom: "20px",
+          marginBottom: "16px",
           flexWrap: "wrap",
         }}
       >
@@ -534,7 +547,7 @@ export const JournalDirectoryPage: React.FC = () => {
                 boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
                 transition: "all 0.15s ease",
               }}
-              title="Đồng bộ danh mục tạp chí từ bảng Google Sheets chuẩn"
+              title="Đồng bộ danh mục tạp chí từ Google Sheets IFA-RH vào Hàng chờ duyệt"
             >
               <RefreshCw
                 size={15}
@@ -566,7 +579,7 @@ export const JournalDirectoryPage: React.FC = () => {
                 boxShadow: "0 1px 2px rgba(0, 0, 0, 0.04)",
                 transition: "all 0.15s ease",
               }}
-              title="Đọc dữ liệu điểm nhiều Hội đồng (53 cột) từ bảng IFA-RH_DANH_MUC_TAP_CHI_HDGSNN vào Hàng chờ duyệt"
+              title="Cập nhật các cột điểm đa Hội đồng (AV:BA) từ Google Sheets IFA-RH vào Hàng chờ duyệt"
             >
               <Layers
                 size={15}
@@ -596,7 +609,7 @@ export const JournalDirectoryPage: React.FC = () => {
                 boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
                 transition: "all 0.15s ease",
               }}
-              title="Cấu hình 2 nguồn Google Sheets"
+              title="Cấu hình nguồn Google Sheets IFA-RH"
             >
               <Settings size={16} />
             </button>
@@ -630,6 +643,92 @@ export const JournalDirectoryPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Admin Sync Status Bar (Requirement 6: Nguồn dữ liệu: Google Sheets IFA-RH) */}
+      {isAdmin && (
+        <div
+          style={{
+            marginBottom: "16px",
+            padding: "10px 14px",
+            borderRadius: "8px",
+            backgroundColor: "#f8fafc",
+            border: "1px solid #e2e8f0",
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "12px",
+            fontSize: "0.81rem",
+            color: "#334155",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "5px",
+                padding: "3px 9px",
+                borderRadius: "6px",
+                backgroundColor: "#eff6ff",
+                border: "1px solid #bfdbfe",
+                color: "#1e40af",
+                fontWeight: 700,
+              }}
+            >
+              Nguồn dữ liệu: Google Sheets IFA-RH
+            </span>
+            <span style={{ color: "#64748b" }}>
+              Tab: <strong>{syncSettings?.sheetName || DEFAULT_JOURNAL_SHEET_NAME}</strong>
+            </span>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+            <span>
+              Đồng bộ gần nhất:{" "}
+              <strong>
+                {syncSettings?.lastMultiCouncilSyncedAt || syncSettings?.lastSyncedAt
+                  ? new Date(
+                      (syncSettings?.lastMultiCouncilSyncedAt || syncSettings?.lastSyncedAt)!
+                    ).toLocaleString("vi-VN")
+                  : "Chưa đồng bộ"}
+              </strong>
+            </span>
+            <span>
+              Đọc được:{" "}
+              <strong>
+                {syncSettings?.lastStats?.totalRead ??
+                  syncSettings?.lastMultiCouncilStats?.totalRead ??
+                  0}
+              </strong>{" "}
+              bản ghi
+            </span>
+            <span>
+              Ứng viên mới / cập nhật:{" "}
+              <strong style={{ color: "#1d4ed8" }}>
+                {syncSettings?.lastStats
+                  ? `${syncSettings.lastStats.newCount} mới / ${syncSettings.lastStats.updatedCount} cập nhật`
+                  : `${candidateTabCounts.pending} chờ duyệt`}
+              </strong>
+            </span>
+            <span>
+              Cần kiểm tra / lỗi:{" "}
+              <strong
+                style={{
+                  color:
+                    (syncSettings?.lastMultiCouncilStats?.needsReviewCount ??
+                      candidateTabCounts.needs_review) > 0
+                      ? "#b45309"
+                      : "#15803d",
+                }}
+              >
+                {syncSettings?.lastMultiCouncilStats?.needsReviewCount ??
+                  candidateTabCounts.needs_review}
+              </strong>
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Admin View Mode Switcher: Danh mục Công khai vs Hàng chờ duyệt */}
       {isAdmin && (
