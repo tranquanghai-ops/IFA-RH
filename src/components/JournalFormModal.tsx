@@ -64,6 +64,29 @@ export const JournalFormModal: React.FC<JournalFormModalProps> = ({
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
+    if (!isOpen) return;
+    const originalOverflow = document.body.style.overflow;
+    const originalHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    document.body.classList.add("modal-open");
+    document.documentElement.classList.add("modal-open");
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.documentElement.style.overflow = originalHtmlOverflow;
+      document.body.classList.remove("modal-open");
+      document.documentElement.classList.remove("modal-open");
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, onClose]);
+
+  useEffect(() => {
     if (journal) {
       setFormData({
         journalId: journal.journalId || "",
@@ -283,8 +306,14 @@ export const JournalFormModal: React.FC<JournalFormModalProps> = ({
         justifyContent: "center",
         zIndex: 9999,
         padding: "16px",
+        overscrollBehavior: "contain",
       }}
       onClick={onClose}
+      onWheel={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+        }
+      }}
     >
       <div
         className="modal-content viewport-safe-modal"
@@ -298,6 +327,7 @@ export const JournalFormModal: React.FC<JournalFormModalProps> = ({
           flexDirection: "column",
           boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1)",
           overflow: "hidden",
+          overscrollBehavior: "contain",
         }}
         onClick={(e) => e.stopPropagation()}
       >

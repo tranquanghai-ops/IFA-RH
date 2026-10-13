@@ -23,7 +23,11 @@ export const Modal: React.FC<ModalProps> = ({
 
     // Lock background scroll
     const originalOverflow = document.body.style.overflow;
+    const originalHtmlOverflow = document.documentElement.style.overflow;
     document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    document.body.classList.add("modal-open");
+    document.documentElement.classList.add("modal-open");
 
     // Escape listener
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -35,6 +39,9 @@ export const Modal: React.FC<ModalProps> = ({
 
     return () => {
       document.body.style.overflow = originalOverflow;
+      document.documentElement.style.overflow = originalHtmlOverflow;
+      document.body.classList.remove("modal-open");
+      document.documentElement.classList.remove("modal-open");
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [isOpen, onClose]);
@@ -46,6 +53,9 @@ export const Modal: React.FC<ModalProps> = ({
       className="modal-overlay"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
+      }}
+      onWheel={(e) => {
+        if (e.target === e.currentTarget) e.preventDefault();
       }}
       role="dialog"
       aria-modal="true"

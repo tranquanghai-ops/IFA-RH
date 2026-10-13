@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import {
   X,
   CheckCircle2,
@@ -69,6 +69,29 @@ export const JournalSyncResultModal: React.FC<JournalSyncResultModalProps> = ({
   error,
   onRetry,
 }) => {
+  useEffect(() => {
+    if (!isOpen) return;
+    const originalOverflow = document.body.style.overflow;
+    const originalHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    document.body.classList.add("modal-open");
+    document.documentElement.classList.add("modal-open");
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.documentElement.style.overflow = originalHtmlOverflow;
+      document.body.classList.remove("modal-open");
+      document.documentElement.classList.remove("modal-open");
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const isSuccess = !!result && !error;
@@ -89,8 +112,14 @@ export const JournalSyncResultModal: React.FC<JournalSyncResultModalProps> = ({
         justifyContent: "center",
         zIndex: 9999,
         padding: "16px",
+        overscrollBehavior: "contain",
       }}
       onClick={onClose}
+      onWheel={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+        }
+      }}
     >
       <div
         className="modal-content viewport-safe-modal"
@@ -104,6 +133,7 @@ export const JournalSyncResultModal: React.FC<JournalSyncResultModalProps> = ({
           flexDirection: "column",
           boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
           overflow: "hidden",
+          overscrollBehavior: "contain",
         }}
         onClick={(e) => e.stopPropagation()}
       >

@@ -1789,6 +1789,7 @@ export const JournalDirectoryPage: React.FC = () => {
           onClose={() => setCandidateForReview(null)}
           candidate={candidateForReview}
           initialEditMode={reviewInitialEditMode}
+          selectedCouncilId={selectedCouncilId}
           onSaveDraft={async (id, updates, reason) => {
             await saveJournalCandidateDraft(
               id,

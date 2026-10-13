@@ -11,6 +11,7 @@ import {
 import {
   formatVietnameseScore,
   getScoreBadgePalette,
+  isValidDisplayIdentifier,
 } from "../services/journalService";
 import {
   X,
@@ -28,6 +29,15 @@ import {
   ExternalLink,
   History,
   Check,
+  Building,
+  FileText,
+  Mail,
+  ShieldCheck,
+  Globe,
+  Filter,
+  Download,
+  AlertCircle,
+  Link as LinkIcon,
 } from "lucide-react";
 
 interface JournalCandidateReviewModalProps {
@@ -35,6 +45,7 @@ interface JournalCandidateReviewModalProps {
   onClose: () => void;
   candidate: JournalCandidate | null;
   initialEditMode?: boolean;
+  selectedCouncilId?: string;
   onSaveDraft?: (
     candidateId: string,
     updates: Partial<JournalCandidate>,
@@ -76,6 +87,7 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
   onClose,
   candidate,
   initialEditMode = false,
+  selectedCouncilId = "HD24",
   onSaveDraft,
   onApprove,
   onReject,
@@ -87,6 +99,9 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
+
+  // Council view mode toggle: "all" vs "selected"
+  const [councilViewMode, setCouncilViewMode] = useState<"selected" | "all">("all");
 
   // Editable journal metadata
   const [isEditingMeta, setIsEditingMeta] = useState(false);
@@ -109,6 +124,30 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
   const [editReason, setEditReason] = useState("");
   const [hasModifiedScoresOrMeta, setHasModifiedScoresOrMeta] = useState(false);
 
+  // Background scroll lock and escape listener
+  useEffect(() => {
+    if (!isOpen) return;
+    const originalOverflow = document.body.style.overflow;
+    const originalHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    document.body.classList.add("modal-open");
+    document.documentElement.classList.add("modal-open");
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.documentElement.style.overflow = originalHtmlOverflow;
+      document.body.classList.remove("modal-open");
+      document.documentElement.classList.remove("modal-open");
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, onClose]);
+
   useEffect(() => {
     if (!candidate) return;
     setErrorMsg("");
@@ -130,10 +169,11 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
     setMetaPrimaryField(candidate.primaryField || "");
     setMetaWebsite(candidate.website || "");
 
+    let loadedScores: JournalCouncilScore[] = [];
     if (Array.isArray(candidate.councilScores) && candidate.councilScores.length > 0) {
-      setCouncilScores(candidate.councilScores.map((cs) => ({ ...cs })));
+      loadedScores = candidate.councilScores.map((cs) => ({ ...cs }));
     } else if (Array.isArray(candidate.scores) && candidate.scores.length > 0) {
-      const converted: JournalCouncilScore[] = candidate.scores.map((s) => {
+      loadedScores = candidate.scores.map((s) => {
         const norm = normalizeCouncilIdentity(s.councilCode, s.councilName);
         return {
           councilId: norm.councilId,
@@ -156,24 +196,60 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
               : "VERIFIED",
         };
       });
-      setCouncilScores(converted);
-    } else {
-      setCouncilScores([]);
     }
-  }, [candidate, isOpen, initialEditMode]);
+    setCouncilScores(loadedScores);
+
+    // Auto view mode: selected if council present, else all
+    if (selectedCouncilId && selectedCouncilId !== "ALL") {
+      const normSel = normalizeCouncilIdentity(selectedCouncilId).councilId;
+      const hasSel = loadedScores.some(
+        (cs) => normalizeCouncilIdentity(cs.councilId || cs.councilName).councilId === normSel
+      );
+      setCouncilViewMode(hasSel ? "selected" : "all");
+    } else {
+      setCouncilViewMode("all");
+    }
+  }, [candidate, isOpen, initialEditMode, selectedCouncilId]);
 
   if (!isOpen || !candidate) return null;
 
   const isUpdate = candidate.changeType === "update";
   const diffs = candidate.diffSummary || [];
+  const guidelines = candidate.guidelines;
+  const verification = candidate.verification;
+  const links = candidate.links || [];
 
-  const startEditRow = (idx: number) => {
-    const item = councilScores[idx];
+  const isValidUrl = (url?: string) =>
+    Boolean(url && (url.startsWith("http://") || url.startsWith("https://")));
+
+  const normSelectedCouncil =
+    selectedCouncilId && selectedCouncilId !== "ALL"
+      ? normalizeCouncilIdentity(selectedCouncilId)
+      : null;
+
+  const displayedCouncilScores =
+    councilViewMode === "selected" && normSelectedCouncil
+      ? councilScores.filter(
+          (cs) =>
+            normalizeCouncilIdentity(cs.councilId || cs.councilName).councilId ===
+            normSelectedCouncil.councilId
+        )
+      : councilScores;
+
+  const verifiedNumeric = councilScores
+    .filter((cs) => cs.verificationStatus === "VERIFIED" && typeof cs.maxScore === "number")
+    .map((cs) => cs.maxScore as number);
+  const computedMaxScore =
+    verifiedNumeric.length > 0 ? Math.max(...verifiedNumeric) : candidate.maxScore;
+
+  const startEditRow = (csItem: JournalCouncilScore) => {
+    const idx = councilScores.indexOf(csItem);
+    if (idx === -1) return;
     setIsAddingNewRow(false);
     setEditingRowIndex(idx);
-    setRowDraft({ ...item });
-    setRowScoreText(item.maxScore === null ? "" : String(item.maxScore));
-    setRowFieldsText((item.scientificFields || []).join(", "));
+    setRowDraft({ ...csItem });
+    setRowScoreText(csItem.maxScore === null ? "" : String(csItem.maxScore));
+    setRowFieldsText((csItem.scientificFields || []).join(", "));
   };
 
   const startAddNewRow = () => {
@@ -232,13 +308,15 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
     setErrorMsg("");
   };
 
-  const handleDeleteRow = (idx: number) => {
-    const nextList = councilScores.filter((_, i) => i !== idx);
+  const handleDeleteRow = (csItem: JournalCouncilScore) => {
+    const nextList = councilScores.filter((item) => item !== csItem);
     setCouncilScores(nextList);
     setHasModifiedScoresOrMeta(true);
   };
 
-  const handleQuickVerifyRow = (idx: number) => {
+  const handleQuickVerifyRow = (csItem: JournalCouncilScore) => {
+    const idx = councilScores.indexOf(csItem);
+    if (idx === -1) return;
     const nextList = [...councilScores];
     nextList[idx] = {
       ...nextList[idx],
@@ -259,11 +337,6 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
           .map((cs) => cs.councilName)
       )
     );
-    const verifiedNumeric = councilScores
-      .filter((cs) => cs.verificationStatus === "VERIFIED" && typeof cs.maxScore === "number")
-      .map((cs) => cs.maxScore as number);
-    const computedMaxScore =
-      verifiedNumeric.length > 0 ? Math.max(...verifiedNumeric) : candidate.maxScore;
 
     // Sync legacy scores array from councilScores
     const syncedLegacyScores = councilScores.map((cs) => ({
@@ -399,8 +472,14 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
         justifyContent: "center",
         zIndex: 9999,
         padding: "16px",
+        overscrollBehavior: "contain",
       }}
       onClick={onClose}
+      onWheel={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+        }
+      }}
     >
       <div
         className="modal-content viewport-safe-modal"
@@ -414,13 +493,14 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
           flexDirection: "column",
           boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
           overflow: "hidden",
+          overscrollBehavior: "contain",
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
+        {/* Header — Harmonized with JournalDetailModal */}
         <div
           style={{
-            padding: "18px 24px",
+            padding: "20px 24px",
             borderBottom: "1px solid #e5e7eb",
             display: "flex",
             justifyContent: "space-between",
@@ -439,15 +519,36 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                 marginBottom: "6px",
               }}
             >
+              {/* Max Score Badge matching user detail modal */}
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  fontSize: "0.8rem",
+                  fontWeight: 700,
+                  color: "#1e40af",
+                  backgroundColor: "#eff6ff",
+                  padding: "3px 8px",
+                  borderRadius: "4px",
+                  border: "1px solid #bfdbfe",
+                }}
+              >
+                <Award size={14} />
+                KHUNG ĐIỂM HĐGSNN ({candidate.decisionYear || candidate.maxScoreYear || 2025}): TỐI ĐA{" "}
+                {formatVietnameseScore(computedMaxScore)} ĐIỂM
+              </div>
+
+              {/* Admin status tags */}
               <span
                 style={{
                   fontSize: "0.75rem",
                   fontWeight: 700,
-                  padding: "2px 8px",
+                  padding: "3px 8px",
                   borderRadius: "4px",
-                  backgroundColor: isUpdate ? "#eff6ff" : "#f0fdf4",
-                  color: isUpdate ? "#1e40af" : "#166534",
-                  border: isUpdate ? "1px solid #bfdbfe" : "1px solid #bbf7d0",
+                  backgroundColor: isUpdate ? "#f0fdf4" : "#ecfdf5",
+                  color: isUpdate ? "#166534" : "#047857",
+                  border: isUpdate ? "1px solid #bbf7d0" : "1px solid #a7f3d0",
                 }}
               >
                 {isUpdate ? "CẬP NHẬT TẠP CHÍ / ĐIỂM HĐGSNN" : "TẠP CHÍ MỚI"}
@@ -458,7 +559,7 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                 style={{
                   fontSize: "0.75rem",
                   fontWeight: 700,
-                  padding: "2px 8px",
+                  padding: "3px 8px",
                   borderRadius: "4px",
                   backgroundColor:
                     reconStatus === "HOAN_TAT"
@@ -488,7 +589,7 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                 style={{
                   fontSize: "0.75rem",
                   fontWeight: 700,
-                  padding: "2px 8px",
+                  padding: "3px 8px",
                   borderRadius: "4px",
                   backgroundColor:
                     idMatchStatus === "MATCHED"
@@ -514,46 +615,62 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
               </span>
             </div>
 
-            <h3
+            <h2
               style={{
-                margin: 0,
-                fontSize: "1.25rem",
+                fontSize: "1.35rem",
                 fontWeight: 700,
                 color: "#0f172a",
-                lineHeight: 1.35,
+                lineHeight: "1.3",
+                margin: 0,
               }}
             >
               {metaName || candidate.name}
-            </h3>
-            {metaEnglishName && (
+            </h2>
+            {(metaEnglishName || candidate.englishName) && (
               <p
                 style={{
-                  margin: "3px 0 0 0",
-                  fontSize: "0.85rem",
+                  fontSize: "0.9rem",
                   color: "#64748b",
                   fontStyle: "italic",
+                  margin: "4px 0 0 0",
                 }}
               >
-                {metaEnglishName}
+                {metaEnglishName || candidate.englishName}{" "}
+                {isValidDisplayIdentifier(candidate.abbreviation)
+                  ? `(${candidate.abbreviation})`
+                  : ""}
               </p>
             )}
           </div>
+
           <button
             onClick={onClose}
-            style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b" }}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "#64748b",
+              padding: "4px",
+              borderRadius: "6px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+            title="Đóng modal"
           >
             <X size={20} />
           </button>
         </div>
 
-        {/* Scrollable Body */}
+        {/* Modal Scrollable Body */}
         <div
           style={{
             padding: "24px",
             overflowY: "auto",
+            overscrollBehavior: "contain",
             display: "flex",
             flexDirection: "column",
-            gap: "20px",
+            gap: "24px",
           }}
         >
           {errorMsg && (
@@ -699,83 +816,13 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
             </div>
           )}
 
-          {/* Section 1: Diff comparison (If Update) */}
-          {isUpdate && diffs.length > 0 && (
-            <div>
-              <h4
-                style={{
-                  margin: "0 0 10px 0",
-                  fontSize: "0.95rem",
-                  fontWeight: 700,
-                  color: "#0f172a",
-                }}
-              >
-                1. So sánh thay đổi dữ liệu (Đang công khai vs Đề xuất mới):
-              </h4>
-              <div
-                style={{
-                  border: "1px solid #e2e8f0",
-                  borderRadius: "8px",
-                  overflow: "hidden",
-                  fontSize: "0.84rem",
-                }}
-              >
-                <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
-                  <thead>
-                    <tr style={{ backgroundColor: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
-                      <th style={{ padding: "10px 12px", width: "180px" }}>Trường thông tin</th>
-                      <th
-                        style={{
-                          padding: "10px 12px",
-                          backgroundColor: "#fef2f2",
-                          color: "#991b1b",
-                        }}
-                      >
-                        Dữ liệu hiện tại (Đang công khai)
-                      </th>
-                      <th style={{ padding: "10px 12px", width: "30px", textAlign: "center" }}></th>
-                      <th
-                        style={{
-                          padding: "10px 12px",
-                          backgroundColor: "#f0fdf4",
-                          color: "#166534",
-                        }}
-                      >
-                        Dữ liệu đề xuất mới (Spark)
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {diffs.map((d, i) => (
-                      <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                        <td style={{ padding: "10px 12px", fontWeight: 600, color: "#334155" }}>
-                          {d.label}
-                        </td>
-                        <td style={{ padding: "10px 12px", color: "#475569" }}>
-                          {String(d.oldValue)}
-                        </td>
-                        <td style={{ padding: "10px 6px", textAlign: "center", color: "#94a3b8" }}>
-                          <ArrowRight size={14} />
-                        </td>
-                        <td style={{ padding: "10px 12px", fontWeight: 600, color: "#15803d" }}>
-                          {String(d.newValue)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Section 2: General Identification Details (View / Inline Edit) */}
+          {/* Section 1: Thông tin định danh & Cơ quan xuất bản — Harmonized with JournalDetailModal */}
           <div
             style={{
               backgroundColor: "#f8fafc",
-              padding: "16px",
-              borderRadius: "8px",
               border: "1px solid #e2e8f0",
-              fontSize: "0.85rem",
+              borderRadius: "8px",
+              padding: "16px",
             }}
           >
             <div
@@ -786,9 +833,23 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                 marginBottom: "12px",
               }}
             >
-              <h4 style={{ margin: 0, fontSize: "0.92rem", fontWeight: 700, color: "#0f172a" }}>
-                2. Thông tin định danh tạp chí
+              <h4
+                style={{
+                  fontSize: "0.9rem",
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.03em",
+                  color: "#334155",
+                  margin: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                <Building size={16} color="#2563eb" />
+                1. Thông tin định danh & Cơ quan xuất bản
               </h4>
+
               <button
                 type="button"
                 onClick={() => setIsEditingMeta(!isEditingMeta)}
@@ -820,7 +881,15 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                 }}
               >
                 <div>
-                  <label style={{ display: "block", fontSize: "0.76rem", fontWeight: 600, color: "#475569", marginBottom: 3 }}>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.76rem",
+                      fontWeight: 600,
+                      color: "#475569",
+                      marginBottom: 3,
+                    }}
+                  >
                     Tên tạp chí (Tiếng Việt)
                   </label>
                   <input
@@ -830,11 +899,25 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                       setMetaName(e.target.value);
                       setHasModifiedScoresOrMeta(true);
                     }}
-                    style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.84rem" }}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      border: "1px solid #cbd5e1",
+                      fontSize: "0.84rem",
+                    }}
                   />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.76rem", fontWeight: 600, color: "#475569", marginBottom: 3 }}>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.76rem",
+                      fontWeight: 600,
+                      color: "#475569",
+                      marginBottom: 3,
+                    }}
+                  >
                     Tên tiếng Anh
                   </label>
                   <input
@@ -844,12 +927,26 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                       setMetaEnglishName(e.target.value);
                       setHasModifiedScoresOrMeta(true);
                     }}
-                    style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.84rem" }}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      border: "1px solid #cbd5e1",
+                      fontSize: "0.84rem",
+                    }}
                   />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.76rem", fontWeight: 600, color: "#475569", marginBottom: 3 }}>
-                    Cơ quan xuất bản
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.76rem",
+                      fontWeight: 600,
+                      color: "#475569",
+                      marginBottom: 3,
+                    }}
+                  >
+                    Cơ quan xuất bản / Chủ quản
                   </label>
                   <input
                     type="text"
@@ -858,12 +955,26 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                       setMetaPublisher(e.target.value);
                       setHasModifiedScoresOrMeta(true);
                     }}
-                    style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.84rem" }}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      border: "1px solid #cbd5e1",
+                      fontSize: "0.84rem",
+                    }}
                   />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.76rem", fontWeight: 600, color: "#475569", marginBottom: 3 }}>
-                    ISSN bản in
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.76rem",
+                      fontWeight: 600,
+                      color: "#475569",
+                      marginBottom: 3,
+                    }}
+                  >
+                    ISSN bản in (Print)
                   </label>
                   <input
                     type="text"
@@ -872,12 +983,26 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                       setMetaIssnPrint(e.target.value);
                       setHasModifiedScoresOrMeta(true);
                     }}
-                    style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.84rem" }}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      border: "1px solid #cbd5e1",
+                      fontSize: "0.84rem",
+                    }}
                   />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.76rem", fontWeight: 600, color: "#475569", marginBottom: 3 }}>
-                    E-ISSN điện tử
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.76rem",
+                      fontWeight: 600,
+                      color: "#475569",
+                      marginBottom: 3,
+                    }}
+                  >
+                    E-ISSN (Điện tử)
                   </label>
                   <input
                     type="text"
@@ -886,11 +1011,81 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                       setMetaIssnOnline(e.target.value);
                       setHasModifiedScoresOrMeta(true);
                     }}
-                    style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.84rem" }}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      border: "1px solid #cbd5e1",
+                      fontSize: "0.84rem",
+                    }}
                   />
                 </div>
                 <div>
-                  <label style={{ display: "block", fontSize: "0.76rem", fontWeight: 600, color: "#475569", marginBottom: 3 }}>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.76rem",
+                      fontWeight: 600,
+                      color: "#475569",
+                      marginBottom: 3,
+                    }}
+                  >
+                    ISBN chuyên đề
+                  </label>
+                  <input
+                    type="text"
+                    value={metaIsbn}
+                    onChange={(e) => {
+                      setMetaIsbn(e.target.value);
+                      setHasModifiedScoresOrMeta(true);
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      border: "1px solid #cbd5e1",
+                      fontSize: "0.84rem",
+                    }}
+                  />
+                </div>
+                <div>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.76rem",
+                      fontWeight: 600,
+                      color: "#475569",
+                      marginBottom: 3,
+                    }}
+                  >
+                    Lĩnh vực chuyên môn chính
+                  </label>
+                  <input
+                    type="text"
+                    value={metaPrimaryField}
+                    onChange={(e) => {
+                      setMetaPrimaryField(e.target.value);
+                      setHasModifiedScoresOrMeta(true);
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      border: "1px solid #cbd5e1",
+                      fontSize: "0.84rem",
+                    }}
+                  />
+                </div>
+                <div>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: "0.76rem",
+                      fontWeight: 600,
+                      color: "#475569",
+                      marginBottom: 3,
+                    }}
+                  >
                     Website chính thức
                   </label>
                   <input
@@ -900,7 +1095,13 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                       setMetaWebsite(e.target.value);
                       setHasModifiedScoresOrMeta(true);
                     }}
-                    style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.84rem" }}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      border: "1px solid #cbd5e1",
+                      fontSize: "0.84rem",
+                    }}
                   />
                 </div>
               </div>
@@ -908,62 +1109,127 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
                   gap: "12px",
+                  fontSize: "0.85rem",
                 }}
               >
                 <div>
-                  <span style={{ color: "#64748b" }}>Cơ quan xuất bản:</span>
+                  <span style={{ color: "#64748b" }}>Cơ quan xuất bản / Chủ quản:</span>
                   <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
-                    {metaPublisher || "—"}
+                    {metaPublisher || candidate.publisher || "Đang cập nhật"}
                   </div>
                 </div>
                 <div>
-                  <span style={{ color: "#64748b" }}>ISSN bản in:</span>
+                  <span style={{ color: "#64748b" }}>Phân loại:</span>
                   <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
-                    {metaIssnPrint || "Chưa có"}
+                    {candidate.category === "international"
+                      ? "Tạp chí quốc tế"
+                      : "Tạp chí trong nước"}
                   </div>
                 </div>
                 <div>
-                  <span style={{ color: "#64748b" }}>E-ISSN điện tử:</span>
+                  <span style={{ color: "#64748b" }}>ISSN bản in (Print):</span>
                   <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
-                    {metaIssnOnline || "Chưa có"}
+                    {metaIssnPrint || candidate.issnPrint || "Chưa có"}
                   </div>
                 </div>
+                <div>
+                  <span style={{ color: "#64748b" }}>E-ISSN (Điện tử):</span>
+                  <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
+                    {metaIssnOnline || candidate.issnOnline || "Chưa có"}
+                  </div>
+                </div>
+                {isValidDisplayIdentifier(metaIsbn || candidate.isbn) && (
+                  <div>
+                    <span style={{ color: "#64748b" }}>ISBN chuyên đề:</span>
+                    <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
+                      {metaIsbn || candidate.isbn}
+                    </div>
+                  </div>
+                )}
                 <div>
                   <span style={{ color: "#64748b" }}>Lĩnh vực chuyên môn:</span>
                   <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
-                    {metaPrimaryField || "—"}
+                    {metaPrimaryField || candidate.primaryField || "—"}
                   </div>
                 </div>
-                <div>
-                  <span style={{ color: "#64748b" }}>Trang chủ chính thức:</span>
-                  <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
-                    {metaWebsite ? (
-                      <a
-                        href={metaWebsite}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        style={{ color: "#2563eb" }}
-                      >
-                        {metaWebsite}
-                      </a>
-                    ) : (
-                      <span style={{ color: "#94a3b8" }}>Chưa có trang chủ</span>
-                    )}
-                  </div>
+              </div>
+            )}
+
+            {/* Diff comparison table (If Update) */}
+            {isUpdate && diffs.length > 0 && (
+              <div style={{ marginTop: "16px", paddingTop: "14px", borderTop: "1px dashed #cbd5e1" }}>
+                <div
+                  style={{
+                    fontSize: "0.84rem",
+                    fontWeight: 700,
+                    color: "#0f172a",
+                    marginBottom: "8px",
+                  }}
+                >
+                  So sánh thay đổi dữ liệu (Đang công khai vs Đề xuất mới từ Google Sheets):
                 </div>
-                <div>
-                  <span style={{ color: "#64748b" }}>Nguồn điểm HĐGSNN:</span>
-                  <div style={{ fontWeight: 600, color: "#334155", marginTop: "2px" }}>
-                    {candidate.scoreSourceNote || "Quyết định 26/QĐ-HĐGSNN"}
-                  </div>
+                <div
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "8px",
+                    overflow: "hidden",
+                    fontSize: "0.82rem",
+                  }}
+                >
+                  <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+                    <thead>
+                      <tr style={{ backgroundColor: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                        <th style={{ padding: "8px 12px", width: "180px", color: "#475569" }}>
+                          Trường thông tin
+                        </th>
+                        <th
+                          style={{
+                            padding: "8px 12px",
+                            backgroundColor: "#fef2f2",
+                            color: "#991b1b",
+                          }}
+                        >
+                          Dữ liệu hiện tại (Đang công khai)
+                        </th>
+                        <th style={{ padding: "8px 6px", width: "30px", textAlign: "center" }}></th>
+                        <th
+                          style={{
+                            padding: "8px 12px",
+                            backgroundColor: "#f0fdf4",
+                            color: "#166534",
+                          }}
+                        >
+                          Dữ liệu đề xuất mới (Spark)
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {diffs.map((d, i) => (
+                        <tr key={i} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                          <td style={{ padding: "8px 12px", fontWeight: 600, color: "#334155" }}>
+                            {d.label}
+                          </td>
+                          <td style={{ padding: "8px 12px", color: "#475569" }}>
+                            {String(d.oldValue)}
+                          </td>
+                          <td style={{ padding: "8px 6px", textAlign: "center", color: "#94a3b8" }}>
+                            <ArrowRight size={14} />
+                          </td>
+                          <td style={{ padding: "8px 12px", fontWeight: 600, color: "#15803d" }}>
+                            {String(d.newValue)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Section 3: Multi-Council Scores Editor Table */}
+          {/* Section 2: Điểm HĐGSNN theo Hội đồng Giáo sư — 100% Harmonized with JournalDetailModal */}
           <div>
             <div
               style={{
@@ -971,45 +1237,150 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                 justifyContent: "space-between",
                 alignItems: "center",
                 flexWrap: "wrap",
-                gap: "8px",
-                marginBottom: "10px",
+                gap: "10px",
+                marginBottom: "8px",
               }}
             >
               <h4
                 style={{
-                  margin: 0,
                   fontSize: "0.95rem",
                   fontWeight: 700,
                   color: "#0f172a",
+                  margin: 0,
                   display: "flex",
                   alignItems: "center",
                   gap: "6px",
                 }}
               >
                 <Award size={17} color="#2563eb" />
-                3. Danh sách mức điểm theo từng Hội đồng Giáo sư ({councilScores.length} bản ghi):
+                2. Điểm HĐGSNN theo Hội đồng Giáo sư ({displayedCouncilScores.length} bản ghi)
               </h4>
 
-              <button
-                type="button"
-                onClick={startAddNewRow}
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                {/* Filter Toggle: Hội đồng đang chọn vs Tất cả Hội đồng (Identical to JournalDetailModal) */}
+                {normSelectedCouncil && (
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      backgroundColor: "#f1f5f9",
+                      padding: "3px",
+                      borderRadius: "8px",
+                      border: "1px solid #e2e8f0",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setCouncilViewMode("selected")}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "4px",
+                        padding: "5px 10px",
+                        borderRadius: "6px",
+                        fontSize: "0.78rem",
+                        fontWeight: 600,
+                        border: "none",
+                        cursor: "pointer",
+                        backgroundColor: councilViewMode === "selected" ? "#ffffff" : "transparent",
+                        color: councilViewMode === "selected" ? "#1e3a8a" : "#475569",
+                        boxShadow:
+                          councilViewMode === "selected"
+                            ? "0 1px 2px rgba(0, 0, 0, 0.06)"
+                            : "none",
+                      }}
+                    >
+                      <Filter size={12} />
+                      Hội đồng đang chọn ({normSelectedCouncil.councilName})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCouncilViewMode("all")}
+                      style={{
+                        padding: "5px 10px",
+                        borderRadius: "6px",
+                        fontSize: "0.78rem",
+                        fontWeight: 600,
+                        border: "none",
+                        cursor: "pointer",
+                        backgroundColor: councilViewMode === "all" ? "#ffffff" : "transparent",
+                        color: councilViewMode === "all" ? "#1e3a8a" : "#475569",
+                        boxShadow:
+                          councilViewMode === "all" ? "0 1px 2px rgba(0, 0, 0, 0.06)" : "none",
+                      }}
+                    >
+                      Tất cả Hội đồng ({councilScores.length})
+                    </button>
+                  </div>
+                )}
+
+                {/* Add new council score button */}
+                <button
+                  type="button"
+                  onClick={startAddNewRow}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "5px",
+                    padding: "5px 12px",
+                    borderRadius: "6px",
+                    border: "1px solid #2563eb",
+                    backgroundColor: "#eff6ff",
+                    color: "#1e40af",
+                    fontSize: "0.78rem",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  <Plus size={13} />
+                  Thêm bản ghi điểm Hội đồng
+                </button>
+              </div>
+            </div>
+
+            <p
+              style={{
+                fontSize: "0.82rem",
+                color: "#475569",
+                margin: "0 0 12px 0",
+                lineHeight: 1.5,
+              }}
+            >
+              Lưu ý: Mức điểm công trình khoa học được tính theo từng Hội đồng Giáo sư ngành/liên ngành, năm quyết định, loại ấn phẩm/chuyên mục và điều kiện hiệu lực dưới đây:
+            </p>
+
+            {/* List of Disciplines badges matching JournalDetailModal */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "14px" }}>
+              <span
                 style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "5px",
-                  padding: "6px 12px",
-                  borderRadius: "6px",
-                  border: "1px solid #2563eb",
                   backgroundColor: "#eff6ff",
                   color: "#1e40af",
+                  fontWeight: 600,
                   fontSize: "0.8rem",
-                  fontWeight: 700,
-                  cursor: "pointer",
+                  padding: "4px 10px",
+                  borderRadius: "6px",
+                  border: "1px solid #bfdbfe",
                 }}
               >
-                <Plus size={14} />
-                Thêm bản ghi điểm Hội đồng
-              </button>
+                Lĩnh vực chính: {metaPrimaryField || candidate.primaryField}
+              </span>
+              {(candidate.fields || [])
+                .filter((f) => f !== (metaPrimaryField || candidate.primaryField))
+                .map((f, i) => (
+                  <span
+                    key={i}
+                    style={{
+                      backgroundColor: "#f1f5f9",
+                      color: "#334155",
+                      fontSize: "0.8rem",
+                      padding: "4px 8px",
+                      borderRadius: "6px",
+                    }}
+                  >
+                    {f}
+                  </span>
+                ))}
             </div>
 
             {/* Inline Add / Edit Council Score Row Form */}
@@ -1040,7 +1411,15 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                   }}
                 >
                   <div style={{ gridColumn: "span 2" }}>
-                    <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "#334155", marginBottom: 3 }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        color: "#334155",
+                        marginBottom: 3,
+                      }}
+                    >
                       Hội đồng Giáo sư Ngành / Liên ngành *
                     </label>
                     <select
@@ -1053,7 +1432,14 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                           councilName: norm.councilName,
                         });
                       }}
-                      style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.82rem", backgroundColor: "#fff" }}
+                      style={{
+                        width: "100%",
+                        padding: "6px 8px",
+                        borderRadius: 6,
+                        border: "1px solid #cbd5e1",
+                        fontSize: "0.82rem",
+                        backgroundColor: "#fff",
+                      }}
                     >
                       {Object.entries(OFFICIAL_HDGSNN_COUNCILS).map(([cId, cName]) => (
                         <option key={cId} value={cId}>
@@ -1064,7 +1450,15 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                   </div>
 
                   <div>
-                    <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "#334155", marginBottom: 3 }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        color: "#334155",
+                        marginBottom: 3,
+                      }}
+                    >
                       Năm quyết định *
                     </label>
                     <input
@@ -1076,12 +1470,26 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                           decisionYear: parseInt(e.target.value, 10) || 2025,
                         })
                       }
-                      style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.82rem" }}
+                      style={{
+                        width: "100%",
+                        padding: "6px 8px",
+                        borderRadius: 6,
+                        border: "1px solid #cbd5e1",
+                        fontSize: "0.82rem",
+                      }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "#334155", marginBottom: 3 }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        color: "#334155",
+                        marginBottom: 3,
+                      }}
+                    >
                       Điểm tối đa (0 - 2.00; trống = null)
                     </label>
                     <input
@@ -1089,12 +1497,26 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                       placeholder="VD: 0.75 hoặc 0 hoặc để trống"
                       value={rowScoreText}
                       onChange={(e) => setRowScoreText(e.target.value)}
-                      style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.82rem" }}
+                      style={{
+                        width: "100%",
+                        padding: "6px 8px",
+                        borderRadius: 6,
+                        border: "1px solid #cbd5e1",
+                        fontSize: "0.82rem",
+                      }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "#334155", marginBottom: 3 }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        color: "#334155",
+                        marginBottom: 3,
+                      }}
+                    >
                       Loại ấn phẩm / Chuyên mục
                     </label>
                     <input
@@ -1104,12 +1526,26 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                         setRowDraft({ ...rowDraft, publicationType: e.target.value })
                       }
                       placeholder="Toàn tạp chí / Chuyên san..."
-                      style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.82rem" }}
+                      style={{
+                        width: "100%",
+                        padding: "6px 8px",
+                        borderRadius: 6,
+                        border: "1px solid #cbd5e1",
+                        fontSize: "0.82rem",
+                      }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "#334155", marginBottom: 3 }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        color: "#334155",
+                        marginBottom: 3,
+                      }}
+                    >
                       Trạng thái xác minh
                     </label>
                     <select
@@ -1120,7 +1556,14 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                           verificationStatus: e.target.value as CouncilScoreVerificationStatus,
                         })
                       }
-                      style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.82rem", backgroundColor: "#fff" }}
+                      style={{
+                        width: "100%",
+                        padding: "6px 8px",
+                        borderRadius: 6,
+                        border: "1px solid #cbd5e1",
+                        fontSize: "0.82rem",
+                        backgroundColor: "#fff",
+                      }}
                     >
                       <option value="VERIFIED">VERIFIED (Đã xác minh)</option>
                       <option value="NEEDS_REVIEW">NEEDS_REVIEW (Cần kiểm tra)</option>
@@ -1129,7 +1572,15 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                   </div>
 
                   <div>
-                    <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "#334155", marginBottom: 3 }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        color: "#334155",
+                        marginBottom: 3,
+                      }}
+                    >
                       Số quyết định
                     </label>
                     <input
@@ -1139,12 +1590,26 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                         setRowDraft({ ...rowDraft, decisionNumber: e.target.value })
                       }
                       placeholder="26/QĐ-HĐGSNN"
-                      style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.82rem" }}
+                      style={{
+                        width: "100%",
+                        padding: "6px 8px",
+                        borderRadius: 6,
+                        border: "1px solid #cbd5e1",
+                        fontSize: "0.82rem",
+                      }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "#334155", marginBottom: 3 }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        color: "#334155",
+                        marginBottom: 3,
+                      }}
+                    >
                       Phụ lục / Trang nguồn
                     </label>
                     <input
@@ -1154,12 +1619,26 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                         setRowDraft({ ...rowDraft, sourcePage: e.target.value || null })
                       }
                       placeholder="Phụ lục 24, mục 12..."
-                      style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.82rem" }}
+                      style={{
+                        width: "100%",
+                        padding: "6px 8px",
+                        borderRadius: 6,
+                        border: "1px solid #cbd5e1",
+                        fontSize: "0.82rem",
+                      }}
                     />
                   </div>
 
                   <div>
-                    <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "#334155", marginBottom: 3 }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        color: "#334155",
+                        marginBottom: 3,
+                      }}
+                    >
                       Hiệu lực từ → đến
                     </label>
                     <div style={{ display: "flex", gap: 4 }}>
@@ -1170,7 +1649,13 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                           setRowDraft({ ...rowDraft, validFrom: e.target.value || null })
                         }
                         placeholder="Từ..."
-                        style={{ width: "50%", padding: "6px 6px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.8rem" }}
+                        style={{
+                          width: "50%",
+                          padding: "6px 6px",
+                          borderRadius: 6,
+                          border: "1px solid #cbd5e1",
+                          fontSize: "0.8rem",
+                        }}
                       />
                       <input
                         type="text"
@@ -1179,25 +1664,53 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                           setRowDraft({ ...rowDraft, validTo: e.target.value || null })
                         }
                         placeholder="Đến..."
-                        style={{ width: "50%", padding: "6px 6px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.8rem" }}
+                        style={{
+                          width: "50%",
+                          padding: "6px 6px",
+                          borderRadius: 6,
+                          border: "1px solid #cbd5e1",
+                          fontSize: "0.8rem",
+                        }}
                       />
                     </div>
                   </div>
 
                   <div style={{ gridColumn: "span 2" }}>
-                    <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "#334155", marginBottom: 3 }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        color: "#334155",
+                        marginBottom: 3,
+                      }}
+                    >
                       Nhóm ngành công nhận (cách nhau bởi dấu phẩy)
                     </label>
                     <input
                       type="text"
                       value={rowFieldsText}
                       onChange={(e) => setRowFieldsText(e.target.value)}
-                      style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.82rem" }}
+                      style={{
+                        width: "100%",
+                        padding: "6px 8px",
+                        borderRadius: 6,
+                        border: "1px solid #cbd5e1",
+                        fontSize: "0.82rem",
+                      }}
                     />
                   </div>
 
                   <div style={{ gridColumn: "span 2" }}>
-                    <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "#334155", marginBottom: 3 }}>
+                    <label
+                      style={{
+                        display: "block",
+                        fontSize: "0.75rem",
+                        fontWeight: 600,
+                        color: "#334155",
+                        marginBottom: 3,
+                      }}
+                    >
                       Điều kiện / Ghi chú
                     </label>
                     <input
@@ -1211,7 +1724,13 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                         })
                       }
                       placeholder="Điều kiện áp dụng hoặc ghi chú kiểm chứng..."
-                      style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: "0.82rem" }}
+                      style={{
+                        width: "100%",
+                        padding: "6px 8px",
+                        borderRadius: 6,
+                        border: "1px solid #cbd5e1",
+                        fontSize: "0.82rem",
+                      }}
                     />
                   </div>
                 </div>
@@ -1255,108 +1774,171 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
               </div>
             )}
 
-            {/* Council Scores Table */}
-            <div
-              style={{
-                border: "1px solid #e2e8f0",
-                borderRadius: "8px",
-                overflowX: "auto",
-                fontSize: "0.8rem",
-              }}
-            >
-              <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
-                <thead>
-                  <tr style={{ backgroundColor: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
-                    <th style={{ padding: "8px 10px" }}>Hội đồng</th>
-                    <th style={{ padding: "8px 8px" }}>Năm</th>
-                    <th style={{ padding: "8px 10px" }}>Điểm</th>
-                    <th style={{ padding: "8px 10px" }}>Ấn phẩm</th>
-                    <th style={{ padding: "8px 10px" }}>Hiệu lực / Điều kiện</th>
-                    <th style={{ padding: "8px 10px" }}>Căn cứ</th>
-                    <th style={{ padding: "8px 10px" }}>Trạng thái</th>
-                    <th style={{ padding: "8px 10px", textAlign: "right" }}>Thao tác</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {councilScores.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} style={{ padding: "18px", textAlign: "center", color: "#64748b" }}>
-                        Chưa có bản ghi điểm theo Hội đồng nào. Bấm &ldquo;Thêm bản ghi điểm Hội đồng&rdquo; để bổ sung.
-                      </td>
+            {/* Council Scores Table — Harmonized 10-column layout */}
+            {displayedCouncilScores.length > 0 ? (
+              <div
+                style={{
+                  border: "1px solid #e2e8f0",
+                  borderRadius: "8px",
+                  overflowX: "auto",
+                  overscrollBehavior: "contain",
+                }}
+              >
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    fontSize: "0.82rem",
+                    textAlign: "left",
+                  }}
+                >
+                  <thead>
+                    <tr style={{ backgroundColor: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                      <th style={{ padding: "10px 12px", fontWeight: 600, color: "#475569" }}>
+                        Hội đồng
+                      </th>
+                      <th style={{ padding: "10px 10px", fontWeight: 600, color: "#475569" }}>
+                        Năm
+                      </th>
+                      <th style={{ padding: "10px 12px", fontWeight: 600, color: "#475569" }}>
+                        Điểm
+                      </th>
+                      <th style={{ padding: "10px 12px", fontWeight: 600, color: "#475569" }}>
+                        Ấn phẩm
+                      </th>
+                      <th style={{ padding: "10px 12px", fontWeight: 600, color: "#475569" }}>
+                        Nhóm ngành
+                      </th>
+                      <th style={{ padding: "10px 12px", fontWeight: 600, color: "#475569" }}>
+                        Hiệu lực
+                      </th>
+                      <th style={{ padding: "10px 12px", fontWeight: 600, color: "#475569" }}>
+                        Điều kiện
+                      </th>
+                      <th style={{ padding: "10px 12px", fontWeight: 600, color: "#475569" }}>
+                        Nguồn
+                      </th>
+                      <th style={{ padding: "10px 12px", fontWeight: 600, color: "#475569" }}>
+                        Trạng thái
+                      </th>
+                      <th
+                        style={{
+                          padding: "10px 12px",
+                          fontWeight: 600,
+                          color: "#475569",
+                          textAlign: "right",
+                        }}
+                      >
+                        Thao tác
+                      </th>
                     </tr>
-                  ) : (
-                    councilScores.map((cs, idx) => {
+                  </thead>
+                  <tbody>
+                    {displayedCouncilScores.map((cs, idx) => {
                       const isVerified = cs.verificationStatus === "VERIFIED";
                       const palette = getScoreBadgePalette(cs.maxScore, isVerified);
+                      const effRange =
+                        cs.validFrom || cs.validTo
+                          ? `${cs.validFrom || "Đầu kỳ"} → ${cs.validTo || "Hiện hành"}`
+                          : "Theo kỳ quyết định";
+                      const conditionText =
+                        [cs.conditions, cs.note].filter(Boolean).join(" — ") || "—";
+
                       return (
                         <tr
                           key={idx}
                           style={{
-                            borderBottom: "1px solid #f1f5f9",
+                            borderBottom:
+                              idx === displayedCouncilScores.length - 1
+                                ? "none"
+                                : "1px solid #f1f5f9",
                             backgroundColor:
                               cs.verificationStatus === "NEEDS_REVIEW" ? "#fffbeb" : "#ffffff",
                           }}
                         >
-                          <td style={{ padding: "8px 10px", fontWeight: 600, color: "#0f172a" }}>
+                          <td style={{ padding: "10px 12px", color: "#0f172a", fontWeight: 600 }}>
                             <div>{cs.councilName}</div>
-                            <div style={{ fontSize: "0.72rem", color: "#64748b" }}>
+                            <div style={{ fontSize: "0.73rem", color: "#64748b", fontWeight: 500 }}>
                               Mã: {cs.councilId}
                             </div>
                           </td>
-                          <td style={{ padding: "8px 8px", fontWeight: 700 }}>{cs.decisionYear}</td>
-                          <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>
+                          <td style={{ padding: "10px 10px", fontWeight: 700, color: "#0f172a" }}>
+                            {cs.decisionYear}
+                          </td>
+                          <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
                             <span
                               style={{
                                 display: "inline-block",
                                 backgroundColor: palette.backgroundColor,
                                 color: palette.color,
                                 border: `1px solid ${palette.borderColor}`,
-                                padding: "2px 8px",
-                                borderRadius: "4px",
+                                padding: "3px 8px",
+                                borderRadius: "5px",
                                 fontWeight: 700,
+                                fontSize: "0.8rem",
                               }}
                             >
                               {cs.maxScore === 0
                                 ? "0,00 (Dừng tính điểm)"
                                 : cs.maxScore === null
-                                ? "Chưa xác định (null)"
+                                ? "Chưa xác định"
                                 : formatVietnameseScore(cs.maxScore)}
                             </span>
-                          </td>
-                          <td style={{ padding: "8px 10px", color: "#334155" }}>
-                            {cs.publicationType || "Toàn tạp chí"}
-                          </td>
-                          <td style={{ padding: "8px 10px", color: "#475569", fontSize: "0.76rem" }}>
-                            <div>
-                              {cs.validFrom || "Đầu kỳ"} → {cs.validTo || "Hiện hành"}
-                            </div>
-                            {(cs.conditions || cs.note) && (
-                              <div style={{ color: "#64748b", marginTop: 2 }}>
-                                {[cs.conditions, cs.note].filter(Boolean).join(" — ")}
+                            {!isVerified && (
+                              <div
+                                style={{
+                                  fontSize: "0.7rem",
+                                  color: "#b45309",
+                                  marginTop: "3px",
+                                  fontWeight: 600,
+                                }}
+                              >
+                                Cần kiểm tra nguồn
                               </div>
                             )}
                           </td>
-                          <td style={{ padding: "8px 10px", color: "#475569", fontSize: "0.76rem" }}>
-                            <div>{cs.decisionNumber || "QĐ 26"}</div>
-                            {cs.sourcePage && <div>{cs.sourcePage}</div>}
-                            {cs.sourceUrl && cs.sourceUrl.startsWith("http") && (
+                          <td style={{ padding: "10px 12px", color: "#334155" }}>
+                            {cs.publicationType || "Toàn tạp chí"}
+                          </td>
+                          <td style={{ padding: "10px 12px", color: "#334155", fontSize: "0.78rem" }}>
+                            {(cs.scientificFields || []).length > 0
+                              ? (cs.scientificFields || []).join(", ")
+                              : metaPrimaryField || candidate.primaryField || "—"}
+                          </td>
+                          <td style={{ padding: "10px 12px", color: "#475569", fontSize: "0.78rem" }}>
+                            {effRange}
+                          </td>
+                          <td style={{ padding: "10px 12px", color: "#475569", fontSize: "0.78rem" }}>
+                            {conditionText}
+                          </td>
+                          <td style={{ padding: "10px 12px", color: "#475569", fontSize: "0.78rem" }}>
+                            <div>{cs.decisionNumber || "QĐ 26/QĐ-HĐGSNN"}</div>
+                            {cs.sourcePage && (
+                              <div style={{ color: "#64748b", fontSize: "0.74rem" }}>
+                                {cs.sourcePage}
+                              </div>
+                            )}
+                            {isValidUrl(cs.sourceUrl || undefined) && (
                               <a
-                                href={cs.sourceUrl}
+                                href={cs.sourceUrl || undefined}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 style={{
                                   display: "inline-flex",
                                   alignItems: "center",
-                                  gap: 3,
+                                  gap: "3px",
                                   color: "#2563eb",
                                   fontWeight: 600,
+                                  textDecoration: "none",
+                                  marginTop: "2px",
                                 }}
                               >
-                                <ExternalLink size={11} /> Nguồn
+                                <ExternalLink size={12} />
+                                Xem văn bản
                               </a>
                             )}
                           </td>
-                          <td style={{ padding: "8px 10px" }}>
+                          <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
                             <span
                               style={{
                                 fontSize: "0.72rem",
@@ -1380,12 +1962,18 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                               {cs.verificationStatus}
                             </span>
                           </td>
-                          <td style={{ padding: "8px 10px", textAlign: "right", whiteSpace: "nowrap" }}>
+                          <td
+                            style={{
+                              padding: "10px 12px",
+                              textAlign: "right",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
                             <div style={{ display: "inline-flex", gap: 4 }}>
                               {cs.verificationStatus !== "VERIFIED" && (
                                 <button
                                   type="button"
-                                  onClick={() => handleQuickVerifyRow(idx)}
+                                  onClick={() => handleQuickVerifyRow(cs)}
                                   title="Xác nhận VERIFIED sau khi đã kiểm tra nguồn"
                                   style={{
                                     padding: "4px 6px",
@@ -1406,7 +1994,7 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                               )}
                               <button
                                 type="button"
-                                onClick={() => startEditRow(idx)}
+                                onClick={() => startEditRow(cs)}
                                 title="Sửa dòng điểm này"
                                 style={{
                                   padding: "4px 6px",
@@ -1421,7 +2009,7 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                               </button>
                               <button
                                 type="button"
-                                onClick={() => handleDeleteRow(idx)}
+                                onClick={() => handleDeleteRow(cs)}
                                 title="Xóa dòng điểm này"
                                 style={{
                                   padding: "4px 6px",
@@ -1438,25 +2026,454 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                           </td>
                         </tr>
                       );
-                    })
-                  )}
-                </tbody>
-              </table>
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div
+                style={{
+                  padding: "14px 16px",
+                  borderRadius: "8px",
+                  backgroundColor: "#f8fafc",
+                  border: "1px dashed #cbd5e1",
+                  color: "#475569",
+                  fontSize: "0.84rem",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: "8px",
+                }}
+              >
+                <span>
+                  {councilViewMode === "selected" && normSelectedCouncil
+                    ? `Chưa có bản ghi điểm nào thuộc Hội đồng "${normSelectedCouncil.councilName}".`
+                    : "Chưa có bản ghi điểm theo Hội đồng nào. Bấm 'Thêm bản ghi điểm Hội đồng' để bổ sung."}
+                </span>
+                {councilViewMode === "selected" && councilScores.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setCouncilViewMode("all")}
+                    style={{
+                      padding: "5px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid #bfdbfe",
+                      backgroundColor: "#eff6ff",
+                      color: "#1e40af",
+                      fontSize: "0.78rem",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Xem tất cả {councilScores.length} bản ghi Hội đồng khác
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Section 3: Website & Liên kết chính thức — Harmonized with JournalDetailModal */}
+          <div
+            style={{
+              padding: "14px 16px",
+              borderRadius: "8px",
+              backgroundColor: "#f0fdfa",
+              border: "1px solid #ccfbf1",
+            }}
+          >
+            <h4
+              style={{
+                fontSize: "0.9rem",
+                fontWeight: 700,
+                color: "#0f766e",
+                marginBottom: "8px",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              <Globe size={16} />
+              3. Website chính thức & Đường dẫn liên quan
+            </h4>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "center" }}>
+              {isValidUrl(metaWebsite || candidate.website) ? (
+                <a
+                  href={metaWebsite || candidate.website}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "5px",
+                    padding: "6px 12px",
+                    backgroundColor: "#0d9488",
+                    color: "#ffffff",
+                    borderRadius: "6px",
+                    fontSize: "0.85rem",
+                    fontWeight: 600,
+                    textDecoration: "none",
+                  }}
+                >
+                  <ExternalLink size={15} />
+                  Mở Trang chủ tạp chí ({metaWebsite || candidate.website})
+                </a>
+              ) : (
+                <span
+                  style={{
+                    color: "#64748b",
+                    fontSize: "0.85rem",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                  }}
+                >
+                  <AlertCircle size={15} />
+                  Chưa có trang chủ được xác minh.
+                </span>
+              )}
+
+              {/* Extra links */}
+              {links.map((l, i) =>
+                isValidUrl(l.url) ? (
+                  <a
+                    key={i}
+                    href={l.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "4px",
+                      padding: "5px 10px",
+                      backgroundColor: "#ffffff",
+                      border: "1px solid #cbd5e1",
+                      borderRadius: "6px",
+                      color: "#334155",
+                      fontSize: "0.8rem",
+                      fontWeight: 500,
+                      textDecoration: "none",
+                    }}
+                  >
+                    <LinkIcon size={13} />
+                    {l.label || l.linkType}
+                  </a>
+                ) : null
+              )}
             </div>
           </div>
 
-          {/* Section 4: Admin Edit Reason & Audit Log */}
+          {/* Section 4: Thể lệ, quy cách bản thảo & Quy chuẩn xuất bản — Harmonized with JournalDetailModal */}
+          <div>
+            <h4
+              style={{
+                fontSize: "0.95rem",
+                fontWeight: 700,
+                color: "#0f172a",
+                marginBottom: "12px",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              <FileText size={17} color="#2563eb" />
+              4. Thể lệ, quy cách bản thảo & Quy chuẩn xuất bản
+            </h4>
+
+            {guidelines && guidelines.hasGuidelines ? (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+                  gap: "14px",
+                  fontSize: "0.85rem",
+                }}
+              >
+                {guidelines.summary && (
+                  <div
+                    style={{
+                      gridColumn: "1 / -1",
+                      backgroundColor: "#f8fafc",
+                      padding: "12px",
+                      borderRadius: "8px",
+                      border: "1px solid #e2e8f0",
+                    }}
+                  >
+                    <span style={{ fontWeight: 600, color: "#334155" }}>
+                      Tóm tắt thể lệ bài viết:
+                    </span>
+                    <p style={{ margin: "4px 0 0 0", color: "#1e293b", lineHeight: 1.5 }}>
+                      {guidelines.summary}
+                    </p>
+                  </div>
+                )}
+
+                <div>
+                  <span style={{ color: "#64748b" }}>Định dạng bản thảo:</span>
+                  <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
+                    {guidelines.manuscriptFormat || "Microsoft Word / PDF"}
+                  </div>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748b" }}>Giới hạn số từ / số trang:</span>
+                  <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
+                    {guidelines.wordLimitMin ? `${guidelines.wordLimitMin} - ` : ""}
+                    {guidelines.wordLimitMax ? `${guidelines.wordLimitMax} từ` : "Theo quy định"}
+                    {guidelines.pageLimit ? ` (${guidelines.pageLimit})` : ""}
+                  </div>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748b" }}>Chuẩn trích dẫn & TLTK:</span>
+                  <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
+                    {guidelines.citationStyle || "APA 7th"}
+                  </div>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748b" }}>Ngôn ngữ công bố:</span>
+                  <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
+                    {guidelines.publicationLanguage || "Tiếng Việt"}
+                  </div>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748b" }}>Tần suất xuất bản:</span>
+                  <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
+                    {guidelines.publicationFrequency || "Đang cập nhật"}
+                  </div>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748b" }}>Thời gian phản biện ước tính:</span>
+                  <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
+                    {guidelines.reviewTimeWeeks || "Chưa công bố"}
+                  </div>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748b" }}>Phí phản biện & Phí xuất bản:</span>
+                  <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
+                    {guidelines.reviewFee ? `Phản biện: ${guidelines.reviewFee} · ` : ""}
+                    {guidelines.publicationFee
+                      ? `APC: ${guidelines.publicationFee}`
+                      : "Miễn phí hoặc chưa công khai"}
+                  </div>
+                </div>
+
+                {isValidUrl(guidelines.templateUrl) && (
+                  <div>
+                    <span style={{ color: "#64748b" }}>File mẫu bài viết:</span>
+                    <div style={{ marginTop: "4px" }}>
+                      <a
+                        href={guidelines.templateUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "5px",
+                          color: "#2563eb",
+                          fontWeight: 600,
+                          textDecoration: "none",
+                        }}
+                      >
+                        <Download size={14} />
+                        Tải file mẫu (.docx/.tex)
+                      </a>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div
+                style={{
+                  padding: "16px",
+                  borderRadius: "8px",
+                  backgroundColor: "#f8fafc",
+                  border: "1px dashed #cbd5e1",
+                  color: "#64748b",
+                  fontSize: "0.85rem",
+                  fontStyle: "italic",
+                }}
+              >
+                Chưa có dữ liệu thể lệ đăng bài chi tiết cho tạp chí này. Sau khi duyệt, Admin có thể cập nhật thêm thông tin quy chuẩn xuất bản.
+              </div>
+            )}
+          </div>
+
+          {/* Section 5: Nộp bài trực tuyến & Liên hệ tòa soạn — Harmonized with JournalDetailModal */}
           <div
             style={{
               backgroundColor: "#f8fafc",
               border: "1px solid #e2e8f0",
               borderRadius: "8px",
-              padding: "14px 16px",
-              display: "flex",
-              flexDirection: "column",
-              gap: "10px",
+              padding: "16px",
             }}
           >
+            <h4
+              style={{
+                fontSize: "0.9rem",
+                fontWeight: 700,
+                color: "#334155",
+                marginBottom: "12px",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              <Mail size={16} color="#2563eb" />
+              5. Nộp bài trực tuyến & Liên hệ tòa soạn
+            </h4>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                gap: "12px",
+                fontSize: "0.85rem",
+              }}
+            >
+              {guidelines?.submissionUrl && isValidUrl(guidelines.submissionUrl) && (
+                <div>
+                  <span style={{ color: "#64748b" }}>Cổng nộp bài trực tuyến:</span>
+                  <div style={{ marginTop: "4px" }}>
+                    <a
+                      href={guidelines.submissionUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "5px",
+                        color: "#2563eb",
+                        fontWeight: 600,
+                        textDecoration: "none",
+                      }}
+                    >
+                      <ExternalLink size={14} />
+                      Mở cổng nộp bài
+                    </a>
+                  </div>
+                </div>
+              )}
+
+              {guidelines?.editorialEmail && (
+                <div>
+                  <span style={{ color: "#64748b" }}>Email tòa soạn:</span>
+                  <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
+                    {guidelines.editorialEmail}
+                  </div>
+                </div>
+              )}
+
+              {guidelines?.contactPhone && (
+                <div>
+                  <span style={{ color: "#64748b" }}>Điện thoại:</span>
+                  <div style={{ fontWeight: 600, color: "#0f172a", marginTop: "2px" }}>
+                    {guidelines.contactPhone}
+                  </div>
+                </div>
+              )}
+
+              {guidelines?.officeAddress && (
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span style={{ color: "#64748b" }}>Địa chỉ tòa soạn:</span>
+                  <div style={{ fontWeight: 500, color: "#0f172a", marginTop: "2px" }}>
+                    {guidelines.officeAddress}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Section 6: Trạng thái kiểm chứng & Quản trị phê duyệt */}
+          <div
+            style={{
+              backgroundColor: "#f8fafc",
+              border: "1px solid #e2e8f0",
+              borderRadius: "8px",
+              padding: "16px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "12px",
+            }}
+          >
+            {/* Spark/HĐGSNN Verification State banner matching user detail modal */}
+            <div
+              style={{
+                padding: "12px 16px",
+                borderRadius: "8px",
+                backgroundColor: verification?.status === "verified" ? "#f0fdf4" : "#fefce8",
+                border: `1px solid ${
+                  verification?.status === "verified" ? "#bbf7d0" : "#fef08a"
+                }`,
+                fontSize: "0.82rem",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: "8px",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <ShieldCheck
+                  size={16}
+                  color={verification?.status === "verified" ? "#166534" : "#854d0e"}
+                />
+                <span
+                  style={{
+                    fontWeight: 600,
+                    color: verification?.status === "verified" ? "#166534" : "#854d0e",
+                  }}
+                >
+                  6. Trạng thái kiểm chứng hệ thống:{" "}
+                  {verification?.status === "verified"
+                    ? "Đã xác minh chính thức"
+                    : "Chưa kiểm chứng toàn diện"}
+                </span>
+              </div>
+              <div style={{ color: "#64748b" }}>
+                Nguồn:{" "}
+                {candidate.scoreSourceNote ||
+                  verification?.sourceReference ||
+                  "Quyết định 26/QĐ-HĐGSNN"}{" "}
+                · Ngày rà soát:{" "}
+                {verification?.verifiedDate || candidate.updatedAt?.split("T")[0] || "Hôm nay"}
+              </div>
+            </div>
+
+            {/* Unverified fields attention badges */}
+            {candidate.unverifiedFields && candidate.unverifiedFields.length > 0 && (
+              <div
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: "8px",
+                  backgroundColor: "#fffbeb",
+                  border: "1px solid #fef3c7",
+                  fontSize: "0.82rem",
+                  color: "#92400e",
+                }}
+              >
+                <strong>Các thông tin cần lưu ý khi đối soát:</strong>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "4px" }}>
+                  {candidate.unverifiedFields.map((f, i) => (
+                    <span
+                      key={i}
+                      style={{
+                        backgroundColor: "#fef3c7",
+                        padding: "2px 6px",
+                        borderRadius: "4px",
+                      }}
+                    >
+                      {f}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Admin edit reason note */}
             <div>
               <label
                 style={{
@@ -1485,6 +2502,7 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
               />
             </div>
 
+            {/* Admin score edit history */}
             {candidate.scoreEditHistory && candidate.scoreEditHistory.length > 0 && (
               <div style={{ fontSize: "0.78rem", color: "#475569" }}>
                 <div
@@ -1519,37 +2537,34 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                 </div>
               </div>
             )}
-          </div>
 
-          {/* Section 5: Unverified Fields if any */}
-          {candidate.unverifiedFields.length > 0 && (
+            {/* Subtle Technical Metadata for Admin */}
             <div
               style={{
-                padding: "10px 14px",
-                borderRadius: "8px",
-                backgroundColor: "#fffbeb",
-                border: "1px solid #fef3c7",
-                fontSize: "0.82rem",
-                color: "#92400e",
+                padding: "8px 12px",
+                borderRadius: "6px",
+                backgroundColor: "#ffffff",
+                border: "1px dashed #cbd5e1",
+                fontSize: "0.75rem",
+                color: "#64748b",
+                display: "flex",
+                flexWrap: "wrap",
+                justifyContent: "space-between",
+                gap: "8px",
               }}
             >
-              <strong>Các thông tin cần lưu ý khi đối soát:</strong>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "4px" }}>
-                {candidate.unverifiedFields.map((f, i) => (
-                  <span
-                    key={i}
-                    style={{
-                      backgroundColor: "#fef3c7",
-                      padding: "2px 6px",
-                      borderRadius: "4px",
-                    }}
-                  >
-                    {f}
+              <span>
+                Thông tin kỹ thuật nội bộ (Admin): Mã đối soát <code>{candidate.journalId}</code>
+                {candidate.existingJournalId && (
+                  <span>
+                    {" "}
+                    → Khớp với tạp chí công khai <code>{candidate.existingJournalId}</code>
                   </span>
-                ))}
-              </div>
+                )}
+              </span>
+              <span>Hàng nguồn Google Sheets: #{candidate.sheetRowIndex || "—"}</span>
             </div>
-          )}
+          </div>
 
           {/* Rejection input box */}
           {isRejectingOpen && (
@@ -1601,6 +2616,7 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
                     border: "1px solid #cbd5e1",
                     background: "#fff",
                     fontSize: "0.8rem",
+                    cursor: "pointer",
                   }}
                 >
                   Hủy
@@ -1624,36 +2640,9 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
               </div>
             </div>
           )}
-
-          {/* Subtle Technical Metadata for Admin */}
-          <div
-            style={{
-              padding: "10px 12px",
-              borderRadius: "6px",
-              backgroundColor: "#f8fafc",
-              border: "1px dashed #cbd5e1",
-              fontSize: "0.75rem",
-              color: "#64748b",
-              display: "flex",
-              flexWrap: "wrap",
-              justifyContent: "space-between",
-              gap: "8px",
-            }}
-          >
-            <span>
-              Thông tin kỹ thuật nội bộ (Admin): Mã đối soát <code>{candidate.journalId}</code>
-              {candidate.existingJournalId && (
-                <span>
-                  {" "}
-                  → Khớp với tạp chí công khai <code>{candidate.existingJournalId}</code>
-                </span>
-              )}
-            </span>
-            <span>Hàng nguồn Google Sheets: #{candidate.sheetRowIndex || "—"}</span>
-          </div>
         </div>
 
-        {/* Footer Actions */}
+        {/* Modal Footer Actions */}
         <div
           style={{
             padding: "16px 24px",
@@ -1670,10 +2659,11 @@ export const JournalCandidateReviewModal: React.FC<JournalCandidateReviewModalPr
             onClick={onClose}
             disabled={isProcessing}
             style={{
-              padding: "8px 16px",
+              padding: "8px 18px",
               borderRadius: "6px",
               border: "1px solid #cbd5e1",
               backgroundColor: "#ffffff",
+              color: "#334155",
               fontSize: "0.85rem",
               fontWeight: 600,
               cursor: "pointer",

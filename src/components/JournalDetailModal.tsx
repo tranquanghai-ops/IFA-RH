@@ -53,6 +53,29 @@ export const JournalDetailModal: React.FC<JournalDetailModalProps> = ({
     setCouncilViewMode(hasInSelected ? "selected" : "all");
   }, [journal, selectedCouncilId]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const originalOverflow = document.body.style.overflow;
+    const originalHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    document.body.classList.add("modal-open");
+    document.documentElement.classList.add("modal-open");
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.documentElement.style.overflow = originalHtmlOverflow;
+      document.body.classList.remove("modal-open");
+      document.documentElement.classList.remove("modal-open");
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, onClose]);
+
   if (!isOpen || !journal) return null;
 
   const guidelines = journal.guidelines;
@@ -93,8 +116,14 @@ export const JournalDetailModal: React.FC<JournalDetailModalProps> = ({
         justifyContent: "center",
         zIndex: 9999,
         padding: "16px",
+        overscrollBehavior: "contain",
       }}
       onClick={onClose}
+      onWheel={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault();
+        }
+      }}
     >
       <div
         className="modal-content viewport-safe-modal"
@@ -108,6 +137,7 @@ export const JournalDetailModal: React.FC<JournalDetailModalProps> = ({
           flexDirection: "column",
           boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
           overflow: "hidden",
+          overscrollBehavior: "contain",
         }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -191,6 +221,7 @@ export const JournalDetailModal: React.FC<JournalDetailModalProps> = ({
           style={{
             padding: "24px",
             overflowY: "auto",
+            overscrollBehavior: "contain",
             display: "flex",
             flexDirection: "column",
             gap: "24px",
