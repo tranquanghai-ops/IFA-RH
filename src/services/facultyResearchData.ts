@@ -19,6 +19,7 @@ export interface RawFacultyResearchRow {
   abstractDeadline?: string;
   fullPaperDeadline?: string;
   registrationDeadline?: string;
+  deadline?: string;
   eventDate?: string;
   location?: string;
   fee?: string;

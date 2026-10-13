@@ -194,8 +194,38 @@ export function isEditedByAdmin(record: ResearchMatchTarget): boolean {
   return false;
 }
 
+export const FIELD_LABELS_VN: Record<string, string> = {
+  deadline: "Hạn nộp",
+  fullPaperDeadline: "Hạn nộp toàn văn",
+  abstractDeadline: "Hạn nộp tóm tắt",
+  registrationDeadline: "Hạn đăng ký",
+  eventDate: "Ngày tổ chức",
+  location: "Địa điểm",
+  fee: "Phí",
+  publicationFee: "Phí xuất bản",
+  registrationFee: "Phí tham dự",
+  feeStatus: "Trạng thái phí",
+  publicationFormat: "Hình thức xuất bản",
+  indexing: "Chỉ mục (Indexing)",
+  content: "Tóm tắt / Nội dung",
+  directions: "Gợi ý viết bài",
+  suitability: "Độ phù hợp",
+  notes: "Ghi chú",
+  sourceUrl: "Link nguồn chính thức",
+  submissionUrl: "Link nộp bài",
+  sheetStatus: "Trạng thái Sheet",
+};
+
+export interface OpportunityDiffField {
+  field: string;
+  label: string;
+  oldValue: any;
+  newValue: any;
+}
+
 /**
  * Compares incoming row from Google Sheets with existing Firestore record to detect meaningful changes.
+ * Strictly respects Admin manualOverrides.
  */
 export function computeOpportunityDiff(
   existing: ResearchMatchTarget,
@@ -204,21 +234,35 @@ export function computeOpportunityDiff(
   hasChanges: boolean;
   changedKeys: string[];
   updates: Record<string, any>;
+  diffSummary: OpportunityDiffField[];
 } {
   const updates: Record<string, any> = {};
   const changedKeys: string[] = [];
+  const diffSummary: OpportunityDiffField[] = [];
+  const manualOverrides = new Set<string>(existing.manualOverrides || []);
 
   const compareField = (key: string, newVal: any, exVal: any) => {
+    if (manualOverrides.has(key)) return;
     if (newVal === undefined || newVal === null) return;
     const strNew = String(newVal).trim();
     const strEx = String(exVal || "").trim();
     if (strNew && strNew !== strEx) {
       updates[key] = newVal;
       changedKeys.push(key);
+      diffSummary.push({
+        field: key,
+        label: FIELD_LABELS_VN[key] || key,
+        oldValue: exVal ?? "",
+        newValue: newVal,
+      });
     }
   };
 
-  compareField("deadline", row.fullPaperDeadline || row.abstractDeadline || row.registrationDeadline, existing.deadline);
+  compareField(
+    "deadline",
+    row.fullPaperDeadline || row.abstractDeadline || row.registrationDeadline || row.deadline,
+    existing.deadline
+  );
   compareField("fullPaperDeadline", row.fullPaperDeadline, existing.fullPaperDeadline);
   compareField("abstractDeadline", row.abstractDeadline, existing.abstractDeadline);
   compareField("registrationDeadline", row.registrationDeadline, existing.registrationDeadline);
@@ -242,5 +286,69 @@ export function computeOpportunityDiff(
     hasChanges: changedKeys.length > 0,
     changedKeys,
     updates,
+    diffSummary,
   };
+}
+
+export interface OutOfScopeClassification {
+  isOutOfScope: boolean;
+  reason?: string;
+  classifiedType?: string;
+}
+
+/**
+ * Classifies legacy or foreign conference records that fall outside the domestic conference scope.
+ * Preserves history and classifies JOISA as a Call for Papers / Special Issue invitation.
+ */
+export function classifyOutOfScopeRecord(record: {
+  title?: string;
+  country?: string;
+  type?: string;
+  isOutOfScope?: boolean;
+  outOfScopeReason?: string;
+}): OutOfScopeClassification {
+  if (record.isOutOfScope === true) {
+    return {
+      isOutOfScope: true,
+      reason: record.outOfScopeReason || "Ngoài phạm vi hội thảo trong nước",
+      classifiedType: record.type,
+    };
+  }
+
+  const rawTitle = String(record.title || "");
+  const normTitle = normalizeText(rawTitle);
+
+  // 1. JOISA - Journal CFP / Special Issue invitation (thư mời viết bài tạp chí)
+  if (normTitle.includes("joisa")) {
+    return {
+      isOutOfScope: true,
+      reason: "Thư mời viết bài đặc san tạp chí (Call for Papers / Special Issue), không phải hội thảo",
+      classifiedType: "Call for Papers",
+    };
+  }
+
+  // 2. Specific foreign conferences
+  if (
+    normTitle.includes("haxd") ||
+    normTitle.includes("evomusart") ||
+    normTitle.includes("shaping the future of the global south")
+  ) {
+    return {
+      isOutOfScope: true,
+      reason: "Hội thảo quốc tế tổ chức tại nước ngoài (thuộc tab HOI THAO QT)",
+      classifiedType: record.type || "Hội thảo",
+    };
+  }
+
+  // 3. Country explicitly outside Vietnam
+  const c = String(record.country || "").trim().toLowerCase();
+  if (c && c !== "việt nam" && c !== "vietnam" && c !== "vn" && c !== "viet nam") {
+    return {
+      isOutOfScope: true,
+      reason: `Hội thảo quốc tế tổ chức tại ${record.country} (ngoài lãnh thổ Việt Nam)`,
+      classifiedType: record.type || "Hội thảo",
+    };
+  }
+
+  return { isOutOfScope: false };
 }

@@ -14,6 +14,7 @@ import { FacultyResearchSyncModal } from "../components/FacultyResearchSyncModal
 import { FacultyResearchSyncDashboard } from "../components/FacultyResearchSyncDashboard";
 import { formatDateVN, parseDateSafe, getOpportunityDeadlineInfo } from "../utils/date";
 import { isDuplicateOpportunity } from "../utils/dedupe";
+import { classifyOutOfScopeRecord } from "../utils/researchDedupe";
 import {
   Sparkles,
   LayoutGrid,
@@ -33,6 +34,7 @@ export type CandidateFilterTab =
   | "approved"
   | "expired"
   | "rejected"
+  | "out_of_scope"
   | "all";
 
 const isTodayDate = (dateStr?: string | null): boolean => {
@@ -49,7 +51,10 @@ const isTodayDate = (dateStr?: string | null): boolean => {
 
 export const getCandidatePrimaryCategory = (
   c: OpportunityCandidate
-): "today" | "pending" | "needs_review" | "approved" | "expired" | "rejected" => {
+): "today" | "pending" | "needs_review" | "approved" | "expired" | "rejected" | "out_of_scope" => {
+  if (c.isOutOfScope === true || classifyOutOfScopeRecord(c).isOutOfScope) {
+    return "out_of_scope";
+  }
   if (c.status === "rejected") return "rejected";
   if (c.status === "approved") return "approved";
   if (c.sheetStatus === "HẾT HẠN" || getOpportunityDeadlineInfo(c).isExpired) {
@@ -62,13 +67,14 @@ export const getCandidatePrimaryCategory = (
   return "pending";
 };
 
-const FILTER_TABS: Array<{ id: CandidateFilterTab; label: string }> = [
+export const FILTER_TABS: Array<{ id: CandidateFilterTab; label: string }> = [
   { id: "today", label: "Mới hôm nay" },
   { id: "pending", label: "Chờ duyệt" },
   { id: "needs_review", label: "Cần hiệu chỉnh" },
   { id: "approved", label: "Đã duyệt" },
   { id: "expired", label: "Hết hạn" },
   { id: "rejected", label: "Từ chối" },
+  { id: "out_of_scope", label: "Ngoài phạm vi / JOISA" },
   { id: "all", label: "Tất cả" },
 ];
 
@@ -137,6 +143,7 @@ export const AdminCandidatesPage: React.FC = () => {
       approved: 0,
       expired: 0,
       rejected: 0,
+      out_of_scope: 0,
       all: candidates.length,
     };
     for (const cand of candidates) {
@@ -681,25 +688,36 @@ export const AdminCandidatesPage: React.FC = () => {
                       )}
                     </td>
                     <td style={{ textAlign: "center" }}>
-                      {primaryCat === "expired" ? (
-                        <span className="badge" style={{ background: "#f1f5f9", color: "#64748b" }}>
-                          HẾT HẠN
-                        </span>
-                      ) : primaryCat === "approved" ? (
-                        <span className="badge badge-success">ĐÃ DUYỆT</span>
-                      ) : primaryCat === "rejected" ? (
-                        <span className="badge badge-warning">TỪ CHỐI</span>
-                      ) : primaryCat === "needs_review" ? (
-                        <span className="badge" style={{ background: "#fef3c7", color: "#b45309" }}>
-                          CẦN HIỆU CHỈNH
-                        </span>
-                      ) : primaryCat === "today" ? (
-                        <span className="badge" style={{ background: "#dcfce7", color: "#15803d" }}>
-                          MỚI HÔM NAY
-                        </span>
-                      ) : (
-                        <span className="badge badge-new">CHỜ DUYỆT</span>
-                      )}
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "center" }}>
+                        {cand.changeType === "update" && (
+                          <span className="badge" style={{ background: "#e0f2fe", color: "#0369a1", fontSize: "0.7rem", fontWeight: 700 }}>
+                            ĐỀ XUẤT CẬP NHẬT
+                          </span>
+                        )}
+                        {primaryCat === "out_of_scope" ? (
+                          <span className="badge" style={{ background: "#f3e8ff", color: "#7e22ce" }}>
+                            NGOÀI PHẠM VI
+                          </span>
+                        ) : primaryCat === "expired" ? (
+                          <span className="badge" style={{ background: "#f1f5f9", color: "#64748b" }}>
+                            HẾT HẠN
+                          </span>
+                        ) : primaryCat === "approved" ? (
+                          <span className="badge badge-success">ĐÃ DUYỆT</span>
+                        ) : primaryCat === "rejected" ? (
+                          <span className="badge badge-warning">TỪ CHỐI</span>
+                        ) : primaryCat === "needs_review" ? (
+                          <span className="badge" style={{ background: "#fef3c7", color: "#b45309" }}>
+                            CẦN HIỆU CHỈNH
+                          </span>
+                        ) : primaryCat === "today" ? (
+                          <span className="badge" style={{ background: "#dcfce7", color: "#15803d" }}>
+                            MỚI HÔM NAY
+                          </span>
+                        ) : (
+                          <span className="badge badge-new">CHỜ DUYỆT</span>
+                        )}
+                      </div>
                     </td>
                     <td style={{ textAlign: "right" }}>
                       <div style={{ display: "inline-flex", gap: 6, justifyContent: "flex-end" }}>
@@ -801,25 +819,36 @@ export const AdminCandidatesPage: React.FC = () => {
                       </span>
                     )}
                   </div>
-                  {primaryCat === "expired" ? (
-                    <span className="badge" style={{ background: "#f1f5f9", color: "#64748b" }}>
-                      HẾT HẠN
-                    </span>
-                  ) : primaryCat === "approved" ? (
-                    <span className="badge badge-success">ĐÃ DUYỆT</span>
-                  ) : primaryCat === "rejected" ? (
-                    <span className="badge badge-warning">TỪ CHỐI</span>
-                  ) : primaryCat === "needs_review" ? (
-                    <span className="badge" style={{ background: "#fef3c7", color: "#b45309" }}>
-                      CẦN HIỆU CHỈNH
-                    </span>
-                  ) : primaryCat === "today" ? (
-                    <span className="badge" style={{ background: "#dcfce7", color: "#15803d" }}>
-                      MỚI HÔM NAY
-                    </span>
-                  ) : (
-                    <span className="badge badge-new">CHỜ DUYỆT</span>
-                  )}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
+                    {cand.changeType === "update" && (
+                      <span className="badge" style={{ background: "#e0f2fe", color: "#0369a1", fontSize: "0.7rem", fontWeight: 700 }}>
+                        ĐỀ XUẤT CẬP NHẬT
+                      </span>
+                    )}
+                    {primaryCat === "out_of_scope" ? (
+                      <span className="badge" style={{ background: "#f3e8ff", color: "#7e22ce" }}>
+                        NGOÀI PHẠM VI
+                      </span>
+                    ) : primaryCat === "expired" ? (
+                      <span className="badge" style={{ background: "#f1f5f9", color: "#64748b" }}>
+                        HẾT HẠN
+                      </span>
+                    ) : primaryCat === "approved" ? (
+                      <span className="badge badge-success">ĐÃ DUYỆT</span>
+                    ) : primaryCat === "rejected" ? (
+                      <span className="badge badge-warning">TỪ CHỐI</span>
+                    ) : primaryCat === "needs_review" ? (
+                      <span className="badge" style={{ background: "#fef3c7", color: "#b45309" }}>
+                        CẦN HIỆU CHỈNH
+                      </span>
+                    ) : primaryCat === "today" ? (
+                      <span className="badge" style={{ background: "#dcfce7", color: "#15803d" }}>
+                        MỚI HÔM NAY
+                      </span>
+                    ) : (
+                      <span className="badge badge-new">CHỜ DUYỆT</span>
+                    )}
+                  </div>
                 </div>
 
                 <h3

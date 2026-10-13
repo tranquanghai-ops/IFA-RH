@@ -766,8 +766,60 @@ export async function approveCandidate(
   if (candidate.discoveredAt) oppData.discoveredAt = candidate.discoveredAt;
   if (candidate.sheetStatus) oppData.sheetStatus = candidate.sheetStatus;
 
-  // A previous attempt may have published the opportunity before failing to
-  // mark its candidate. Reuse that document instead of creating a duplicate.
+  // 2. Check if candidate is an update proposal for an already published opportunity
+  if (candidate.publishedOpportunityId) {
+    const oppRef = doc(firestore, "opportunities", candidate.publishedOpportunityId);
+    const oppSnap = await getDoc(oppRef);
+    if (!oppSnap.exists()) {
+      throw new Error(`Không tìm thấy hồ sơ hội thảo đã công bố tương ứng (${candidate.publishedOpportunityId}).`);
+    }
+    const currentOpp = oppSnap.data();
+
+    // Preserve immutable fields and existing admin state
+    const updateOppData: any = {
+      ...oppData,
+      createdAt: currentOpp.createdAt,
+      createdBy: currentOpp.createdBy,
+      status: currentOpp.status || "published",
+      updatedAt: now,
+      updatedBy: actor.email,
+    };
+    if (currentOpp.manualOverrides) {
+      updateOppData.manualOverrides = currentOpp.manualOverrides;
+    }
+    if (currentOpp.editedByAdmin !== undefined) {
+      updateOppData.editedByAdmin = currentOpp.editedByAdmin;
+    }
+
+    // Clean undefined fields
+    const cleanUpdate: any = {};
+    for (const [k, v] of Object.entries(updateOppData)) {
+      if (v !== undefined) cleanUpdate[k] = v;
+    }
+
+    const batch = writeBatch(firestore);
+    batch.update(oppRef, cleanUpdate);
+    batch.update(candRef, {
+      id: resolvedCandId,
+      status: "approved",
+      reviewedBy: actor.email,
+      reviewedAt: now,
+      publishedOpportunityId: candidate.publishedOpportunityId,
+      updatedAt: now,
+    });
+    await batch.commit();
+
+    await logAudit(
+      actor,
+      "APPROVE_UPDATE_CANDIDATE",
+      "opportunity",
+      candidate.publishedOpportunityId,
+      `Duyệt cập nhật hội thảo Spark: "${resolvedTitle}" -> cập nhật Opportunities (${candidate.publishedOpportunityId})`
+    );
+    return;
+  }
+
+  // 3. New candidate approval -> Create new published opportunity
   const previous = await getDocs(query(
     collection(firestore, "opportunities"),
     where("candidateId", "==", resolvedCandId),

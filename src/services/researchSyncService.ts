@@ -7,6 +7,7 @@ import {
   findMatchingResearchOpportunity,
   isEditedByAdmin,
   computeOpportunityDiff,
+  classifyOutOfScopeRecord,
   ResearchMatchTarget,
 } from "../utils/researchDedupe";
 import { normalizeText } from "../utils/dedupe";
@@ -19,9 +20,13 @@ export interface ResearchSyncStats {
   valid: number;
   created: number;
   matched: number;
+  unchanged: number;
   updated: number;
+  updateProposals: number;
   preservedAdmin: number;
+  outOfScope: number;
   duplicates: number;
+  successWrites: number;
   errorCount: number;
 }
 
@@ -29,7 +34,15 @@ export interface ResearchSyncDiagnosticItem {
   row: number;
   stt: number | string;
   title: string;
-  status: "created" | "matched" | "updated" | "preserved_admin" | "skipped" | "invalid";
+  status:
+    | "created"
+    | "matched"
+    | "updated"
+    | "update_proposal"
+    | "preserved_admin"
+    | "out_of_scope"
+    | "skipped"
+    | "invalid";
   action: string;
   reason: string;
   targetId?: string;
@@ -41,6 +54,7 @@ export type SyncStage =
   | "FETCH_SHEET"
   | "READ_CANDIDATES"
   | "WRITE_NEW_CANDIDATE"
+  | "WRITE_UPDATE_CANDIDATE"
   | "UPDATE_CANDIDATE"
   | "UPDATE_OPPORTUNITY"
   | "UPDATE_SYNC_STATE"
@@ -285,14 +299,46 @@ export async function executeResearchSync({
       valid: 0,
       created: 0,
       matched: 0,
+      unchanged: 0,
       updated: 0,
+      updateProposals: 0,
       preservedAdmin: 0,
+      outOfScope: 0,
       duplicates: 0,
+      successWrites: 0,
       errorCount: 0,
     };
 
     const diagnostics: ResearchSyncDiagnosticItem[] = [];
     const seenMatchedIds = new Set<string>();
+
+    // Reconcile existing out-of-scope candidates in opportunityCandidates
+    for (const cand of candidates) {
+      if (cand.isOutOfScope !== true) {
+        const cls = classifyOutOfScopeRecord(cand);
+        if (cls.isOutOfScope) {
+          stats.outOfScope++;
+          if (!isDryRun) {
+            try {
+              const candRef = sdk.doc(db, "opportunityCandidates", cand.id);
+              const updates: any = {
+                isOutOfScope: true,
+                outOfScopeReason: cls.reason,
+                updatedAt: new Date().toISOString(),
+                updatedBy: "SPARK_SYNC",
+              };
+              if (cls.classifiedType && cand.type !== cls.classifiedType) {
+                updates.type = cls.classifiedType;
+              }
+              await sdk.updateDoc(candRef, cleanUndefined(updates));
+              stats.successWrites++;
+            } catch (reconcileErr) {
+              console.warn("Lỗi cập nhật out-of-scope cho ứng viên:", cand.id, reconcileErr);
+            }
+          }
+        }
+      }
+    }
 
     // 4. Process each row
     for (let i = 0; i < rows.length; i++) {
@@ -352,16 +398,17 @@ export async function executeResearchSync({
         }
         seenMatchedIds.add(target.id);
 
-        // Check if Admin edited
+        // Check if Admin edited (Case D: Preserved Admin)
         if (isEditedByAdmin(target)) {
           stats.preservedAdmin++;
+          stats.matched++;
           diagnostics.push({
             row: rowNum,
             stt: sttVal,
             title: row.title,
             status: "preserved_admin",
             action: "Giữ sửa Admin",
-            reason: `Khớp với ${target._targetType === "opportunity" ? "cơ hội đã công bố" : "ứng viên"}, giữ nguyên các chỉnh sửa thủ công của Admin`,
+            reason: `Khớp với ${target._targetType === "opportunity" ? "hội thảo đã công bố" : "ứng viên"}, bảo toàn các chỉnh sửa thủ công của Admin`,
             targetId: target.id,
           });
           continue;
@@ -369,99 +416,229 @@ export async function executeResearchSync({
 
         // Compare diff
         const diff = computeOpportunityDiff(target, row);
-        if (diff.hasChanges) {
-          if (!isDryRun) {
-            const isOpp = target._targetType === "opportunity";
-            const colName = isOpp ? "opportunities" : "opportunityCandidates";
-            const docRef = sdk.doc(db, colName, target.id);
-            try {
-              const safeUpdates: Record<string, any> = {
-                ...diff.updates,
-                updatedAt: new Date().toISOString(),
-                updatedBy: "SPARK_SYNC",
-              };
+        const isOpp = target._targetType === "opportunity";
 
-              // Backfill normalizedTitle if candidate lacked it in older schema
-              if (!target.normalizedTitle) {
-                safeUpdates.normalizedTitle = normalizeText(row.title || target.title);
+        if (isOpp) {
+          // TARGET IS A PUBLISHED OPPORTUNITY IN 'opportunities'
+          // Core architectural rule: DO NOT automatically overwrite published opportunities in Firestore!
+          if (!diff.hasChanges) {
+            // Case B: Published & Unchanged -> DO NOT write to Firestore
+            stats.matched++;
+            stats.unchanged++;
+            diagnostics.push({
+              row: rowNum,
+              stt: sttVal,
+              title: row.title,
+              status: "matched",
+              action: "Khớp (Không đổi)",
+              reason: "Hội thảo đã công bố, dữ liệu Google Sheets trùng khớp, không ghi Firestore",
+              targetId: target.id,
+            });
+          } else {
+            // Case C: Published & Changed in Sheet -> Create or update proposal candidate in 'opportunityCandidates'
+            const existingProposal = candidates.find(
+              (c) =>
+                c.publishedOpportunityId === target.id &&
+                ["pending", "needs_review"].includes(c.status)
+            );
+
+            if (existingProposal) {
+              // Idempotency: Update existing candidate proposal
+              if (!isDryRun) {
+                const docRef = sdk.doc(db, "opportunityCandidates", existingProposal.id);
+                try {
+                  const safeUpdates: Record<string, any> = {
+                    ...diff.updates,
+                    diffSummary: diff.diffSummary,
+                    changeType: "update",
+                    publishedOpportunityId: target.id,
+                    updatedAt: new Date().toISOString(),
+                    updatedBy: "SPARK_SYNC",
+                  };
+                  await sdk.updateDoc(docRef, cleanUndefined(safeUpdates));
+                  stats.successWrites++;
+                } catch (updateCandErr: any) {
+                  throw new ResearchSyncStageError({
+                    stage: "UPDATE_CANDIDATE",
+                    collectionName: "opportunityCandidates",
+                    documentId: existingProposal.id,
+                    operationType: "update",
+                    originalError: updateCandErr,
+                    userSummary: `Không đủ quyền cập nhật đề xuất thay đổi cho hội thảo "${row.title}" (ID: ${existingProposal.id})`,
+                    actorUid: user.uid,
+                    actorRole: user.role,
+                  });
+                }
               }
-
-              // Backfill country if candidate lacked it
-              if (!target.country) {
-                safeUpdates.country = row.country || "Việt Nam";
+              stats.matched++;
+              stats.updated++;
+              diagnostics.push({
+                row: rowNum,
+                stt: sttVal,
+                title: row.title,
+                status: "update_proposal",
+                action: "Cập nhật đề xuất",
+                reason: `Cập nhật thông tin đề xuất thay đổi cho hội thảo đã công bố (${diff.changedKeys.join(", ")})`,
+                targetId: existingProposal.id,
+              });
+            } else {
+              // Create new update candidate in opportunityCandidates
+              const { id: _ignoreSlugId, ...candidateFields } = mapRowToCandidate(row, i);
+              let newCandId = "";
+              if (!isDryRun) {
+                const colRef = sdk.collection(db, "opportunityCandidates");
+                try {
+                  const addedDoc = await sdk.addDoc(
+                    colRef,
+                    cleanUndefined({
+                      ...candidateFields,
+                      status: "pending",
+                      changeType: "update",
+                      publishedOpportunityId: target.id,
+                      diffSummary: diff.diffSummary,
+                      sourceType: "SPARK",
+                      createdAt: new Date().toISOString(),
+                      updatedAt: new Date().toISOString(),
+                    })
+                  );
+                  newCandId = addedDoc?.id || "";
+                  stats.successWrites++;
+                } catch (createProposalErr: any) {
+                  throw new ResearchSyncStageError({
+                    stage: "WRITE_UPDATE_CANDIDATE",
+                    collectionName: "opportunityCandidates",
+                    documentId: target.id,
+                    operationType: "create",
+                    originalError: createProposalErr,
+                    userSummary: `Không đủ quyền tạo đề xuất cập nhật cho hội thảo đã công bố "${row.title}" (Opportunity ID: ${target.id})`,
+                    actorUid: user.uid,
+                    actorRole: user.role,
+                  });
+                }
               }
-
-              // Canonicalize type if target had raw/legacy conference type
-              if (target.type && !["Hội thảo", "Hội nghị", "Call for Papers", "Special Issue", "Book Chapter", "Seminar", "Hợp tác nghiên cứu", "Đổi mới sáng tạo", "Khác"].includes(target.type)) {
-                safeUpdates.type = target.type.includes("Hội nghị") ? "Hội nghị" : "Hội thảo";
-              }
-
-              // Canonicalize status if target had raw sheet status (e.g. 'MỚI')
-              if (target.status && !["pending", "approved", "rejected", "needs_review"].includes(target.status)) {
-                safeUpdates.status = "pending";
-              }
-
-              // Ensure internal id field (if present) always matches the real Firestore document ID
-              safeUpdates.id = target.id;
-
-              await sdk.updateDoc(
-                docRef,
-                cleanUndefined(safeUpdates)
-              );
-            } catch (updateErr: any) {
-              throw new ResearchSyncStageError({
-                stage: isOpp ? "UPDATE_OPPORTUNITY" : "UPDATE_CANDIDATE",
-                collectionName: colName,
-                documentId: target.id,
-                operationType: "update",
-                originalError: updateErr,
-                userSummary: `Không đủ quyền cập nhật ${isOpp ? "cơ hội" : "ứng viên"} "${row.title}" (ID: ${target.id}, Trạng thái: ${target.status || "chưa xác định"})`,
-                actorUid: user.uid,
-                actorRole: user.role,
+              stats.matched++;
+              stats.updateProposals++;
+              diagnostics.push({
+                row: rowNum,
+                stt: sttVal,
+                title: row.title,
+                status: "update_proposal",
+                action: "Đề xuất cập nhật",
+                reason: `Phát hiện dữ liệu mới trên Google Sheet (${diff.changedKeys.join(", ")}). Đã tạo đề xuất chờ Admin duyệt`,
+                targetId: newCandId || target.id,
               });
             }
           }
-          stats.updated++;
-          diagnostics.push({
-            row: rowNum,
-            stt: sttVal,
-            title: row.title,
-            status: "updated",
-            action: "Cập nhật",
-            reason: `Cập nhật thông tin mới từ nguồn (${diff.changedKeys.join(", ")})`,
-            targetId: target.id,
-          });
         } else {
-          stats.matched++;
-          diagnostics.push({
-            row: rowNum,
-            stt: sttVal,
-            title: row.title,
-            status: "matched",
-            action: "Khớp",
-            reason: "Khớp cơ hội trong hệ thống, dữ liệu không đổi",
-            targetId: target.id,
-          });
+          // TARGET IS AN EXISTING CANDIDATE IN 'opportunityCandidates'
+          if (diff.hasChanges) {
+            if (!isDryRun) {
+              const docRef = sdk.doc(db, "opportunityCandidates", target.id);
+              try {
+                const safeUpdates: Record<string, any> = {
+                  ...diff.updates,
+                  updatedAt: new Date().toISOString(),
+                  updatedBy: "SPARK_SYNC",
+                };
+
+                // Backfill normalizedTitle if candidate lacked it in older schema
+                if (!target.normalizedTitle) {
+                  safeUpdates.normalizedTitle = normalizeText(row.title || target.title);
+                }
+
+                // Backfill country if candidate lacked it
+                if (!target.country) {
+                  safeUpdates.country = row.country || "Việt Nam";
+                }
+
+                // Canonicalize type if target had raw/legacy conference type
+                if (target.type && !["Hội thảo", "Hội nghị", "Call for Papers", "Special Issue", "Book Chapter", "Seminar", "Hợp tác nghiên cứu", "Đổi mới sáng tạo", "Khác"].includes(target.type)) {
+                  safeUpdates.type = target.type.includes("Hội nghị") ? "Hội nghị" : "Hội thảo";
+                }
+
+                // Canonicalize status if target had raw sheet status (e.g. 'MỚI')
+                if (target.status && !["pending", "approved", "rejected", "needs_review"].includes(target.status)) {
+                  safeUpdates.status = "pending";
+                }
+
+                // Ensure internal id field (if present) always matches the real Firestore document ID
+                safeUpdates.id = target.id;
+
+                await sdk.updateDoc(
+                  docRef,
+                  cleanUndefined(safeUpdates)
+                );
+                stats.successWrites++;
+              } catch (updateErr: any) {
+                throw new ResearchSyncStageError({
+                  stage: "UPDATE_CANDIDATE",
+                  collectionName: "opportunityCandidates",
+                  documentId: target.id,
+                  operationType: "update",
+                  originalError: updateErr,
+                  userSummary: `Không đủ quyền cập nhật ứng viên "${row.title}" (ID: ${target.id})`,
+                  actorUid: user.uid,
+                  actorRole: user.role,
+                });
+              }
+            }
+            stats.updated++;
+            stats.matched++;
+            diagnostics.push({
+              row: rowNum,
+              stt: sttVal,
+              title: row.title,
+              status: "updated",
+              action: "Cập nhật ứng viên",
+              reason: `Cập nhật thông tin mới từ nguồn (${diff.changedKeys.join(", ")})`,
+              targetId: target.id,
+            });
+          } else {
+            stats.matched++;
+            diagnostics.push({
+              row: rowNum,
+              stt: sttVal,
+              title: row.title,
+              status: "matched",
+              action: "Khớp ứng viên",
+              reason: "Khớp ứng viên trong hệ thống, dữ liệu không đổi",
+              targetId: target.id,
+            });
+          }
         }
       } else {
-        // Completely new record: create candidate (omit synthetic slug id so Firestore auto-ID is never shadowed)
+        // Case A: Completely new record: create candidate
+        const outOfScope = classifyOutOfScopeRecord(row);
         const { id: _ignoreSlugId, ...candidateFields } = mapRowToCandidate(row, i);
         let newCandidateId = "";
+
+        const newCandData: any = {
+          ...candidateFields,
+          status: "pending",
+          changeType: "create",
+          sourceType: "SPARK",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        if (outOfScope.isOutOfScope) {
+          newCandData.isOutOfScope = true;
+          newCandData.outOfScopeReason = outOfScope.reason;
+          if (outOfScope.classifiedType) {
+            newCandData.type = outOfScope.classifiedType;
+          }
+          stats.outOfScope++;
+        }
 
         if (!isDryRun) {
           const colRef = sdk.collection(db, "opportunityCandidates");
           try {
             const addedDoc = await sdk.addDoc(
               colRef,
-              cleanUndefined({
-                ...candidateFields,
-                status: "pending",
-                sourceType: "SPARK",
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              })
+              cleanUndefined(newCandData)
             );
             newCandidateId = addedDoc?.id || "";
+            stats.successWrites++;
           } catch (createCandErr: any) {
             throw new ResearchSyncStageError({
               stage: "WRITE_NEW_CANDIDATE",
@@ -480,9 +657,9 @@ export async function executeResearchSync({
           row: rowNum,
           stt: sttVal,
           title: row.title,
-          status: "created",
-          action: "Tạo mới",
-          reason: "Cơ hội NCKH mới, đã đưa vào hàng chờ duyệt AI",
+          status: outOfScope.isOutOfScope ? "out_of_scope" : "created",
+          action: outOfScope.isOutOfScope ? "Ngoài phạm vi" : "Tạo mới",
+          reason: outOfScope.isOutOfScope ? outOfScope.reason! : "Cơ hội NCKH mới, đã đưa vào hàng chờ duyệt AI",
           targetId: newCandidateId,
         });
       }
@@ -533,7 +710,7 @@ export async function executeResearchSync({
           fileName: `IFA Faculty Research (${options.sheetConfig?.sheetName || DEFAULT_RESEARCH_SHEET_NAME})`,
           type: "opportunities",
           totalRows: stats.read,
-          successCount: stats.created + stats.updated + stats.matched + stats.preservedAdmin,
+          successCount: stats.created + stats.updated + stats.updateProposals + stats.matched + stats.preservedAdmin,
           errorCount: stats.errorCount,
           skippedCount: stats.duplicates,
           errors: diagnostics

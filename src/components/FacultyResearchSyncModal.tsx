@@ -14,6 +14,7 @@ import {
   findMatchingResearchOpportunity,
   isEditedByAdmin,
   computeOpportunityDiff,
+  classifyOutOfScopeRecord,
   type ResearchMatchTarget,
 } from "../utils/researchDedupe";
 import { formatDateVN } from "../utils/date";
@@ -55,6 +56,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
   const [saveResult, setSaveResult] = useState<{
     added: number;
     updated: number;
+    updateProposals: number;
     preservedAdmin: number;
     matched: number;
     skipped: number;
@@ -146,12 +148,15 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
 
         const diff = computeOpportunityDiff(target, row);
         if (diff.hasChanges) {
+          const isOpp = target._targetType === "opportunity";
           return {
             row,
             candidate,
-            status: "updated" as const,
-            action: "Cập nhật",
-            reason: `Cập nhật: ${diff.changedKeys.join(", ")}`,
+            status: isOpp ? ("update_proposal" as const) : ("updated" as const),
+            action: isOpp ? "Đề xuất cập nhật" : "Cập nhật ứng viên",
+            reason: isOpp
+              ? `Đề xuất cập nhật hội thảo đã công bố: ${diff.changedKeys.join(", ")}`
+              : `Cập nhật thông tin ứng viên: ${diff.changedKeys.join(", ")}`,
           };
         }
 
@@ -160,7 +165,18 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
           candidate,
           status: "matched" as const,
           action: "Đã khớp",
-          reason: "Dữ liệu trùng khớp, không thay đổi",
+          reason: "Dữ liệu trùng khớp, không thay đổi (Không ghi Firestore)",
+        };
+      }
+
+      const outOfScope = classifyOutOfScopeRecord(row);
+      if (outOfScope.isOutOfScope) {
+        return {
+          row,
+          candidate,
+          status: "out_of_scope" as const,
+          action: "Ngoài phạm vi",
+          reason: outOfScope.reason || "Bản ghi ngoài phạm vi hội thảo trong nước",
         };
       }
 
@@ -175,6 +191,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
   }, [sourceData, combinedTargets]);
 
   const newCount = analyzedItems.filter((i) => i.status === "created").length;
+  const updateProposalCount = analyzedItems.filter((i) => i.status === "update_proposal").length;
   const updateCount = analyzedItems.filter((i) => i.status === "updated").length;
   const preservedCount = analyzedItems.filter((i) => i.status === "preserved_admin").length;
   const matchedCount = analyzedItems.filter((i) => i.status === "matched").length;
@@ -195,6 +212,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
         setSaveResult({
           added: stats?.created || 0,
           updated: stats?.updated || 0,
+          updateProposals: stats?.updateProposals || 0,
           preservedAdmin: stats?.preservedAdmin || 0,
           matched: stats?.matched || 0,
           skipped: stats?.duplicates || 0,
@@ -218,10 +236,11 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
       footer={
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
           <div style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
-            Mới: <strong style={{ color: "var(--success)" }}>{newCount}</strong> · Cập nhật:{" "}
+            Mới: <strong style={{ color: "var(--success)" }}>{newCount}</strong> · Đề xuất:{" "}
+            <strong style={{ color: "#0284c7" }}>{updateProposalCount}</strong> · Cập nhật:{" "}
             <strong style={{ color: "#d97706" }}>{updateCount}</strong> · Giữ sửa Admin:{" "}
-            <strong style={{ color: "#7c3aed" }}>{preservedCount}</strong> · Bỏ qua:{" "}
-            <strong>{duplicateCount + matchedCount}</strong>
+            <strong style={{ color: "#7c3aed" }}>{preservedCount}</strong> · Đã khớp:{" "}
+            <strong style={{ color: "var(--text-main)" }}>{matchedCount}</strong>
           </div>
           <div style={{ display: "flex", gap: 10 }}>
             <button type="button" className="btn btn-secondary btn-sm" onClick={onClose} disabled={saving}>
@@ -231,7 +250,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
               type="button"
               className="btn btn-primary btn-sm"
               onClick={handleSyncCommit}
-              disabled={saving || (newCount === 0 && updateCount === 0)}
+              disabled={saving}
               style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
             >
               {saving ? (
@@ -240,7 +259,10 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
                 </>
               ) : (
                 <>
-                  <Sparkles size={14} /> Đồng bộ {newCount + updateCount} bản ghi vào hệ thống
+                  <Sparkles size={14} />{" "}
+                  {newCount + updateCount + updateProposalCount > 0
+                    ? `Đồng bộ ${newCount + updateCount + updateProposalCount} bản ghi vào hệ thống`
+                    : "Đồng bộ (Kiểm tra & Cập nhật)"}
                 </>
               )}
             </button>
@@ -303,8 +325,9 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
           >
             <CheckCircle2 size={18} color="#059669" />
             <span>
-              Đồng bộ thành công! Thêm mới: <strong>{saveResult.added}</strong> · Cập nhật:{" "}
-              <strong>{saveResult.updated}</strong> · Giữ sửa Admin: <strong>{saveResult.preservedAdmin}</strong>.
+              Đồng bộ hoàn tất! Thêm mới: <strong>{saveResult.added}</strong> · Đề xuất cập nhật:{" "}
+              <strong>{saveResult.updateProposals}</strong> · Khớp dữ liệu:{" "}
+              <strong>{saveResult.matched}</strong> · Giữ sửa Admin: <strong>{saveResult.preservedAdmin}</strong>.
             </span>
           </div>
         )}

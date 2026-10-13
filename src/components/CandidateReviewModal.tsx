@@ -15,6 +15,7 @@ import {
   Lightbulb,
   DollarSign,
   Layers,
+  Sparkles,
 } from "lucide-react";
 
 interface CandidateReviewModalProps {
@@ -179,7 +180,11 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
                     disabled={loading}
                   >
                     <CheckCircle size={16} />
-                    {loading ? "Đang duyệt & công bố..." : "Duyệt & Công bố Public"}
+                    {loading
+                      ? "Đang lưu thay đổi..."
+                      : candidate.publishedOpportunityId
+                      ? "Duyệt & Cập nhật Hồ sơ"
+                      : "Duyệt & Công bố Public"}
                   </button>
                 </>
               )}
@@ -195,6 +200,101 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
         {error && (
           <div style={{ background: "#fee2e2", color: "#991b1b", padding: 12, borderRadius: 6 }}>
             {error}
+          </div>
+        )}
+
+        {/* Update Proposal Alert & Diff Table */}
+        {candidate.publishedOpportunityId && (
+          <div
+            style={{
+              background: "#eff6ff",
+              border: "1px solid #bfdbfe",
+              borderRadius: 8,
+              padding: "14px 16px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                color: "#1d4ed8",
+                fontWeight: 700,
+                fontSize: "0.95rem",
+                marginBottom: 6,
+              }}
+            >
+              <Sparkles size={18} />
+              Đề xuất cập nhật từ Google Sheets cho Hội thảo đã công bố
+            </div>
+            <div
+              style={{
+                fontSize: "0.85rem",
+                color: "#1e40af",
+                marginBottom: candidate.diffSummary && candidate.diffSummary.length > 0 ? 12 : 0,
+              }}
+            >
+              Mã hồ sơ gốc: <code>{candidate.publishedOpportunityId}</code>. Khi duyệt, các thông tin thay đổi bên dưới sẽ được áp dụng vào hồ sơ đang công bố, bảo toàn ngày tạo và quyền hạn gốc.
+            </div>
+            {candidate.diffSummary && candidate.diffSummary.length > 0 && (
+              <div
+                style={{
+                  overflowX: "auto",
+                  background: "#ffffff",
+                  borderRadius: 6,
+                  border: "1px solid #cbd5e1",
+                }}
+              >
+                <table style={{ width: "100%", fontSize: "0.82rem", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc", borderBottom: "1px solid #cbd5e1" }}>
+                      <th style={{ padding: "8px 12px", textAlign: "left", width: "25%" }}>Trường thông tin</th>
+                      <th style={{ padding: "8px 12px", textAlign: "left", width: "37%", color: "#64748b" }}>
+                        Giá trị hiện tại
+                      </th>
+                      <th style={{ padding: "8px 12px", textAlign: "left", width: "38%", color: "#166534" }}>
+                        Giá trị mới từ Google Sheet
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {candidate.diffSummary.map((d, idx) => (
+                      <tr
+                        key={idx}
+                        style={{
+                          borderBottom:
+                            idx < candidate.diffSummary!.length - 1 ? "1px solid #e2e8f0" : "none",
+                        }}
+                      >
+                        <td style={{ padding: "8px 12px", fontWeight: 600 }}>{d.label || d.field}</td>
+                        <td style={{ padding: "8px 12px", color: "#64748b" }}>
+                          {String(d.oldValue || "(Chưa có)")}
+                        </td>
+                        <td style={{ padding: "8px 12px", fontWeight: 600, color: "#15803d" }}>
+                          {String(d.newValue || "")}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {candidate.isOutOfScope && (
+          <div
+            style={{
+              background: "#faf5ff",
+              border: "1px solid #e9d5ff",
+              borderRadius: 8,
+              padding: "12px 16px",
+              fontSize: "0.85rem",
+              color: "#6b21a8",
+            }}
+          >
+            <strong>Lưu ý phạm vi:</strong>{" "}
+            {candidate.outOfScopeReason || "Hồ sơ nằm ngoài phạm vi danh mục hội thảo trong nước."}
           </div>
         )}
 

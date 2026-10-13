@@ -134,6 +134,21 @@ export interface OpportunityCandidate {
   reviewedBy?: string;
   reviewedAt?: string;
   publishedOpportunityId?: string;
+  changeType?: "create" | "update";
+  diffSummary?: Array<{
+    field: string;
+    label?: string;
+    oldValue: any;
+    newValue: any;
+  }>;
+  isOutOfScope?: boolean;
+  outOfScopeReason?: string;
+  editedByAdmin?: boolean;
+  manualOverrides?: string[];
+  unverifiedFields?: string[];
+  manualReviewNeeded?: boolean;
+  manualReviewReason?: string;
+  confidenceLevel?: string;
   recalledAt?: string;
   recalledBy?: string;
   normalizedTitle: string;

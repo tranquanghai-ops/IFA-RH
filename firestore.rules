@@ -457,7 +457,7 @@ service cloud.firestore {
           'createdBy', 'editedByAdmin', 'manualOverrides',
           'stt', 'candidateId', 'hiddenAt', 'hiddenBy', 'sheetRowIndex',
           'unverifiedFields', 'manualReviewNeeded', 'manualReviewReason', 'confidenceLevel',
-          'diffSummary'
+          'diffSummary', 'changeType', 'isOutOfScope', 'outOfScopeReason'
         ]) &&
         validString(data.title, 1, 300) &&
         validString(data.organizer, 1, 200) &&
@@ -522,7 +522,10 @@ service cloud.firestore {
         (!('manualReviewNeeded' in data) || data.manualReviewNeeded is bool) &&
         (!('manualReviewReason' in data) || validString(data.manualReviewReason, 0, 1000)) &&
         (!('confidenceLevel' in data) || validString(data.confidenceLevel, 0, 50)) &&
-        (!('diffSummary' in data) || (data.diffSummary is list && data.diffSummary.size() <= 30)) &&
+        (!('diffSummary' in data) || (data.diffSummary is list && data.diffSummary.size() <= 50)) &&
+        (!('changeType' in data) || data.changeType in ['create', 'update']) &&
+        (!('isOutOfScope' in data) || data.isOutOfScope is bool) &&
+        (!('outOfScopeReason' in data) || validString(data.outOfScopeReason, 0, 500)) &&
         (!('id' in data) || validString(data.id, 0, 100));
     }
 

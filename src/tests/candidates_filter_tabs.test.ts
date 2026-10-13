@@ -96,6 +96,7 @@ describe("Dữ liệu AI tìm - Bộ lọc và phân loại trạng thái không
       approved: 0,
       expired: 0,
       rejected: 0,
+      out_of_scope: 0,
     };
 
     for (const c of mockList) {
