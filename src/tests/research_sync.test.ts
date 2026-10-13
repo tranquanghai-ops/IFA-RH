@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   parseGvizDateValue,
   parseFacultyResearchGvizRow,
@@ -251,7 +251,46 @@ describe("Research Data Sync Suite", () => {
     let mockStore: Record<string, Record<string, any>>;
     let mockSdk: ResearchSyncSdk;
 
+    const originalFetch = globalThis.fetch;
+    const mockRowCells = [
+      { v: 1, f: "1" },
+      { v: "Date(2026, 9, 6)", f: "06/10/2026" },
+      { v: "RUN-01", f: "RUN-01" },
+      { v: "Hội thảo quốc tế AI MTCN 2027", f: "Hội thảo quốc tế AI MTCN 2027" },
+      { v: "https://example.org/conf-2027", f: "https://example.org/conf-2027" },
+      { v: "https://example.org/submit", f: "https://example.org/submit" },
+      { v: "Đại học Mỹ thuật", f: "Đại học Mỹ thuật" },
+      { v: "Việt Nam", f: "Việt Nam" },
+      { v: "Quốc tế", f: "Quốc tế" },
+      { v: "Hội thảo", f: "Hội thảo" },
+      { v: "Mỹ thuật ứng dụng", f: "Mỹ thuật ứng dụng" },
+      { v: "Rất phù hợp", f: "Rất phù hợp" },
+      { v: "Thiết kế đồ họa", f: "Thiết kế đồ họa" },
+      { v: null, f: null },
+      { v: "Date(2026, 10, 20)", f: "20/11/2026" },
+      { v: "Date(2027, 1, 15)", f: "15/02/2027" },
+      { v: "20/03/2027", f: "20/03/2027" },
+      { v: "TP. Hồ Chí Minh", f: "TP. Hồ Chí Minh" },
+      { v: "Miễn phí", f: "Miễn phí" },
+      { v: "Kỷ yếu ISBN", f: "Kỷ yếu ISBN" },
+      { v: "Scopus", f: "Scopus" },
+      { v: "Tóm tắt", f: "Tóm tắt" },
+      { v: "Gợi ý", f: "Gợi ý" },
+      { v: "AI", f: "AI" },
+      { v: "MỚI", f: "MỚI" },
+      { v: "Date(2026, 9, 6)", f: "06/10/2026" },
+      { v: "Ghi chú", f: "Ghi chú" },
+    ];
+
     beforeEach(() => {
+      globalThis.fetch = vi.fn().mockImplementation(async () => {
+        const table = {
+          cols: Array(27).fill(0).map((_, i) => ({ id: `col_${i}`, label: `Col ${i}` })),
+          rows: [{ c: mockRowCells }],
+        };
+        const gvizText = `google.visualization.Query.setResponse(${JSON.stringify({ status: "ok", table })});`;
+        return new Response(gvizText, { status: 200 });
+      });
       mockStore = {
         systemConfig: {},
         opportunityCandidates: {},
@@ -297,6 +336,10 @@ describe("Research Data Sync Suite", () => {
         },
         serverTimestamp: () => new Date().toISOString(),
       };
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
     });
 
     it("respects concurrency lock and skips execution if active lock exists", async () => {

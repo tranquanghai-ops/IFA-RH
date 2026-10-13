@@ -122,6 +122,64 @@ export async function fetchJournalCandidates(): Promise<JournalCandidate[]> {
   }
 }
 
+/**
+ * Check if candidate document in Firestore is identical to incoming payload.
+ * When identical, skipping setDoc reduces unnecessary writes and Firestore CEL evaluation.
+ */
+export function areCandidateContentsIdentical(
+  existing: JournalCandidate,
+  incoming: JournalCandidate
+): boolean {
+  if (existing.name !== incoming.name) return false;
+  if ((existing.englishName || "") !== (incoming.englishName || "")) return false;
+  if ((existing.abbreviation || "") !== (incoming.abbreviation || "")) return false;
+  if ((existing.publisher || "") !== (incoming.publisher || "")) return false;
+  if ((existing.hostAgency || "") !== (incoming.hostAgency || "")) return false;
+  if ((existing.nameHistory || "") !== (incoming.nameHistory || "")) return false;
+  if ((existing.issnPrint || "") !== (incoming.issnPrint || "")) return false;
+  if ((existing.issnOnline || "") !== (incoming.issnOnline || "")) return false;
+  if ((existing.isbn || "") !== (incoming.isbn || "")) return false;
+  if ((existing.category || "") !== (incoming.category || "")) return false;
+  if ((existing.primaryField || "") !== (incoming.primaryField || "")) return false;
+  if ((existing.website || "") !== (incoming.website || "")) return false;
+  if (Boolean(existing.websiteVerified) !== Boolean(incoming.websiteVerified)) return false;
+  if (Number(existing.maxScore ?? 0) !== Number(incoming.maxScore ?? 0)) return false;
+  if (Number(existing.maxScoreYear ?? 0) !== Number(incoming.maxScoreYear ?? 0)) return false;
+  if (Number(existing.decisionYear ?? 0) !== Number(incoming.decisionYear ?? 0)) return false;
+  if (Number(existing.recognizedCouncilCount ?? 0) !== Number(incoming.recognizedCouncilCount ?? 0)) return false;
+  if ((existing.scoreReconciliationStatus || "") !== (incoming.scoreReconciliationStatus || "")) return false;
+  if ((existing.scoreSourceNote || "") !== (incoming.scoreSourceNote || "")) return false;
+
+  const exCouncil = existing.councilScores || [];
+  const inCouncil = incoming.councilScores || [];
+  if (exCouncil.length !== inCouncil.length) return false;
+  for (let i = 0; i < exCouncil.length; i++) {
+    const ec = exCouncil[i];
+    const ic = inCouncil[i];
+    if (ec.councilId !== ic.councilId) return false;
+    if (ec.maxScore !== ic.maxScore) return false;
+    if (ec.minScore !== ic.minScore) return false;
+    if (ec.publicationType !== ic.publicationType) return false;
+    if (ec.verificationStatus !== ic.verificationStatus) return false;
+  }
+
+  if (Boolean(existing.guidelines?.hasGuidelines) !== Boolean(incoming.guidelines?.hasGuidelines)) return false;
+  if ((existing.guidelines?.submissionUrl || "") !== (incoming.guidelines?.submissionUrl || "")) return false;
+  if ((existing.guidelines?.templateUrl || "") !== (incoming.guidelines?.templateUrl || "")) return false;
+  if ((existing.guidelines?.editorialEmail || "") !== (incoming.guidelines?.editorialEmail || "")) return false;
+
+  return true;
+}
+
+export interface JournalSyncProgress {
+  stage: 1 | 2 | 3 | 4 | 5;
+  stageName: string;
+  percent: number;
+  message: string;
+  writtenCount?: number;
+  totalCount?: number;
+}
+
 export type JournalSyncStage =
   | "FETCH_SHEET"
   | "READ_JOURNALS"
@@ -226,251 +284,26 @@ export async function getJournalSyncSettings(): Promise<JournalSyncSettings | nu
 }
 
 /**
- * Core engine: Syncs from Google Sheets single-tab into Review Queue (journalCandidates).
- * DOES NOT publish directly to public journals!
+ * Unified Google Sheets Sync Engine (53 columns):
+ * - Reads exclusively from the single public Google Sheet (1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE, tab TAP_CHI).
+ * - Synchronizes all 53 columns in a single pass (metadata, ISSN, publisher, guidelines, legacy scores, 6 multi-council score columns AV:BA).
+ * - Reports real-time progress across 5 stages:
+ *   Stage 1: Đọc Google Sheets
+ *   Stage 2: Kiểm tra dữ liệu (IMPORTRANGE & multi-council JSON)
+ *   Stage 3: So sánh Firestore (Đối soát định danh và so sánh dữ liệu)
+ *   Stage 4: Tạo/cập nhật hàng chờ (Lưu idempotent, giữ nguyên bản nháp & trạng thái từ chối của Admin, bỏ qua nếu trùng khớp 100%)
+ *   Stage 5: Hoàn tất (Ghi nhật ký kiểm toán journalImports và cấu hình đồng bộ)
  */
 export async function syncJournalsFromGoogleSheetsToQueue({
   sheetId = DEFAULT_JOURNAL_SPREADSHEET_ID,
   sheetName = DEFAULT_JOURNAL_SHEET_NAME,
   user,
+  onProgress,
 }: {
   sheetId?: string;
   sheetName?: string;
   user: { uid: string; email?: string };
-}): Promise<{
-  success: boolean;
-  totalRead: number;
-  newCandidatesCount: number;
-  updatedCandidatesCount: number;
-  unchangedCount: number;
-  skippedDuplicates: number;
-  manualReviewCount: number;
-  warnings: string[];
-  writtenCount: number;
-  batchId?: string;
-}> {
-  const effectiveSheetId = sanitizePublicJournalSpreadsheetId(sheetId);
-  const effectiveSheetName = sanitizePublicJournalSheetName(sheetName);
-  const currentSettings = await getJournalSyncSettings();
-  const previousValidRowCount = currentSettings?.lastStats?.validRows;
-
-  // 1. Fetch rows from Google Sheets IFA-RH
-  let sheetResult: any;
-  try {
-    sheetResult = await fetchJournalGoogleSheetRows(
-      effectiveSheetId,
-      effectiveSheetName,
-      { previousValidRowCount }
-    );
-    if (!sheetResult || !Array.isArray(sheetResult.validJournals)) {
-      throw new Error("Không có dữ liệu hợp lệ trả về từ Google Sheets IFA-RH.");
-    }
-  } catch (sheetErr: any) {
-    throw new JournalSyncStageError({
-      stage: "FETCH_SHEET",
-      collectionName: "google_sheets",
-      operationType: "get",
-      originalError: sheetErr,
-      userSummary: `Lỗi kết nối hoặc đọc Google Sheets IFA-RH (${effectiveSheetName}): ${sheetErr.message || "Không thể đọc dữ liệu"}`,
-      actorUid: user.uid,
-      actorRole: user.email,
-    });
-  }
-
-  // 2. Fetch existing journals and active pending candidates
-  let existingJournals: Journal[] = [];
-  try {
-    existingJournals = await fetchJournals({ includeHidden: true });
-  } catch (jErr: any) {
-    throw new JournalSyncStageError({
-      stage: "READ_JOURNALS",
-      collectionName: "journals",
-      operationType: "list",
-      originalError: jErr,
-      userSummary: "Không đủ quyền đọc danh mục tạp chí đã công bố",
-      actorUid: user.uid,
-      actorRole: user.email,
-    });
-  }
-
-  let existingCandidates: JournalCandidate[] = [];
-  try {
-    const colRef = collection(firestore, "journalCandidates");
-    const q = query(colRef, orderBy("createdAt", "desc"));
-    const snap = await getDocs(q);
-    snap.forEach((d) => {
-      existingCandidates.push({ ...(d.data() as any), id: d.id });
-    });
-  } catch (cErr: any) {
-    throw new JournalSyncStageError({
-      stage: "READ_CANDIDATES",
-      collectionName: "journalCandidates",
-      operationType: "list",
-      originalError: cErr,
-      userSummary: "Không đủ quyền đọc danh sách ứng viên trong hàng chờ duyệt",
-      actorUid: user.uid,
-      actorRole: user.email,
-    });
-  }
-
-  // 3. Build candidate diffs
-  let candidatesToCreate: JournalCandidate[] = [];
-  let newCount = 0;
-  let updatedCount = 0;
-  let unchangedCount = 0;
-  let skippedDuplicates = 0;
-  try {
-    const diff = buildJournalCandidatesFromSheet(
-      sheetResult.validJournals,
-      existingJournals,
-      existingCandidates
-    );
-    candidatesToCreate = diff.candidatesToCreate;
-    newCount = diff.newCount;
-    updatedCount = diff.updatedCount;
-    unchangedCount = diff.unchangedCount;
-    skippedDuplicates = diff.skippedDuplicates;
-  } catch (diffErr: any) {
-    throw new JournalSyncStageError({
-      stage: "DIFF_ANALYSIS",
-      collectionName: "in_memory",
-      operationType: "get",
-      originalError: diffErr,
-      userSummary: "Lỗi trong quá trình phân tích và so khớp hồ sơ tạp chí",
-      actorUid: user.uid,
-      actorRole: user.email,
-    });
-  }
-
-  // 4. Write candidates to Firestore with granular per-document diagnostics
-  let writtenCount = 0;
-  const existingMap = new Map(existingCandidates.map((c) => [c.id, c]));
-
-  for (const cand of candidatesToCreate) {
-    const docRef = doc(firestore, "journalCandidates", cand.id);
-    const existing = existingMap.get(cand.id);
-
-    // If candidate already exists in queue, preserve original createdAt & scoreEditHistory
-    const candidatePayload: JournalCandidate = {
-      ...cand,
-      createdAt: existing?.createdAt || cand.createdAt,
-      scoreEditHistory: existing?.scoreEditHistory || cand.scoreEditHistory,
-      updatedAt: new Date().toISOString(),
-    };
-
-    try {
-      await setDoc(docRef, cleanUndefined(candidatePayload));
-      writtenCount++;
-    } catch (writeErr: any) {
-      throw new JournalSyncStageError({
-        stage: "WRITE_CANDIDATE",
-        collectionName: "journalCandidates",
-        documentId: cand.id,
-        operationType: existing ? "update" : "create",
-        originalError: writeErr,
-        userSummary: `Không đủ quyền lưu ứng viên "${cand.name}" (ID: ${cand.journalId}, Trạng thái: ${cand.status}). Đã lưu thành công ${writtenCount}/${candidatesToCreate.length} bản ghi trước khi gặp lỗi.`,
-        actorUid: user.uid,
-        actorRole: user.email,
-      });
-    }
-  }
-
-  // 5. Write audit log entry in journalImports
-  const now = new Date().toISOString();
-  const batchId = `batch_gs_${Date.now()}`;
-  try {
-    const importLog = {
-      batchId,
-      fileName: `Google Sheets IFA-RH: ${effectiveSheetName} (${effectiveSheetId})`,
-      totalParsed: sheetResult.totalRows,
-      createdCount: newCount,
-      updatedCount,
-      skippedCount: skippedDuplicates,
-      errorCount: sheetResult.warnings.length,
-      errors: sheetResult.warnings.map((w: string) => ({ message: w })),
-      importedAt: now,
-      importedBy: user.email || user.uid,
-      schemaVersion: 1,
-      sheetId: effectiveSheetId,
-      sheetName: effectiveSheetName,
-      sourceType: "GOOGLE_SHEETS",
-      createdAt: now,
-    };
-    const logRef = doc(firestore, "journalImports", batchId);
-    await setDoc(logRef, cleanUndefined(importLog));
-  } catch (importErr: any) {
-    console.warn("Lỗi ghi nhật ký journalImports:", importErr);
-    throw new JournalSyncStageError({
-      stage: "WRITE_IMPORT_LOG",
-      collectionName: "journalImports",
-      documentId: batchId,
-      operationType: "create",
-      originalError: importErr,
-      userSummary: `Không đủ quyền ghi lịch sử đồng bộ vào journalImports. (Lưu ý: ${writtenCount} ứng viên đã được đưa vào hàng chờ duyệt thành công).`,
-      actorUid: user.uid,
-      actorRole: user.email,
-    });
-  }
-
-  // 6. Update sync settings in systemConfig/journal_sync
-  try {
-    await saveJournalSyncSettings({
-      sheetId: effectiveSheetId,
-      sheetName: effectiveSheetName,
-      lastSyncedAt: now,
-      lastSyncedBy: user.email || user.uid,
-      lastStats: {
-        totalRead: sheetResult.totalRows,
-        validRows: sheetResult.validJournals.length,
-        newCount,
-        updatedCount,
-        unchangedCount,
-        skippedCount: skippedDuplicates,
-        errorCount: sheetResult.warnings.length,
-      },
-    });
-  } catch (configErr: any) {
-    console.warn("Lỗi ghi cấu hình systemConfig/journal_sync:", configErr);
-    throw new JournalSyncStageError({
-      stage: "WRITE_CONFIG",
-      collectionName: "systemConfig",
-      documentId: "journal_sync",
-      operationType: "update",
-      originalError: configErr,
-      userSummary: `Không đủ quyền cập nhật cấu hình đồng bộ trong systemConfig/journal_sync. (Lưu ý: ${writtenCount} ứng viên đã được đưa vào hàng chờ duyệt thành công).`,
-      actorUid: user.uid,
-      actorRole: user.email,
-    });
-  }
-
-  return {
-    success: true,
-    totalRead: sheetResult.totalRows,
-    newCandidatesCount: newCount,
-    updatedCandidatesCount: updatedCount,
-    unchangedCount,
-    skippedDuplicates,
-    manualReviewCount: sheetResult.manualReviewCount,
-    warnings: sheetResult.warnings,
-    writtenCount,
-    batchId,
-  };
-}
-
-/**
- * Multi-Council HDGSNN Score Sync Engine:
- * Reads the 53-column data from the single public IFA-RH Google Sheet (`1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE`, tab `TAP_CHI`),
- * processes only the multi-council score columns (`AV` to `BA`), performs strict journal identity reconciliation,
- * and queues score-update proposals into `journalCandidates` without overwriting non-score catalog fields.
- */
-export async function syncMultiCouncilScoresFromGoogleSheetsToQueue({
-  sheetId = DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID,
-  sheetName = DEFAULT_MULTI_COUNCIL_SHEET_NAME,
-  user,
-}: {
-  sheetId?: string;
-  sheetName?: string;
-  user: { uid: string; email?: string };
+  onProgress?: (progress: JournalSyncProgress) => void;
 }): Promise<{
   success: boolean;
   totalRead: number;
@@ -506,20 +339,25 @@ export async function syncMultiCouncilScoresFromGoogleSheetsToQueue({
   const effectiveSheetId = sanitizePublicJournalSpreadsheetId(sheetId);
   const effectiveSheetName = sanitizePublicJournalSheetName(sheetName);
   const currentSettings = await getJournalSyncSettings();
-  const previousValidRowCount =
-    currentSettings?.lastMultiCouncilStats?.validRows ||
-    currentSettings?.lastStats?.validRows;
+  const previousValidRowCount = currentSettings?.lastStats?.validRows;
 
-  // 1. Fetch 53-column multi-council rows from the single public IFA-RH Google Sheet
-  let sheetResult: Awaited<ReturnType<typeof fetchMultiCouncilGoogleSheetRows>>;
+  // STAGE 1: Đọc Google Sheets
+  onProgress?.({
+    stage: 1,
+    stageName: "Đọc Google Sheets",
+    percent: 15,
+    message: `Đang kết nối và tải toàn bộ 53 cột từ Google Sheets IFA-RH (${effectiveSheetName})...`,
+  });
+
+  let sheetResult: Awaited<ReturnType<typeof fetchJournalGoogleSheetRows>>;
   try {
-    sheetResult = await fetchMultiCouncilGoogleSheetRows(
+    sheetResult = await fetchJournalGoogleSheetRows(
       effectiveSheetId,
       effectiveSheetName,
       { previousValidRowCount }
     );
     if (!sheetResult || !Array.isArray(sheetResult.validJournals)) {
-      throw new Error("Không có dữ liệu điểm HĐGSNN hợp lệ trả về từ Google Sheets IFA-RH.");
+      throw new Error("Không có dữ liệu hợp lệ trả về từ Google Sheets IFA-RH.");
     }
   } catch (sheetErr: any) {
     throw new JournalSyncStageError({
@@ -527,13 +365,36 @@ export async function syncMultiCouncilScoresFromGoogleSheetsToQueue({
       collectionName: "google_sheets",
       operationType: "get",
       originalError: sheetErr,
-      userSummary: `Lỗi kết nối hoặc đọc bảng điểm HĐGSNN trên Google Sheets IFA-RH (${effectiveSheetName}): ${sheetErr.message || "Không thể đọc dữ liệu"}`,
+      userSummary: `Lỗi kết nối hoặc đọc Google Sheets IFA-RH (${effectiveSheetName}): ${sheetErr.message || "Không thể đọc dữ liệu"}`,
       actorUid: user.uid,
       actorRole: user.email,
     });
   }
 
-  // 2. Fetch existing journals and active candidates
+  // STAGE 2: Kiểm tra dữ liệu (IMPORTRANGE & multi-council JSON)
+  onProgress?.({
+    stage: 2,
+    stageName: "Kiểm tra dữ liệu",
+    percent: 35,
+    message: `Đã đọc ${sheetResult.validJournals.length} hồ sơ. Đang kiểm tra tính toàn vẹn 53 cột và điểm đa Hội đồng...`,
+  });
+
+  const multiCouncilStats = sheetResult.multiCouncilStats || {
+    rowsWithJson: 0,
+    totalCouncilEntries: 0,
+    multiCouncilJournalsCount: 0,
+    diffScoreAcrossCouncilsCount: 0,
+    reconciliationCounts: { HOAN_TAT: 0, CAN_KIEM_TRA: 0, CHUA_XAC_MINH: 0 },
+  };
+
+  // STAGE 3: So sánh Firestore
+  onProgress?.({
+    stage: 3,
+    stageName: "So sánh Firestore",
+    percent: 55,
+    message: "Đang tải danh mục hiện tại và đối soát định danh tạp chí...",
+  });
+
   let existingJournals: Journal[] = [];
   try {
     existingJournals = await fetchJournals({ includeHidden: true });
@@ -569,17 +430,13 @@ export async function syncMultiCouncilScoresFromGoogleSheetsToQueue({
     });
   }
 
-  // 3. Build candidate diffs with strict identity reconciliation and score-only update mode
   let diffResult: ReturnType<typeof buildJournalCandidatesFromSheet>;
   try {
     diffResult = buildJournalCandidatesFromSheet(
       sheetResult.validJournals,
       existingJournals,
       existingCandidates,
-      {
-        forceUpdateMultiCouncil: true,
-        onlyMultiCouncilScoreColumns: true,
-      }
+      { forceUpdateMultiCouncil: true }
     );
   } catch (diffErr: any) {
     throw new JournalSyncStageError({
@@ -587,7 +444,7 @@ export async function syncMultiCouncilScoresFromGoogleSheetsToQueue({
       collectionName: "in_memory",
       operationType: "get",
       originalError: diffErr,
-      userSummary: "Lỗi trong quá trình phân tích điểm HĐGSNN và đối soát định danh tạp chí",
+      userSummary: "Lỗi trong quá trình phân tích và so khớp hồ sơ tạp chí",
       actorUid: user.uid,
       actorRole: user.email,
     });
@@ -597,29 +454,122 @@ export async function syncMultiCouncilScoresFromGoogleSheetsToQueue({
     candidatesToCreate,
     newCount,
     updatedCount,
-    unchangedCount,
     skippedDuplicates,
     identityMatchStats,
   } = diffResult;
+  let unchangedCount = diffResult.unchangedCount;
 
-  // 4. Write candidates to Firestore
+  // STAGE 4: Tạo/cập nhật hàng chờ
+  const totalToWrite = candidatesToCreate.length;
+  onProgress?.({
+    stage: 4,
+    stageName: "Tạo/cập nhật hàng chờ",
+    percent: 70,
+    message:
+      totalToWrite > 0
+        ? `Bắt đầu lưu ${totalToWrite} hồ sơ vào hàng chờ duyệt...`
+        : "Không có thay đổi mới cần cập nhật.",
+    writtenCount: 0,
+    totalCount: totalToWrite,
+  });
+
   let writtenCount = 0;
   const existingMap = new Map(existingCandidates.map((c) => [c.id, c]));
 
-  for (const cand of candidatesToCreate) {
+  for (let idx = 0; idx < candidatesToCreate.length; idx++) {
+    const cand = candidatesToCreate[idx];
     const docRef = doc(firestore, "journalCandidates", cand.id);
     const existing = existingMap.get(cand.id);
 
+    // 1. If candidate exists in Firestore and is identical, skip setDoc
+    if (existing && areCandidateContentsIdentical(existing, cand)) {
+      unchangedCount++;
+      continue;
+    }
+
+    // 2. Build candidate payload while preserving Admin decisions and drafts
+    let effectiveStatus = cand.status;
+    let effectiveRejectionReason = cand.rejectionReason;
+    let effectiveReviewedAt = cand.reviewedAt;
+    let effectiveReviewedBy = cand.reviewedBy;
+    let effectiveDraftSavedAt = cand.draftSavedAt;
+    let effectiveDraftSavedBy = cand.draftSavedBy;
+    let effectiveAdminEditReason = cand.adminEditReason;
+    let effectiveScoreEditHistory =
+      existing?.scoreEditHistory || cand.scoreEditHistory;
+    let effectiveCouncilScores = cand.councilScores;
+    let effectiveMaxScore = cand.maxScore;
+    let effectiveMaxScoreYear = cand.maxScoreYear;
+    let effectiveRecognizedCouncilCount = cand.recognizedCouncilCount;
+    let effectiveIsManualEdited = cand.isManualEdited;
+    let effectiveIsManualPreserved = cand.isManualPreserved;
+
+    if (existing) {
+      // If candidate was previously rejected, preserve rejection
+      if (existing.status === "rejected") {
+        effectiveStatus = "rejected";
+        effectiveRejectionReason = existing.rejectionReason;
+        effectiveReviewedAt = existing.reviewedAt;
+        effectiveReviewedBy = existing.reviewedBy;
+      }
+
+      // If candidate has Admin draft or edits, preserve Admin's edits
+      if (
+        existing.draftSavedAt ||
+        (existing.scoreEditHistory && existing.scoreEditHistory.length > 0) ||
+        existing.adminEditReason ||
+        existing.isManualEdited
+      ) {
+        effectiveDraftSavedAt = existing.draftSavedAt;
+        effectiveDraftSavedBy = existing.draftSavedBy;
+        effectiveAdminEditReason = existing.adminEditReason;
+        effectiveIsManualEdited = existing.isManualEdited;
+        effectiveIsManualPreserved = true;
+        if (existing.councilScores && existing.councilScores.length > 0) {
+          effectiveCouncilScores = existing.councilScores;
+          effectiveMaxScore = existing.maxScore;
+          effectiveMaxScoreYear = existing.maxScoreYear;
+          effectiveRecognizedCouncilCount = existing.recognizedCouncilCount;
+        }
+        if (existing.status && existing.status !== "rejected") {
+          effectiveStatus = existing.status;
+        }
+      }
+    }
+
     const candidatePayload: JournalCandidate = {
       ...cand,
+      status: effectiveStatus,
+      rejectionReason: effectiveRejectionReason,
+      reviewedAt: effectiveReviewedAt,
+      reviewedBy: effectiveReviewedBy,
+      draftSavedAt: effectiveDraftSavedAt,
+      draftSavedBy: effectiveDraftSavedBy,
+      adminEditReason: effectiveAdminEditReason,
+      scoreEditHistory: effectiveScoreEditHistory,
+      councilScores: effectiveCouncilScores,
+      maxScore: effectiveMaxScore,
+      maxScoreYear: effectiveMaxScoreYear,
+      recognizedCouncilCount: effectiveRecognizedCouncilCount,
+      isManualEdited: effectiveIsManualEdited,
+      isManualPreserved: effectiveIsManualPreserved,
       createdAt: existing?.createdAt || cand.createdAt,
-      scoreEditHistory: existing?.scoreEditHistory || cand.scoreEditHistory,
       updatedAt: new Date().toISOString(),
     };
 
     try {
       await setDoc(docRef, cleanUndefined(candidatePayload));
       writtenCount++;
+      if (totalToWrite > 0) {
+        onProgress?.({
+          stage: 4,
+          stageName: "Tạo/cập nhật hàng chờ",
+          percent: 70 + Math.round((writtenCount / totalToWrite) * 20),
+          message: `Đang cập nhật hàng chờ duyệt: ${writtenCount}/${totalToWrite} hồ sơ...`,
+          writtenCount,
+          totalCount: totalToWrite,
+        });
+      }
     } catch (writeErr: any) {
       throw new JournalSyncStageError({
         stage: "WRITE_CANDIDATE",
@@ -627,20 +577,27 @@ export async function syncMultiCouncilScoresFromGoogleSheetsToQueue({
         documentId: cand.id,
         operationType: existing ? "update" : "create",
         originalError: writeErr,
-        userSummary: `Không đủ quyền lưu ứng viên điểm HĐGSNN "${cand.name}" (ID: ${cand.journalId}). Đã lưu ${writtenCount}/${candidatesToCreate.length} bản ghi.`,
+        userSummary: `Không đủ quyền lưu ứng viên "${cand.name}" (ID: ${cand.journalId}, Trạng thái: ${cand.status}). Đã lưu thành công ${writtenCount}/${candidatesToCreate.length} bản ghi trước khi gặp lỗi.`,
         actorUid: user.uid,
         actorRole: user.email,
       });
     }
   }
 
-  // 5. Write audit log entry in journalImports
+  // STAGE 5: Hoàn tất
+  onProgress?.({
+    stage: 5,
+    stageName: "Hoàn tất",
+    percent: 92,
+    message: "Đang lưu lịch sử kiểm toán và cập nhật cấu hình hệ thống...",
+  });
+
   const now = new Date().toISOString();
-  const batchId = `batch_hdgsnn_${Date.now()}`;
+  const batchId = `batch_gs_${Date.now()}`;
   try {
     const importLog = {
       batchId,
-      fileName: `HDGSNN Multi-Council: ${sheetResult.sourceSheetName} (${sheetResult.sourceSpreadsheetId})`,
+      fileName: `Google Sheets IFA-RH: ${effectiveSheetName} (${effectiveSheetId})`,
       totalParsed: sheetResult.totalRows,
       createdCount: newCount,
       updatedCount,
@@ -650,32 +607,42 @@ export async function syncMultiCouncilScoresFromGoogleSheetsToQueue({
       importedAt: now,
       importedBy: user.email || user.uid,
       schemaVersion: 2,
-      sheetId: sheetResult.sourceSpreadsheetId,
-      sheetName: sheetResult.sourceSheetName,
-      sourceType: "GOOGLE_SHEETS_HDGSNN",
+      sheetId: effectiveSheetId,
+      sheetName: effectiveSheetName,
+      sourceType: "GOOGLE_SHEETS",
       createdAt: now,
     };
     const logRef = doc(firestore, "journalImports", batchId);
     await setDoc(logRef, cleanUndefined(importLog));
   } catch (importErr: any) {
-    console.warn("Lỗi ghi nhật ký journalImports (HDGSNN):", importErr);
+    console.warn("Lỗi ghi nhật ký journalImports:", importErr);
     throw new JournalSyncStageError({
       stage: "WRITE_IMPORT_LOG",
       collectionName: "journalImports",
       documentId: batchId,
       operationType: "create",
       originalError: importErr,
-      userSummary: `Không đủ quyền ghi lịch sử cập nhật điểm HĐGSNN vào journalImports. (Lưu ý: ${writtenCount} ứng viên đã được đưa vào hàng chờ duyệt thành công).`,
+      userSummary: `Không đủ quyền ghi lịch sử đồng bộ vào journalImports. (Lưu ý: ${writtenCount} ứng viên đã được đưa vào hàng chờ duyệt thành công).`,
       actorUid: user.uid,
       actorRole: user.email,
     });
   }
 
-  // 6. Update sync settings in systemConfig/journal_sync
   try {
     await saveJournalSyncSettings({
-      multiCouncilSheetId: effectiveSheetId,
-      multiCouncilSheetName: effectiveSheetName,
+      sheetId: effectiveSheetId,
+      sheetName: effectiveSheetName,
+      lastSyncedAt: now,
+      lastSyncedBy: user.email || user.uid,
+      lastStats: {
+        totalRead: sheetResult.totalRows,
+        validRows: sheetResult.validJournals.length,
+        newCount,
+        updatedCount,
+        unchangedCount,
+        skippedCount: skippedDuplicates,
+        errorCount: sheetResult.warnings.length,
+      },
       lastMultiCouncilSyncedAt: now,
       lastMultiCouncilSyncedBy: user.email || user.uid,
       lastMultiCouncilStats: {
@@ -685,24 +652,31 @@ export async function syncMultiCouncilScoresFromGoogleSheetsToQueue({
         ambiguousCount: identityMatchStats.ambiguousCount,
         unmatchedCount: identityMatchStats.unmatchedCount,
         conflictCount: identityMatchStats.conflictCount,
-        newCouncilRecordsCount: sheetResult.multiCouncilStats.totalCouncilEntries,
+        newCouncilRecordsCount: multiCouncilStats.totalCouncilEntries,
         updatedCouncilRecordsCount: updatedCount,
         needsReviewCount: sheetResult.manualReviewCount,
       },
     });
   } catch (configErr: any) {
-    console.warn("Lỗi ghi cấu hình systemConfig/journal_sync (HDGSNN):", configErr);
+    console.warn("Lỗi ghi cấu hình systemConfig/journal_sync:", configErr);
     throw new JournalSyncStageError({
       stage: "WRITE_CONFIG",
       collectionName: "systemConfig",
       documentId: "journal_sync",
       operationType: "update",
       originalError: configErr,
-      userSummary: `Không đủ quyền cập nhật cấu hình đồng bộ HĐGSNN trong systemConfig/journal_sync.`,
+      userSummary: `Không đủ quyền cập nhật cấu hình đồng bộ trong systemConfig/journal_sync. (Lưu ý: ${writtenCount} ứng viên đã được đưa vào hàng chờ duyệt thành công).`,
       actorUid: user.uid,
       actorRole: user.email,
     });
   }
+
+  onProgress?.({
+    stage: 5,
+    stageName: "Hoàn tất",
+    percent: 100,
+    message: "Đồng bộ toàn bộ 53 cột Google Sheets thành công!",
+  });
 
   return {
     success: true,
@@ -715,12 +689,24 @@ export async function syncMultiCouncilScoresFromGoogleSheetsToQueue({
     warnings: sheetResult.warnings,
     writtenCount,
     batchId,
-    sourceSpreadsheetId: sheetResult.sourceSpreadsheetId,
-    sourceSheetName: sheetResult.sourceSheetName,
-    usedFallbackCatalogSheet: sheetResult.usedFallbackCatalogSheet,
-    multiCouncilStats: sheetResult.multiCouncilStats,
+    sourceSpreadsheetId: effectiveSheetId,
+    sourceSheetName: effectiveSheetName,
+    usedFallbackCatalogSheet: Boolean(sheetResult.usedFallbackCatalogSheet),
+    multiCouncilStats,
     identityMatchStats,
   };
+}
+
+/**
+ * Backward compatibility alias: forwards to unified syncJournalsFromGoogleSheetsToQueue.
+ */
+export async function syncMultiCouncilScoresFromGoogleSheetsToQueue(params: {
+  sheetId?: string;
+  sheetName?: string;
+  user: { uid: string; email?: string };
+  onProgress?: (progress: JournalSyncProgress) => void;
+}) {
+  return syncJournalsFromGoogleSheetsToQueue(params);
 }
 
 /**

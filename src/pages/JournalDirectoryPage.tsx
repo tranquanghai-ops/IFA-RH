@@ -23,8 +23,8 @@ import {
   saveJournalCandidateDraft,
   getJournalSyncSettings,
   syncJournalsFromGoogleSheetsToQueue,
-  syncMultiCouncilScoresFromGoogleSheetsToQueue,
   JournalSyncStageError,
+  type JournalSyncProgress,
 } from "../services/journalCandidateService";
 import {
   DEFAULT_JOURNAL_SPREADSHEET_ID,
@@ -138,7 +138,7 @@ export const JournalDirectoryPage: React.FC = () => {
 
   // Direct sync & source configuration state
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [isSyncingMultiCouncil, setIsSyncingMultiCouncil] = useState<boolean>(false);
+  const [syncProgress, setSyncProgress] = useState<JournalSyncProgress | null>(null);
   const [isConfigSourceOpen, setIsConfigSourceOpen] = useState<boolean>(false);
   const [isSyncResultOpen, setIsSyncResultOpen] = useState<boolean>(false);
   const [syncResultData, setSyncResultData] = useState<JournalSyncResultData | null>(null);
@@ -380,10 +380,16 @@ export const JournalDirectoryPage: React.FC = () => {
     await setJournalStatus(journal.id, nextStatus, { uid: user.uid, email: user.email || "" });
   };
 
-  // Primary Action: Direct Google Sheets Catalog Synchronization
+  // Primary Action: Unified Google Sheets Catalog & Multi-Council Synchronization (53 columns)
   const handleDirectSync = async () => {
-    if (!user || isSyncing || isSyncingMultiCouncil) return;
+    if (!user || isSyncing) return;
     setIsSyncing(true);
+    setSyncProgress({
+      stage: 1,
+      stageName: "Đọc Google Sheets",
+      percent: 10,
+      message: "Đang kết nối đến Google Sheets IFA-RH...",
+    });
     setSyncErrorData(null);
     setSyncResultData(null);
 
@@ -396,6 +402,7 @@ export const JournalDirectoryPage: React.FC = () => {
         sheetId,
         sheetName,
         user: { uid: user.uid, email: user.email || "" },
+        onProgress: (p) => setSyncProgress(p),
       });
 
       const refreshedSettings = await getJournalSyncSettings();
@@ -403,63 +410,6 @@ export const JournalDirectoryPage: React.FC = () => {
 
       setSyncResultData({
         syncMode: "catalog",
-        totalRead: res.totalRead,
-        newCandidatesCount: res.newCandidatesCount,
-        updatedCandidatesCount: res.updatedCandidatesCount,
-        unchangedCount: res.unchangedCount,
-        skippedDuplicates: res.skippedDuplicates,
-        manualReviewCount: res.manualReviewCount,
-        warnings: res.warnings,
-        batchId: res.batchId,
-        sourceSpreadsheetId: sheetId,
-        sourceSheetName: sheetName,
-      });
-      setIsSyncResultOpen(true);
-    } catch (err: any) {
-      if (err instanceof JournalSyncStageError) {
-        setSyncErrorData({
-          message: err.message,
-          stage: err.stage,
-          collectionName: err.collectionName,
-          operationType: err.operationType,
-          userSummary: err.userSummary,
-          documentId: err.documentId,
-        });
-      } else {
-        setSyncErrorData({
-          message: err.message || "Đồng bộ Google Sheets thất bại.",
-          userSummary: "Lỗi kết nối hoặc đọc dữ liệu từ Google Sheets IFA-RH",
-        });
-      }
-      setIsSyncResultOpen(true);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  // Secondary Action: Multi-Council HDGSNN Scores Sync ("Cập nhật điểm HĐGSNN")
-  const handleMultiCouncilScoreSync = async () => {
-    if (!user || isSyncing || isSyncingMultiCouncil) return;
-    setIsSyncingMultiCouncil(true);
-    setSyncErrorData(null);
-    setSyncResultData(null);
-
-    try {
-      const savedSettings = await getJournalSyncSettings();
-      const sheetId = savedSettings?.sheetId || DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID;
-      const sheetName = savedSettings?.sheetName || DEFAULT_MULTI_COUNCIL_SHEET_NAME;
-
-      const res = await syncMultiCouncilScoresFromGoogleSheetsToQueue({
-        sheetId,
-        sheetName,
-        user: { uid: user.uid, email: user.email || "" },
-      });
-
-      const refreshedSettings = await getJournalSyncSettings();
-      if (refreshedSettings) setSyncSettings(refreshedSettings);
-
-      setSyncResultData({
-        syncMode: "multi_council",
         totalRead: res.totalRead,
         newCandidatesCount: res.newCandidatesCount,
         updatedCandidatesCount: res.updatedCandidatesCount,
@@ -487,13 +437,14 @@ export const JournalDirectoryPage: React.FC = () => {
         });
       } else {
         setSyncErrorData({
-          message: err.message || "Cập nhật điểm HĐGSNN thất bại.",
-          userSummary: "Lỗi kết nối hoặc đọc dữ liệu điểm HĐGSNN từ Google Sheets IFA-RH",
+          message: err.message || "Đồng bộ Google Sheets thất bại.",
+          userSummary: "Lỗi kết nối hoặc đọc dữ liệu từ Google Sheets IFA-RH",
         });
       }
       setIsSyncResultOpen(true);
     } finally {
-      setIsSyncingMultiCouncil(false);
+      setIsSyncing(false);
+      setSyncProgress(null);
     }
   };
 
@@ -526,10 +477,10 @@ export const JournalDirectoryPage: React.FC = () => {
         {/* Admin Action Toolbar */}
         {isAdmin && (
           <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-            {/* Primary Action: Direct Catalog Sync */}
+            {/* Unified 53-Column Sync: Catalog & Multi-Council HDGSNN Scores */}
             <button
               onClick={handleDirectSync}
-              disabled={isSyncing || isSyncingMultiCouncil}
+              disabled={isSyncing}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -542,12 +493,12 @@ export const JournalDirectoryPage: React.FC = () => {
                 color: "#ffffff",
                 fontSize: "0.86rem",
                 fontWeight: 600,
-                cursor: isSyncing || isSyncingMultiCouncil ? "not-allowed" : "pointer",
-                opacity: isSyncing || isSyncingMultiCouncil ? 0.75 : 1,
+                cursor: isSyncing ? "not-allowed" : "pointer",
+                opacity: isSyncing ? 0.85 : 1,
                 boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
                 transition: "all 0.15s ease",
               }}
-              title="Đồng bộ danh mục tạp chí từ Google Sheets IFA-RH vào Hàng chờ duyệt"
+              title="Đồng bộ toàn bộ 53 cột danh mục tạp chí và điểm đa Hội đồng từ Google Sheets IFA-RH vào Hàng chờ duyệt"
             >
               <RefreshCw
                 size={15}
@@ -555,40 +506,12 @@ export const JournalDirectoryPage: React.FC = () => {
                   animation: isSyncing ? "spin 1s linear infinite" : undefined,
                 }}
               />
-              <span>{isSyncing ? "Đang đồng bộ..." : "Đồng bộ Google Sheets"}</span>
-            </button>
-
-            {/* Secondary Action: Update Multi-Council HDGSNN Scores */}
-            <button
-              onClick={handleMultiCouncilScoreSync}
-              disabled={isSyncing || isSyncingMultiCouncil}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "7px",
-                height: "38px",
-                padding: "0 15px",
-                backgroundColor: "#eff6ff",
-                border: "1px solid #93c5fd",
-                borderRadius: "6px",
-                color: "#1e3a8a",
-                fontSize: "0.86rem",
-                fontWeight: 700,
-                cursor: isSyncing || isSyncingMultiCouncil ? "not-allowed" : "pointer",
-                opacity: isSyncing || isSyncingMultiCouncil ? 0.75 : 1,
-                boxShadow: "0 1px 2px rgba(0, 0, 0, 0.04)",
-                transition: "all 0.15s ease",
-              }}
-              title="Cập nhật các cột điểm đa Hội đồng (AV:BA) từ Google Sheets IFA-RH vào Hàng chờ duyệt"
-            >
-              <Layers
-                size={15}
-                style={{
-                  animation: isSyncingMultiCouncil ? "spin 1s linear infinite" : undefined,
-                }}
-              />
               <span>
-                {isSyncingMultiCouncil ? "Đang nạp điểm HĐGSNN..." : "Cập nhật điểm HĐGSNN"}
+                {isSyncing
+                  ? syncProgress
+                    ? `${syncProgress.stageName} (${syncProgress.percent}%)`
+                    : "Đang đồng bộ..."
+                  : "Đồng bộ Google Sheets"}
               </span>
             </button>
 
@@ -643,6 +566,61 @@ export const JournalDirectoryPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Real-time 5-stage sync progress indicator */}
+      {isAdmin && isSyncing && syncProgress && (
+        <div
+          style={{
+            marginBottom: "16px",
+            padding: "14px 18px",
+            backgroundColor: "#eff6ff",
+            border: "1px solid #bfdbfe",
+            borderRadius: "8px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "8px",
+            boxShadow: "0 2px 4px rgba(37, 99, 235, 0.06)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              fontSize: "0.85rem",
+              fontWeight: 700,
+              color: "#1e40af",
+            }}
+          >
+            <span>
+              Giai đoạn {syncProgress.stage}/5: {syncProgress.stageName}
+            </span>
+            <span style={{ fontFamily: "monospace" }}>{syncProgress.percent}%</span>
+          </div>
+          <div
+            style={{
+              width: "100%",
+              height: "6px",
+              backgroundColor: "#dbeafe",
+              borderRadius: "3px",
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                width: `${syncProgress.percent}%`,
+                height: "100%",
+                backgroundColor: "#2563eb",
+                borderRadius: "3px",
+                transition: "width 0.3s ease",
+              }}
+            />
+          </div>
+          <div style={{ fontSize: "0.82rem", color: "#1e3a8a" }}>
+            {syncProgress.message}
+          </div>
+        </div>
+      )}
 
       {/* Admin Sync Status Bar (Requirement 6: Nguồn dữ liệu: Google Sheets IFA-RH) */}
       {isAdmin && (
@@ -1802,11 +1780,7 @@ export const JournalDirectoryPage: React.FC = () => {
           setAdminViewMode("queue");
           setCandidateFilterTab("pending");
         }}
-        onRetry={
-          syncResultData?.syncMode === "multi_council"
-            ? handleMultiCouncilScoreSync
-            : handleDirectSync
-        }
+        onRetry={handleDirectSync}
       />
 
       {candidateForReview && user && (

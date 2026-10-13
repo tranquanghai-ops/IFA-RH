@@ -811,32 +811,12 @@ service cloud.firestore {
         (validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
         validString(data.createdBy, 1, 100) &&
         (!('id' in data) || validString(data.id, 0, 100)) &&
-        (!('englishName' in data) || validString(data.englishName, 0, 300)) &&
-        (!('abbreviation' in data) || validString(data.abbreviation, 0, 50)) &&
-        (!('hostAgency' in data) || validString(data.hostAgency, 0, 300)) &&
-        (!('nameHistory' in data) || validString(data.nameHistory, 0, 1000)) &&
-        (!('issnPrint' in data) || validString(data.issnPrint, 0, 50)) &&
-        (!('issnOnline' in data) || validString(data.issnOnline, 0, 50)) &&
-        (!('isbn' in data) || validString(data.isbn, 0, 50)) &&
-        (!('fields' in data) || (data.fields is list && data.fields.size() <= 50)) &&
-        (!('website' in data) || validString(data.website, 0, 500)) &&
-        (!('websiteVerified' in data) || data.websiteVerified is bool) &&
         (!('maxScore' in data) || data.maxScore == null || (data.maxScore is number && data.maxScore >= 0 && data.maxScore <= 10)) &&
-        (!('maxScoreYear' in data) || data.maxScoreYear == null || ((data.maxScoreYear is int || data.maxScoreYear is number) && data.maxScoreYear >= 1900 && data.maxScoreYear <= 2100)) &&
         (!('scores' in data) || (data.scores is list && data.scores.size() <= 100)) &&
         (!('councilScores' in data) || (data.councilScores is list && data.councilScores.size() <= 100)) &&
-        (!('recognizedCouncilCount' in data) || (data.recognizedCouncilCount is int || data.recognizedCouncilCount is number)) &&
-        (!('verifiedCouncils' in data) || (data.verifiedCouncils is list && data.verifiedCouncils.size() <= 50)) &&
-        (!('decisionYear' in data) || data.decisionYear is int || data.decisionYear is number || validString(data.decisionYear, 0, 50)) &&
-        (!('scoreReconciliationStatus' in data) || data.scoreReconciliationStatus in ['HOAN_TAT', 'CAN_KIEM_TRA', 'CHUA_XAC_MINH']) &&
-        (!('scoreSourceNote' in data) || validString(data.scoreSourceNote, 0, 2000)) &&
-        (!('scoreEditHistory' in data) || (data.scoreEditHistory is list && data.scoreEditHistory.size() <= 100)) &&
-        (!('guidelines' in data) || data.guidelines is map) &&
         (!('links' in data) || (data.links is list && data.links.size() <= 50)) &&
-        (!('verification' in data) || data.verification is map) &&
-        (!('lastImportedAt' in data) || validString(data.lastImportedAt, 0, 50) || data.lastImportedAt is timestamp) &&
-        (!('lastImportBatch' in data) || validString(data.lastImportBatch, 0, 100)) &&
-        (!('updatedBy' in data) || validString(data.updatedBy, 0, 100));
+        (!('guidelines' in data) || data.guidelines is map) &&
+        (!('verification' in data) || data.verification is map);
     }
 
     // Validates journalImports/{importId} schema and constraints
@@ -894,50 +874,13 @@ service cloud.firestore {
         (validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
         (validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
         (!('id' in data) || validString(data.id, 0, 100)) &&
-        (!('englishName' in data) || validString(data.englishName, 0, 300)) &&
-        (!('abbreviation' in data) || validString(data.abbreviation, 0, 50)) &&
-        (!('hostAgency' in data) || validString(data.hostAgency, 0, 300)) &&
-        (!('nameHistory' in data) || validString(data.nameHistory, 0, 1000)) &&
-        (!('issnPrint' in data) || validString(data.issnPrint, 0, 50)) &&
-        (!('issnOnline' in data) || validString(data.issnOnline, 0, 50)) &&
-        (!('isbn' in data) || validString(data.isbn, 0, 50)) &&
-        (!('fields' in data) || (data.fields is list && data.fields.size() <= 50)) &&
-        (!('website' in data) || validString(data.website, 0, 500)) &&
-        (!('websiteVerified' in data) || data.websiteVerified is bool) &&
         (!('maxScore' in data) || data.maxScore == null || (data.maxScore is number && data.maxScore >= 0 && data.maxScore <= 10)) &&
-        (!('maxScoreYear' in data) || data.maxScoreYear == null || ((data.maxScoreYear is int || data.maxScoreYear is number) && data.maxScoreYear >= 1900 && data.maxScoreYear <= 2100)) &&
         (!('scores' in data) || (data.scores is list && data.scores.size() <= 100)) &&
         (!('councilScores' in data) || (data.councilScores is list && data.councilScores.size() <= 100)) &&
-        (!('recognizedCouncilCount' in data) || (data.recognizedCouncilCount is int || data.recognizedCouncilCount is number)) &&
-        (!('verifiedCouncils' in data) || (data.verifiedCouncils is list && data.verifiedCouncils.size() <= 50)) &&
-        (!('decisionYear' in data) || data.decisionYear is int || data.decisionYear is number || validString(data.decisionYear, 0, 50)) &&
-        (!('scoreReconciliationStatus' in data) || data.scoreReconciliationStatus in ['HOAN_TAT', 'CAN_KIEM_TRA', 'CHUA_XAC_MINH']) &&
-        (!('scoreSourceNote' in data) || validString(data.scoreSourceNote, 0, 2000)) &&
-        (!('scoreEditHistory' in data) || (data.scoreEditHistory is list && data.scoreEditHistory.size() <= 100)) &&
-        (!('identityMatchStatus' in data) || data.identityMatchStatus in ['MATCHED', 'AMBIGUOUS', 'UNMATCHED', 'CONFLICT']) &&
-        (!('identityMatchMethod' in data) || validString(data.identityMatchMethod, 0, 100)) &&
-        (!('identityMatchNotes' in data) || validString(data.identityMatchNotes, 0, 1000)) &&
-        (!('newScoresCount' in data) || (data.newScoresCount is int || data.newScoresCount is number)) &&
-        (!('changedScoresCount' in data) || (data.changedScoresCount is int || data.changedScoresCount is number)) &&
-        (!('draftSavedAt' in data) || validString(data.draftSavedAt, 0, 50) || data.draftSavedAt is timestamp) &&
-        (!('draftSavedBy' in data) || validString(data.draftSavedBy, 0, 100)) &&
-        (!('adminEditReason' in data) || validString(data.adminEditReason, 0, 1000)) &&
-        (!('guidelines' in data) || data.guidelines is map) &&
-        (!('links' in data) || (data.links is list && data.links.size() <= 50)) &&
-        (!('verification' in data) || data.verification is map) &&
-        (!('existingJournalId' in data) || validString(data.existingJournalId, 0, 100)) &&
         (!('diffSummary' in data) || (data.diffSummary is list && data.diffSummary.size() <= 50)) &&
-        (!('rejectionReason' in data) || validString(data.rejectionReason, 0, 1000)) &&
-        (!('isManualPreserved' in data) || data.isManualPreserved is bool) &&
-        (!('isManualEdited' in data) || data.isManualEdited is bool) &&
-        (!('manualReviewNeeded' in data) || data.manualReviewNeeded is bool) &&
-        (!('manualReviewReason' in data) || validString(data.manualReviewReason, 0, 1000)) &&
-        (!('confidenceLevel' in data) || validString(data.confidenceLevel, 0, 50)) &&
-        (!('unverifiedFields' in data) || (data.unverifiedFields is list && data.unverifiedFields.size() <= 50)) &&
-        (!('sheetRowIndex' in data) || (data.sheetRowIndex is int || data.sheetRowIndex is number || data.sheetRowIndex is string)) &&
-        (!('reviewedAt' in data) || validString(data.reviewedAt, 0, 50) || data.reviewedAt is timestamp) &&
-        (!('reviewedBy' in data) || validString(data.reviewedBy, 0, 100)) &&
-        (!('publishedJournalId' in data) || validString(data.publishedJournalId, 0, 100));
+        (!('links' in data) || (data.links is list && data.links.size() <= 50)) &&
+        (!('guidelines' in data) || data.guidelines is map) &&
+        (!('verification' in data) || data.verification is map);
     }
 
     // ===============================================================
