@@ -156,8 +156,8 @@ export const JournalSyncResultModal: React.FC<JournalSyncResultModalProps> = ({
                 }}
               >
                 {isSuccess
-                  ? "Dữ liệu đã được nạp an toàn vào Hàng chờ duyệt"
-                  : "Chẩn đoán chi tiết theo giai đoạn hệ thống"}
+                  ? "Nguồn dữ liệu: Google Sheets IFA-RH • Đã nạp an toàn vào Hàng chờ duyệt"
+                  : "Nguồn dữ liệu: Google Sheets IFA-RH • Chẩn đoán chi tiết theo giai đoạn hệ thống"}
               </p>
             </div>
           </div>

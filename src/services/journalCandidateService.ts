@@ -23,6 +23,8 @@ import {
   fetchMultiCouncilGoogleSheetRows,
   buildJournalCandidatesFromSheet,
   buildCouncilScoreCompositeKey,
+  sanitizePublicJournalSpreadsheetId,
+  sanitizePublicJournalSheetName,
   DEFAULT_JOURNAL_SHEET_NAME,
   DEFAULT_JOURNAL_SPREADSHEET_ID,
   DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID,
@@ -173,19 +175,50 @@ export class JournalSyncStageError extends Error {
 export async function saveJournalSyncSettings(
   settings: Partial<JournalSyncSettings>
 ): Promise<void> {
+  const sanitized: Partial<JournalSyncSettings> = {
+    ...settings,
+    ...(settings.sheetId !== undefined
+      ? { sheetId: sanitizePublicJournalSpreadsheetId(settings.sheetId) }
+      : {}),
+    ...(settings.sheetName !== undefined
+      ? { sheetName: sanitizePublicJournalSheetName(settings.sheetName) }
+      : {}),
+    ...(settings.multiCouncilSheetId !== undefined
+      ? {
+          multiCouncilSheetId: sanitizePublicJournalSpreadsheetId(
+            settings.multiCouncilSheetId
+          ),
+        }
+      : {}),
+    ...(settings.multiCouncilSheetName !== undefined
+      ? {
+          multiCouncilSheetName: sanitizePublicJournalSheetName(
+            settings.multiCouncilSheetName
+          ),
+        }
+      : {}),
+  };
   const docRef = doc(firestore, "systemConfig", "journal_sync");
-  await setDoc(docRef, cleanUndefined(settings), { merge: true });
+  await setDoc(docRef, cleanUndefined(sanitized), { merge: true });
 }
 
 /**
- * Get Google Sheets sync settings.
+ * Get Google Sheets sync settings, automatically redirecting any legacy private
+ * Spark spreadsheet ID to the single public IFA-RH Google Sheet.
  */
 export async function getJournalSyncSettings(): Promise<JournalSyncSettings | null> {
   try {
     const docRef = doc(firestore, "systemConfig", "journal_sync");
     const snap = await getDoc(docRef);
     if (!snap.exists()) return null;
-    return snap.data() as JournalSyncSettings;
+    const raw = snap.data() as JournalSyncSettings;
+    return {
+      ...raw,
+      sheetId: sanitizePublicJournalSpreadsheetId(raw.sheetId),
+      sheetName: sanitizePublicJournalSheetName(raw.sheetName),
+      multiCouncilSheetId: sanitizePublicJournalSpreadsheetId(raw.multiCouncilSheetId),
+      multiCouncilSheetName: sanitizePublicJournalSheetName(raw.multiCouncilSheetName),
+    };
   } catch (error) {
     console.warn("getJournalSyncSettings error:", error);
     return null;
@@ -216,15 +249,21 @@ export async function syncJournalsFromGoogleSheetsToQueue({
   writtenCount: number;
   batchId?: string;
 }> {
-  const effectiveSheetId = sheetId || DEFAULT_JOURNAL_SPREADSHEET_ID;
-  const effectiveSheetName = sheetName || DEFAULT_JOURNAL_SHEET_NAME;
+  const effectiveSheetId = sanitizePublicJournalSpreadsheetId(sheetId);
+  const effectiveSheetName = sanitizePublicJournalSheetName(sheetName);
+  const currentSettings = await getJournalSyncSettings();
+  const previousValidRowCount = currentSettings?.lastStats?.validRows;
 
-  // 1. Fetch rows from Google Sheets
+  // 1. Fetch rows from Google Sheets IFA-RH
   let sheetResult: any;
   try {
-    sheetResult = await fetchJournalGoogleSheetRows(effectiveSheetId, effectiveSheetName);
+    sheetResult = await fetchJournalGoogleSheetRows(
+      effectiveSheetId,
+      effectiveSheetName,
+      { previousValidRowCount }
+    );
     if (!sheetResult || !Array.isArray(sheetResult.validJournals)) {
-      throw new Error("Không có dữ liệu hợp lệ trả về từ Google Sheets.");
+      throw new Error("Không có dữ liệu hợp lệ trả về từ Google Sheets IFA-RH.");
     }
   } catch (sheetErr: any) {
     throw new JournalSyncStageError({
@@ -232,7 +271,7 @@ export async function syncJournalsFromGoogleSheetsToQueue({
       collectionName: "google_sheets",
       operationType: "get",
       originalError: sheetErr,
-      userSummary: `Lỗi kết nối hoặc đọc Google Sheets (${effectiveSheetName}): ${sheetErr.message || "Không thể đọc dữ liệu"}`,
+      userSummary: `Lỗi kết nối hoặc đọc Google Sheets IFA-RH (${effectiveSheetName}): ${sheetErr.message || "Không thể đọc dữ liệu"}`,
       actorUid: user.uid,
       actorRole: user.email,
     });
@@ -342,7 +381,7 @@ export async function syncJournalsFromGoogleSheetsToQueue({
   try {
     const importLog = {
       batchId,
-      fileName: `Google Sheets: ${effectiveSheetName} (${effectiveSheetId})`,
+      fileName: `Google Sheets IFA-RH: ${effectiveSheetName} (${effectiveSheetId})`,
       totalParsed: sheetResult.totalRows,
       createdCount: newCount,
       updatedCount,
@@ -420,9 +459,9 @@ export async function syncJournalsFromGoogleSheetsToQueue({
 
 /**
  * Multi-Council HDGSNN Score Sync Engine:
- * Reads the 53-column Spark multi-council spreadsheet (or fallback catalog sheet if Sheet 2 is private),
- * performs strict journal identity reconciliation (MATCHED, AMBIGUOUS, UNMATCHED, CONFLICT),
- * and queues candidates into `journalCandidates` for Admin review and approval.
+ * Reads the 53-column data from the single public IFA-RH Google Sheet (`1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE`, tab `TAP_CHI`),
+ * processes only the multi-council score columns (`AV` to `BA`), performs strict journal identity reconciliation,
+ * and queues score-update proposals into `journalCandidates` without overwriting non-score catalog fields.
  */
 export async function syncMultiCouncilScoresFromGoogleSheetsToQueue({
   sheetId = DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID,
@@ -464,19 +503,23 @@ export async function syncMultiCouncilScoresFromGoogleSheetsToQueue({
     conflictCount: number;
   };
 }> {
-  const effectiveSheetId = sheetId || DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID;
-  const effectiveSheetName = sheetName || DEFAULT_MULTI_COUNCIL_SHEET_NAME;
+  const effectiveSheetId = sanitizePublicJournalSpreadsheetId(sheetId);
+  const effectiveSheetName = sanitizePublicJournalSheetName(sheetName);
+  const currentSettings = await getJournalSyncSettings();
+  const previousValidRowCount =
+    currentSettings?.lastMultiCouncilStats?.validRows ||
+    currentSettings?.lastStats?.validRows;
 
-  // 1. Fetch 53-column multi-council rows
+  // 1. Fetch 53-column multi-council rows from the single public IFA-RH Google Sheet
   let sheetResult: Awaited<ReturnType<typeof fetchMultiCouncilGoogleSheetRows>>;
   try {
     sheetResult = await fetchMultiCouncilGoogleSheetRows(
       effectiveSheetId,
       effectiveSheetName,
-      { allowFallbackToCatalogSheet: true }
+      { previousValidRowCount }
     );
     if (!sheetResult || !Array.isArray(sheetResult.validJournals)) {
-      throw new Error("Không có dữ liệu điểm HĐGSNN hợp lệ trả về từ Google Sheets.");
+      throw new Error("Không có dữ liệu điểm HĐGSNN hợp lệ trả về từ Google Sheets IFA-RH.");
     }
   } catch (sheetErr: any) {
     throw new JournalSyncStageError({
@@ -484,7 +527,7 @@ export async function syncMultiCouncilScoresFromGoogleSheetsToQueue({
       collectionName: "google_sheets",
       operationType: "get",
       originalError: sheetErr,
-      userSummary: `Lỗi kết nối hoặc đọc bảng điểm HĐGSNN (${effectiveSheetName}): ${sheetErr.message || "Không thể đọc dữ liệu"}`,
+      userSummary: `Lỗi kết nối hoặc đọc bảng điểm HĐGSNN trên Google Sheets IFA-RH (${effectiveSheetName}): ${sheetErr.message || "Không thể đọc dữ liệu"}`,
       actorUid: user.uid,
       actorRole: user.email,
     });
@@ -526,14 +569,17 @@ export async function syncMultiCouncilScoresFromGoogleSheetsToQueue({
     });
   }
 
-  // 3. Build candidate diffs with strict identity reconciliation
+  // 3. Build candidate diffs with strict identity reconciliation and score-only update mode
   let diffResult: ReturnType<typeof buildJournalCandidatesFromSheet>;
   try {
     diffResult = buildJournalCandidatesFromSheet(
       sheetResult.validJournals,
       existingJournals,
       existingCandidates,
-      { forceUpdateMultiCouncil: true }
+      {
+        forceUpdateMultiCouncil: true,
+        onlyMultiCouncilScoreColumns: true,
+      }
     );
   } catch (diffErr: any) {
     throw new JournalSyncStageError({

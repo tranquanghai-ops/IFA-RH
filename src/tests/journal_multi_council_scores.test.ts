@@ -4,6 +4,14 @@ import {
   parseNullableScoreNumber,
   matchJournalIdentity,
   fetchJournalGoogleSheetRows,
+  fetchMultiCouncilGoogleSheetRows,
+  buildJournalCandidatesFromSheet,
+  sanitizePublicJournalSpreadsheetId,
+  sanitizePublicJournalSheetName,
+  DEFAULT_JOURNAL_SPREADSHEET_ID,
+  DEFAULT_JOURNAL_SHEET_NAME,
+  DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID,
+  DEFAULT_MULTI_COUNCIL_SHEET_NAME,
   OFFICIAL_HDGSNN_COUNCILS,
 } from "../services/journalGoogleSheetService";
 import {
@@ -474,5 +482,226 @@ describe("Multi-Council HĐGSNN Journal Scores & Reconciliation (12 Required Sce
     const existingAfterReject = [...existingScores];
     expect(existingAfterReject.length).toBe(1);
     expect(existingAfterReject[0].maxScore).toBe(0.5);
+  });
+
+  // 13. Kiến trúc 1 nguồn Google Sheets duy nhất (không gửi bất kỳ request nào tới Sheet Spark) & đọc 96/96 JSON
+  it("13. chỉ đọc duy nhất từ Sheet công khai IFA-RH (1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE, tab TAP_CHI) và không gọi tới Sheet Spark", async () => {
+    const publicSheetId = "1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE";
+    const privateSparkId = ["1KqLzOaUsynoMd7o", "Bhe3Fxlvo1ssX4lC4TkD_8Duqm0c"].join("");
+
+    expect(DEFAULT_JOURNAL_SPREADSHEET_ID).toBe(publicSheetId);
+    expect(DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID).toBe(publicSheetId);
+    expect(DEFAULT_JOURNAL_SHEET_NAME).toBe("TAP_CHI");
+    expect(DEFAULT_MULTI_COUNCIL_SHEET_NAME).toBe("TAP_CHI");
+
+    // Sanitizer automatically redirects legacy private Spark ID to public IFA-RH Sheet
+    expect(sanitizePublicJournalSpreadsheetId(privateSparkId)).toBe(publicSheetId);
+    expect(sanitizePublicJournalSheetName("Untitled")).toBe("TAP_CHI");
+
+    const requestedUrls: string[] = [];
+    const trackingFetch: typeof fetch = async (input, init) => {
+      const urlStr = String(input);
+      requestedUrls.push(urlStr);
+      return fetch(input, init);
+    };
+
+    const multiRes = await fetchMultiCouncilGoogleSheetRows(privateSparkId, "Untitled", {
+      fetchImpl: trackingFetch,
+    });
+
+    // Zero requests to privateSparkId
+    expect(requestedUrls.length).toBeGreaterThan(0);
+    expect(requestedUrls.every((u) => u.includes(publicSheetId))).toBe(true);
+    expect(requestedUrls.some((u) => u.includes(privateSparkId))).toBe(false);
+
+    // Reads 96 rows and parses 96/96 diem_theo_hoi_dong_json
+    expect(multiRes.sourceSpreadsheetId).toBe(publicSheetId);
+    expect(multiRes.sourceSheetName).toBe("TAP_CHI");
+    expect(multiRes.validJournals.length).toBe(96);
+    expect(multiRes.multiCouncilStats.rowsWithJson).toBe(96);
+    expect(multiRes.manualReviewCount).toBe(17);
+    // 79 HOAN_TAT in raw sheet -> J_094 & J_096 auto-downgraded to CAN_KIEM_TRA -> 77 HOAN_TAT & 19 CAN_KIEM_TRA
+    expect(multiRes.multiCouncilStats.reconciliationCounts.HOAN_TAT).toBe(77);
+    expect(multiRes.multiCouncilStats.reconciliationCounts.CAN_KIEM_TRA).toBe(19);
+  });
+
+  // 14. Chặn dữ liệu lỗi công thức IMPORTRANGE (#REF!, #LOADING!), trùng journal_id, JSON lỗi và tụt số dòng bất thường
+  it("14. chặn dữ liệu lỗi công thức IMPORTRANGE (#REF!, #LOADING!), trùng journal_id, lỗi JSON cột AV và tụt số lượng bản ghi bất thường", async () => {
+    const makeMockGvizFetch = (cols: Array<{ label: string }>, rows: Array<{ c: Array<{ v?: any; f?: string } | null> }>): typeof fetch => {
+      return async () => {
+        const body = `/*O_o*/\ngoogle.visualization.Query.setResponse(${JSON.stringify({
+          version: "0.6",
+          status: "ok",
+          table: { cols, rows },
+        })});`;
+        return new Response(body, { status: 200 });
+      };
+    };
+
+    const baseCols = [
+      { label: "journal_id" },
+      { label: "ten_chinh_thuc_vn" },
+      { label: "diem_theo_hoi_dong_json" },
+      { label: "so_hoi_dong_cong_nhan" },
+      { label: "hoi_dong_da_xac_minh" },
+      { label: "nam_quyet_dinh" },
+      { label: "trang_thai_doi_soat_diem" },
+      { label: "nguon_diem_theo_hoi_dong" },
+    ];
+
+    // A. Chặn lỗi #REF!
+    await expect(
+      fetchJournalGoogleSheetRows(DEFAULT_JOURNAL_SPREADSHEET_ID, "TAP_CHI", {
+        fetchImpl: makeMockGvizFetch(baseCols, [
+          { c: [{ v: "#REF!" }, { v: null }, { v: null }] },
+        ]),
+      })
+    ).rejects.toThrow(/IMPORTRANGE|#REF!/i);
+
+    // B. Chặn lỗi #LOADING!
+    await expect(
+      fetchJournalGoogleSheetRows(DEFAULT_JOURNAL_SPREADSHEET_ID, "TAP_CHI", {
+        fetchImpl: makeMockGvizFetch(baseCols, [
+          { c: [{ v: "J_001" }, { v: "#LOADING..." }, { v: "[]" }] },
+        ]),
+      })
+    ).rejects.toThrow(/IMPORTRANGE|#LOADING/i);
+
+    // C. Chặn trùng journal_id trong cùng Sheet
+    const validJsonStr = JSON.stringify([
+      {
+        council_id: "HD24",
+        council_name: "Văn hóa – Nghệ thuật – Thể dục thể thao (HD24)",
+        decision_number: "26/QĐ-HĐGSNN",
+        decision_year: 2025,
+        publication_type: "PRINT",
+        max_score: 1.0,
+        verification_status: "VERIFIED",
+      },
+    ]);
+    await expect(
+      fetchJournalGoogleSheetRows(DEFAULT_JOURNAL_SPREADSHEET_ID, "TAP_CHI", {
+        fetchImpl: makeMockGvizFetch(baseCols, [
+          { c: [{ v: "J_001" }, { v: "Tạp chí A" }, { v: validJsonStr }] },
+          { c: [{ v: "J_001" }, { v: "Tạp chí B" }, { v: validJsonStr }] },
+        ]),
+      })
+    ).rejects.toThrow(/trùng mã tạp chí journal_id "J_001"/i);
+
+    // D. Chặn JSON lỗi trong cột diem_theo_hoi_dong_json
+    await expect(
+      fetchJournalGoogleSheetRows(DEFAULT_JOURNAL_SPREADSHEET_ID, "TAP_CHI", {
+        fetchImpl: makeMockGvizFetch(baseCols, [
+          { c: [{ v: "J_001" }, { v: "Tạp chí A" }, { v: "{invalid_json" }] },
+        ]),
+      })
+    ).rejects.toThrow(/diem_theo_hoi_dong_json không hợp lệ tại dòng 2/i);
+
+    // E. Chặn tụt số lượng bản ghi bất thường so với lần đồng bộ hợp lệ trước đó
+    await expect(
+      fetchJournalGoogleSheetRows(DEFAULT_JOURNAL_SPREADSHEET_ID, "TAP_CHI", {
+        previousValidRowCount: 96,
+        fetchImpl: makeMockGvizFetch(baseCols, [
+          { c: [{ v: "J_001" }, { v: "Tạp chí A" }, { v: validJsonStr }] },
+        ]),
+      })
+    ).rejects.toThrow(/tụt bất thường/i);
+  });
+
+  // 15. Nút "Cập nhật điểm HĐGSNN" (onlyMultiCouncilScoreColumns: true) chỉ cập nhật điểm, không ghi đè các trường thông tin khác
+  it("15. chế độ onlyMultiCouncilScoreColumns chỉ tạo đề xuất cập nhật điểm và giữ nguyên các trường danh mục của tạp chí", () => {
+    const publishedJournal: Journal = {
+      id: "J_001",
+      journalId: "J_001",
+      name: "Tạp chí Mỹ thuật (Đã hiệu đính bởi Admin)",
+      publisher: "Trường Đại học Mỹ thuật Việt Nam (Đã chuẩn hóa)",
+      issnPrint: "1859-0001",
+      category: "domestic",
+      primaryField: "Nghệ thuật",
+      fields: ["Nghệ thuật"],
+      website: "https://mythuat.edu.vn/custom-admin-url",
+      websiteVerified: true,
+      maxScore: 0.5,
+      maxScoreYear: 2025,
+      scores: [],
+      councilScores: [
+        {
+          councilId: "HD24",
+          councilName: "Văn hóa – Nghệ thuật – Thể dục thể thao (HD24)",
+          decisionNumber: "26/QĐ-HĐGSNN",
+          decisionYear: 2025,
+          publicationType: "PRINT",
+          maxScore: 0.5,
+          verificationStatus: "VERIFIED",
+        },
+      ],
+      guidelines: {
+        hasGuidelines: true,
+        summary: "Thể lệ riêng do Admin biên tập",
+      },
+      links: [],
+      verification: {
+        verifiedDate: "2025-01-01",
+        verifiedBy: "Admin",
+        status: "verified",
+        schemaVersion: 2,
+      },
+      status: "active",
+      isManualEdited: true,
+      createdAt: "2025-01-01",
+      updatedAt: "2025-01-01",
+      createdBy: "admin",
+    };
+
+    const incomingFromSheet: Journal = {
+      ...publishedJournal,
+      name: "Tạp chí Mỹ thuật (Tên thô trên Sheet)",
+      publisher: "Đơn vị xuất bản thô trên Sheet",
+      website: "https://raw-sheet-url.vn",
+      guidelines: {
+        hasGuidelines: true,
+        summary: "Thể lệ thô trên Sheet",
+      },
+      maxScore: 1.0,
+      recognizedCouncilCount: 2,
+      councilScores: [
+        {
+          councilId: "HD24",
+          councilName: "Văn hóa – Nghệ thuật – Thể dục thể thao (HD24)",
+          decisionNumber: "26/QĐ-HĐGSNN",
+          decisionYear: 2025,
+          publicationType: "PRINT",
+          maxScore: 0.75,
+          verificationStatus: "VERIFIED",
+        },
+        {
+          councilId: "HD27",
+          councilName: "Xây dựng – Kiến trúc (HD27)",
+          decisionNumber: "26/QĐ-HĐGSNN",
+          decisionYear: 2025,
+          publicationType: "PRINT",
+          maxScore: 1.0,
+          verificationStatus: "VERIFIED",
+        },
+      ],
+    };
+
+    const diffRes = buildJournalCandidatesFromSheet(
+      [incomingFromSheet],
+      [publishedJournal],
+      [],
+      { forceUpdateMultiCouncil: true, onlyMultiCouncilScoreColumns: true }
+    );
+
+    expect(diffRes.updatedCount).toBe(1);
+    const cand = diffRes.candidatesToCreate[0];
+    // Preserves published catalog fields
+    expect(cand.name).toBe("Tạp chí Mỹ thuật (Đã hiệu đính bởi Admin)");
+    expect(cand.publisher).toBe("Trường Đại học Mỹ thuật Việt Nam (Đã chuẩn hóa)");
+    expect(cand.website).toBe("https://mythuat.edu.vn/custom-admin-url");
+    expect(cand.guidelines?.summary).toBe("Thể lệ riêng do Admin biên tập");
+    // Updates multi-council score fields
+    expect(cand.councilScores?.length).toBe(2);
+    expect(cand.maxScore).toBe(1.0);
   });
 });
