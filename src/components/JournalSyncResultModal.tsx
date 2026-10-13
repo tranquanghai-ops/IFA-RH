@@ -20,6 +20,27 @@ export interface JournalSyncResultData {
   manualReviewCount: number;
   warnings?: string[];
   batchId?: string;
+  syncMode?: "catalog" | "multi_council";
+  sourceSpreadsheetId?: string;
+  sourceSheetName?: string;
+  usedFallbackCatalogSheet?: boolean;
+  multiCouncilStats?: {
+    rowsWithJson: number;
+    totalCouncilEntries: number;
+    multiCouncilJournalsCount: number;
+    diffScoreAcrossCouncilsCount: number;
+    reconciliationCounts: {
+      HOAN_TAT: number;
+      CAN_KIEM_TRA: number;
+      CHUA_XAC_MINH: number;
+    };
+  };
+  identityMatchStats?: {
+    matchedCount: number;
+    ambiguousCount: number;
+    unmatchedCount: number;
+    conflictCount: number;
+  };
 }
 
 export interface JournalSyncErrorData {
@@ -76,8 +97,11 @@ export const JournalSyncResultModal: React.FC<JournalSyncResultModalProps> = ({
         style={{
           backgroundColor: "#ffffff",
           borderRadius: "12px",
-          maxWidth: "600px",
+          maxWidth: "660px",
           width: "100%",
+          maxHeight: "92vh",
+          display: "flex",
+          flexDirection: "column",
           boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
           overflow: "hidden",
         }}
@@ -118,7 +142,11 @@ export const JournalSyncResultModal: React.FC<JournalSyncResultModalProps> = ({
                   color: isSuccess ? "#14532d" : "#7f1d1d",
                 }}
               >
-                {isSuccess ? "Đồng bộ Google Sheets thành công" : "Lỗi đồng bộ Google Sheets"}
+                {isSuccess
+                  ? result?.syncMode === "multi_council"
+                    ? "Cập nhật điểm HĐGSNN thành công"
+                    : "Đồng bộ Google Sheets thành công"
+                  : "Lỗi đồng bộ Google Sheets"}
               </h3>
               <p
                 style={{
@@ -142,7 +170,7 @@ export const JournalSyncResultModal: React.FC<JournalSyncResultModalProps> = ({
         </div>
 
         {/* Content Body */}
-        <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
+        <div style={{ padding: "20px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "16px" }}>
           {/* SUCCESS VIEW */}
           {isSuccess && result && (
             <>
@@ -205,9 +233,53 @@ export const JournalSyncResultModal: React.FC<JournalSyncResultModalProps> = ({
                   <div style={{ fontSize: "1.45rem", fontWeight: 800, color: "#15803d", marginTop: "2px" }}>
                     {result.updatedCandidatesCount}
                   </div>
-                  <div style={{ fontSize: "0.72rem", color: "#22c55e" }}>có thay đổi nội dung</div>
+                  <div style={{ fontSize: "0.72rem", color: "#22c55e" }}>có thay đổi nội dung / điểm</div>
                 </div>
               </div>
+
+              {/* Multi-Council & Identity Match Summary (if available) */}
+              {result.multiCouncilStats && (
+                <div
+                  style={{
+                    padding: "12px 14px",
+                    borderRadius: "8px",
+                    backgroundColor: "#eff6ff",
+                    border: "1px solid #bfdbfe",
+                    fontSize: "0.82rem",
+                    color: "#1e3a8a",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "6px",
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: "0.85rem" }}>
+                    Thống kê dữ liệu điểm theo nhiều Hội đồng Giáo sư (53 cột):
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "6px", color: "#1e293b" }}>
+                    <div>
+                      • Tổng bản ghi điểm HĐ: <strong>{result.multiCouncilStats.totalCouncilEntries}</strong>
+                    </div>
+                    <div>
+                      • Tạp chí có ≥ 2 Hội đồng: <strong>{result.multiCouncilStats.multiCouncilJournalsCount}</strong>
+                    </div>
+                    <div>
+                      • Khác điểm giữa các HĐ: <strong>{result.multiCouncilStats.diffScoreAcrossCouncilsCount}</strong>
+                    </div>
+                    <div>
+                      • Đối soát HOAN_TAT / CAN_KIEM_TRA:{" "}
+                      <strong>
+                        {result.multiCouncilStats.reconciliationCounts.HOAN_TAT} /{" "}
+                        {result.multiCouncilStats.reconciliationCounts.CAN_KIEM_TRA}
+                      </strong>
+                    </div>
+                  </div>
+                  {result.identityMatchStats && (
+                    <div style={{ borderTop: "1px solid #dbeafe", paddingTop: "6px", color: "#334155", fontSize: "0.78rem" }}>
+                      Đối soát định danh: Khớp chuẩn (<strong>{result.identityMatchStats.matchedCount}</strong>) · Tạp chí mới (<strong>{result.identityMatchStats.unmatchedCount}</strong>) · Trùng tên cần kiểm tra (<strong>{result.identityMatchStats.ambiguousCount}</strong>) · Mâu thuẫn ISSN (<strong>{result.identityMatchStats.conflictCount}</strong>)
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Secondary metrics row */}
               <div

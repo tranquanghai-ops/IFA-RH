@@ -1,6 +1,16 @@
 import React, { useState, useEffect } from "react";
-import type { Journal, JournalCategory } from "../types/journal";
-import { X, Save, AlertCircle } from "lucide-react";
+import type {
+  Journal,
+  JournalCategory,
+  JournalCouncilScore,
+  CouncilScoreVerificationStatus,
+} from "../types/journal";
+import {
+  OFFICIAL_HDGSNN_COUNCILS,
+  normalizeCouncilIdentity,
+} from "../services/journalGoogleSheetService";
+import { getEffectiveCouncilScores, formatVietnameseScore } from "../services/journalService";
+import { X, Save, AlertCircle, Plus, Trash2 } from "lucide-react";
 
 interface JournalFormModalProps {
   isOpen: boolean;
@@ -34,6 +44,8 @@ export const JournalFormModal: React.FC<JournalFormModalProps> = ({
     status: "active",
     fields: [],
   });
+
+  const [councilScores, setCouncilScores] = useState<JournalCouncilScore[]>([]);
 
   const [guidelinesData, setGuidelinesData] = useState({
     hasGuidelines: false,
@@ -70,6 +82,7 @@ export const JournalFormModal: React.FC<JournalFormModalProps> = ({
         status: journal.status || "active",
         fields: journal.fields || [],
       });
+      setCouncilScores(getEffectiveCouncilScores(journal).map((cs) => ({ ...cs })));
 
       if (journal.guidelines) {
         setGuidelinesData({
@@ -96,13 +109,32 @@ export const JournalFormModal: React.FC<JournalFormModalProps> = ({
         issnOnline: "",
         isbn: "",
         category: "domestic",
-        primaryField: "Văn hóa - Nghệ thuật",
+        primaryField: "Văn hóa - Nghệ thuật - Thể dục thể thao",
         website: "",
         maxScore: 1.0,
         maxScoreYear: 2025,
         status: "active",
-        fields: ["Văn hóa - Nghệ thuật"],
+        fields: ["Văn hóa - Nghệ thuật - Thể dục thể thao"],
       });
+      setCouncilScores([
+        {
+          councilId: "HD24",
+          councilName: "Văn hóa - Nghệ thuật - Thể dục thể thao",
+          decisionNumber: "26/QĐ-HĐGSNN",
+          decisionYear: 2025,
+          sourceOrder: null,
+          scientificFields: ["Văn hóa - Nghệ thuật - Thể dục thể thao"],
+          publicationType: "Toàn tạp chí",
+          maxScore: 1.0,
+          validFrom: "Đầu kỳ",
+          validTo: "Hiện hành",
+          conditions: null,
+          note: null,
+          sourcePage: "Phụ lục 24",
+          sourceUrl: "https://hdgsnn.gov.vn",
+          verificationStatus: "VERIFIED",
+        },
+      ]);
       setGuidelinesData({
         hasGuidelines: false,
         summary: "",
@@ -120,6 +152,44 @@ export const JournalFormModal: React.FC<JournalFormModalProps> = ({
   }, [journal, isOpen]);
 
   if (!isOpen) return null;
+
+  const handleAddCouncilRow = () => {
+    setCouncilScores((prev) => [
+      ...prev,
+      {
+        councilId: "HD24",
+        councilName: "Văn hóa - Nghệ thuật - Thể dục thể thao",
+        decisionNumber: "26/QĐ-HĐGSNN",
+        decisionYear: formData.maxScoreYear || 2025,
+        sourceOrder: null,
+        scientificFields: [formData.primaryField || "Văn hóa - Nghệ thuật - Thể dục thể thao"],
+        publicationType: "Toàn tạp chí",
+        maxScore: formData.maxScore ?? 0.75,
+        validFrom: "Đầu kỳ",
+        validTo: "Hiện hành",
+        conditions: null,
+        note: null,
+        sourcePage: "Phụ lục 24",
+        sourceUrl: "https://hdgsnn.gov.vn",
+        verificationStatus: "VERIFIED",
+      },
+    ]);
+  };
+
+  const handleRemoveCouncilRow = (index: number) => {
+    setCouncilScores((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleUpdateCouncilRow = (
+    index: number,
+    patch: Partial<JournalCouncilScore>
+  ) => {
+    setCouncilScores((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], ...patch };
+      return next;
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -140,9 +210,51 @@ export const JournalFormModal: React.FC<JournalFormModalProps> = ({
 
     try {
       setIsSubmitting(true);
+      const uniqueAllCouncils = Array.from(
+        new Set(councilScores.map((cs) => cs.councilId || cs.councilName))
+      );
+      const verifiedCouncils = Array.from(
+        new Set(
+          councilScores
+            .filter((cs) => cs.verificationStatus === "VERIFIED")
+            .map((cs) => cs.councilName)
+        )
+      );
+      const verifiedNumeric = councilScores
+        .filter((cs) => cs.verificationStatus === "VERIFIED" && typeof cs.maxScore === "number")
+        .map((cs) => cs.maxScore as number);
+      const computedMaxScore =
+        verifiedNumeric.length > 0
+          ? Math.max(...verifiedNumeric)
+          : formData.maxScore ?? 0;
+
+      const syncedLegacyScores = councilScores.map((cs) => ({
+        year: cs.decisionYear,
+        councilName: cs.councilName,
+        councilCode: cs.councilId,
+        maxScore: typeof cs.maxScore === "number" ? cs.maxScore : 0,
+        decisionNumber: cs.decisionNumber,
+        decisionDate: cs.validFrom || undefined,
+        sourceUrl: cs.sourceUrl || undefined,
+        notes: [cs.publicationType, cs.conditions, cs.note].filter(Boolean).join(" — "),
+      }));
+
       const payload: Partial<Journal> = {
         ...formData,
-        fields: Array.from(new Set([formData.primaryField || "", ...(formData.fields || [])])).filter(Boolean),
+        maxScore: computedMaxScore,
+        councilScores,
+        scores: syncedLegacyScores,
+        recognizedCouncilCount: uniqueAllCouncils.length,
+        verifiedCouncils,
+        decisionYear: formData.maxScoreYear || 2025,
+        scoreReconciliationStatus: "HOAN_TAT",
+        fields: Array.from(
+          new Set([
+            formData.primaryField || "",
+            ...(formData.fields || []),
+            ...councilScores.flatMap((cs) => cs.scientificFields || []),
+          ])
+        ).filter(Boolean),
         guidelines: guidelinesData,
         websiteVerified: Boolean(formData.website && formData.website.startsWith("http")),
       };
@@ -179,7 +291,7 @@ export const JournalFormModal: React.FC<JournalFormModalProps> = ({
         style={{
           backgroundColor: "#ffffff",
           borderRadius: "12px",
-          maxWidth: "760px",
+          maxWidth: "860px",
           width: "100%",
           maxHeight: "92vh",
           display: "flex",
@@ -200,7 +312,7 @@ export const JournalFormModal: React.FC<JournalFormModalProps> = ({
           }}
         >
           <h3 style={{ margin: 0, fontSize: "1.2rem", fontWeight: 700, color: "#0f172a" }}>
-            {isEditing ? `Chỉnh sửa tạp chí: ${journal?.journalId}` : "Thêm mới tạp chí khoa học"}
+            {isEditing ? `Chỉnh sửa tạp chí: ${journal?.name}` : "Thêm mới tạp chí khoa học"}
           </h3>
           <button
             onClick={onClose}
@@ -235,7 +347,7 @@ export const JournalFormModal: React.FC<JournalFormModalProps> = ({
             <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: "12px" }}>
               <div>
                 <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#374151", marginBottom: "4px" }}>
-                  Mã tạp chí (journal_id) *
+                  Mã tạp chí nội bộ (journal_id) *
                 </label>
                 <input
                   type="text"
@@ -364,8 +476,8 @@ export const JournalFormModal: React.FC<JournalFormModalProps> = ({
               </div>
             </div>
 
-            {/* Field & Scores */}
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: "12px" }}>
+            {/* Field & Website */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
               <div>
                 <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#374151", marginBottom: "4px" }}>
                   Lĩnh vực chuyên môn chính *
@@ -381,44 +493,161 @@ export const JournalFormModal: React.FC<JournalFormModalProps> = ({
 
               <div>
                 <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#374151", marginBottom: "4px" }}>
-                  Điểm tối đa HĐGSNN
+                  Website chính thức
                 </label>
                 <input
-                  type="number"
-                  step="0.25"
-                  min="0"
-                  max="2.0"
-                  value={formData.maxScore}
-                  onChange={(e) => setFormData({ ...formData, maxScore: parseFloat(e.target.value) || 0 })}
-                  style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #d1d5db", fontSize: "0.88rem" }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#374151", marginBottom: "4px" }}>
-                  Năm công nhận
-                </label>
-                <input
-                  type="number"
-                  value={formData.maxScoreYear}
-                  onChange={(e) => setFormData({ ...formData, maxScoreYear: parseInt(e.target.value, 10) || 2025 })}
+                  type="url"
+                  placeholder="https://..."
+                  value={formData.website}
+                  onChange={(e) => setFormData({ ...formData, website: e.target.value.trim() })}
                   style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #d1d5db", fontSize: "0.88rem" }}
                 />
               </div>
             </div>
 
-            {/* Website */}
-            <div>
-              <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 600, color: "#374151", marginBottom: "4px" }}>
-                Website chính thức (Chỉ điền khi có trang chủ chính thức hợp lệ)
-              </label>
-              <input
-                type="url"
-                placeholder="https://..."
-                value={formData.website}
-                onChange={(e) => setFormData({ ...formData, website: e.target.value.trim() })}
-                style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid #d1d5db", fontSize: "0.88rem" }}
-              />
+            {/* Multi-Council Scores Section */}
+            <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: "14px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                <span style={{ fontWeight: 700, fontSize: "0.9rem", color: "#0f172a" }}>
+                  Điểm theo từng Hội đồng Giáo sư ({councilScores.length} bản ghi):
+                </span>
+                <button
+                  type="button"
+                  onClick={handleAddCouncilRow}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    padding: "5px 10px",
+                    borderRadius: "6px",
+                    border: "1px solid #2563eb",
+                    backgroundColor: "#eff6ff",
+                    color: "#1e40af",
+                    fontSize: "0.78rem",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  <Plus size={14} /> Thêm Hội đồng
+                </button>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {councilScores.map((cs, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "2fr 80px 100px 1.2fr 120px 36px",
+                      gap: "8px",
+                      alignItems: "center",
+                      backgroundColor: "#f8fafc",
+                      padding: "8px 10px",
+                      borderRadius: "6px",
+                      border: "1px solid #e2e8f0",
+                    }}
+                  >
+                    <select
+                      value={cs.councilId}
+                      onChange={(e) => {
+                        const norm = normalizeCouncilIdentity(e.target.value);
+                        handleUpdateCouncilRow(idx, {
+                          councilId: norm.councilId,
+                          councilName: norm.councilName,
+                        });
+                      }}
+                      style={{ padding: "5px 6px", borderRadius: 4, border: "1px solid #cbd5e1", fontSize: "0.8rem" }}
+                    >
+                      {Object.entries(OFFICIAL_HDGSNN_COUNCILS).map(([cId, cName]) => (
+                        <option key={cId} value={cId}>
+                          {cName}
+                        </option>
+                      ))}
+                    </select>
+
+                    <input
+                      type="number"
+                      value={cs.decisionYear}
+                      onChange={(e) =>
+                        handleUpdateCouncilRow(idx, {
+                          decisionYear: parseInt(e.target.value, 10) || 2025,
+                        })
+                      }
+                      title="Năm quyết định"
+                      style={{ padding: "5px 6px", borderRadius: 4, border: "1px solid #cbd5e1", fontSize: "0.8rem" }}
+                    />
+
+                    <select
+                      value={cs.maxScore === null ? "null" : String(cs.maxScore)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        handleUpdateCouncilRow(idx, {
+                          maxScore: val === "null" ? null : parseFloat(val),
+                        });
+                      }}
+                      title="Mức điểm tối đa"
+                      style={{ padding: "5px 6px", borderRadius: 4, border: "1px solid #cbd5e1", fontSize: "0.8rem", fontWeight: 700 }}
+                    >
+                      <option value="1">1,00 điểm</option>
+                      <option value="0.75">0,75 điểm</option>
+                      <option value="0.5">0,50 điểm</option>
+                      <option value="0.25">0,25 điểm</option>
+                      <option value="0">0,00 (Dừng tính)</option>
+                      <option value="null">Chưa xác định</option>
+                    </select>
+
+                    <input
+                      type="text"
+                      value={cs.publicationType || ""}
+                      onChange={(e) =>
+                        handleUpdateCouncilRow(idx, { publicationType: e.target.value })
+                      }
+                      placeholder="Loại ấn phẩm"
+                      style={{ padding: "5px 6px", borderRadius: 4, border: "1px solid #cbd5e1", fontSize: "0.8rem" }}
+                    />
+
+                    <select
+                      value={cs.verificationStatus}
+                      onChange={(e) =>
+                        handleUpdateCouncilRow(idx, {
+                          verificationStatus: e.target.value as CouncilScoreVerificationStatus,
+                        })
+                      }
+                      style={{ padding: "5px 6px", borderRadius: 4, border: "1px solid #cbd5e1", fontSize: "0.75rem" }}
+                    >
+                      <option value="VERIFIED">VERIFIED</option>
+                      <option value="NEEDS_REVIEW">NEEDS_REVIEW</option>
+                      <option value="UNVERIFIED">UNVERIFIED</option>
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveCouncilRow(idx)}
+                      style={{
+                        padding: "5px",
+                        borderRadius: 4,
+                        border: "1px solid #fecaca",
+                        backgroundColor: "#fef2f2",
+                        color: "#991b1b",
+                        cursor: "pointer",
+                      }}
+                      title="Xóa Hội đồng này"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "6px" }}>
+                Điểm cao nhất đã xác minh tự động tính:{" "}
+                <strong>
+                  {formatVietnameseScore(
+                    councilScores
+                      .filter((cs) => cs.verificationStatus === "VERIFIED" && typeof cs.maxScore === "number")
+                      .reduce((m, cs) => Math.max(m, cs.maxScore as number), 0)
+                  )}
+                </strong>
+              </div>
             </div>
 
             {/* Guidelines Section Toggle */}

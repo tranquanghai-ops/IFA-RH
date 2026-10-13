@@ -2,6 +2,10 @@ import type {
   Journal,
   JournalCategory,
   JournalScoreItem,
+  JournalCouncilScore,
+  CouncilScoreVerificationStatus,
+  SparkScoreReconciliationStatus,
+  JournalIdentityMatchStatus,
   JournalGuidelines,
   JournalLinkItem,
   JournalVerification,
@@ -15,9 +19,582 @@ export const DEFAULT_JOURNAL_DRIVE_FOLDER_URL =
   "https://drive.google.com/open?id=1HHNhKCQk_U85HH24V8-QDbzptQFYbO3X&usp=drive_fs";
 export const DEFAULT_JOURNAL_SPREADSHEET_ID =
   "1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE";
-export const DEFAULT_JOURNAL_SHEET_NAME = "Trang tính1";
-export const FALLBACK_JOURNAL_SHEET_NAME = "TAP_CHI";
+export const DEFAULT_JOURNAL_SHEET_NAME = "TAP_CHI";
+export const FALLBACK_JOURNAL_SHEET_NAME = "Trang tính1";
 export const EXPECTED_FILE_NAME = "IFA-RH_DANH_MUC_TAP_CHI";
+
+export const DEFAULT_SPARK_HDGSNN_SPREADSHEET_ID =
+  "1KqLzOaUsynoMd7oBhe3Fxlvo1ssX4lC4TkD_8Duqm0c";
+export const DEFAULT_SPARK_HDGSNN_SHEET_NAME = "Untitled";
+export const EXPECTED_HDGSNN_FILE_NAME = "IFA-RH_DANH_MUC_TAP_CHI_HDGSNN";
+
+export const DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID =
+  DEFAULT_SPARK_HDGSNN_SPREADSHEET_ID;
+export const DEFAULT_MULTI_COUNCIL_SHEET_NAME =
+  DEFAULT_SPARK_HDGSNN_SHEET_NAME;
+export const EXPECTED_MULTI_COUNCIL_FILE_NAME = EXPECTED_HDGSNN_FILE_NAME;
+
+export const DEFAULT_COUNCIL_ID = "HD24";
+export const DEFAULT_FACULTY_COUNCIL_ID = "HD24";
+export const DEFAULT_COUNCIL_NAME =
+  "Văn hóa – Nghệ thuật – Thể dục thể thao (HD24)";
+
+/**
+ * Danh mục chuẩn 28 Hội đồng Giáo sư ngành / liên ngành theo QĐ 26/QĐ-HĐGSNN
+ */
+export const OFFICIAL_HDGSNN_COUNCILS: Record<string, string> = {
+  HD01: "Toán học (HD01)",
+  HD02: "Vật lý (HD02)",
+  HD03: "Cơ khí – Động lực (HD03)",
+  HD04: "Điện – Điện tử – Tự động hóa (HD04)",
+  HD05: "Công nghệ thông tin (HD05)",
+  HD06: "Hóa học – Công nghệ thực phẩm (HD06)",
+  HD07: "Khoa học Trái đất – Mỏ (HD07)",
+  HD08: "Khoa học Giáo dục (HD08)",
+  HD09: "Sinh học (HD09)",
+  HD10: "Nông nghiệp – Lâm nghiệp (HD10)",
+  HD11: "Thủy lợi (HD11)",
+  HD12: "Chăn nuôi – Thú y – Thủy sản (HD12)",
+  HD13: "Kinh tế (HD13)",
+  HD14: "Luật học (HD14)",
+  HD15: "Y học (HD15)",
+  HD16: "Dược học (HD16)",
+  HD17: "Luyện kim (HD17)",
+  HD18: "Giao thông vận tải (HD18)",
+  HD19: "Sử học – Khảo cổ học – Dân tộc học / Nhân học (HD19)",
+  HD20: "Tâm lý học (HD20)",
+  HD21: "Thủy sản (HD21)",
+  HD22: "Ngôn ngữ học (HD22)",
+  HD23: "Triết học – Xã hội học – Chính trị học (HD23)",
+  HD24: "Văn hóa – Nghệ thuật – Thể dục thể thao (HD24)",
+  HD25: "Văn học (HD25)",
+  HD26: "Khoa học Quân sự (HD26)",
+  HD27: "Xây dựng – Kiến trúc (HD27)",
+  HD28: "Khoa học An ninh (HD28)",
+};
+
+export const OFFICIAL_HDGSNN_COUNCIL_LIST: Array<{ id: string; name: string }> =
+  Object.entries(OFFICIAL_HDGSNN_COUNCILS).map(([id, name]) => ({ id, name }));
+
+export const EXTENDED_COUNCIL_NAMES: Record<string, string> = {
+  ...OFFICIAL_HDGSNN_COUNCILS,
+  HD_DETMAY: "Dệt may / Khoa học ứng dụng (HD_DETMAY)",
+};
+
+/**
+ * Kiểm tra xem councilId có nằm trong 28 Hội đồng Giáo sư chính thức của QĐ 26/QĐ-HĐGSNN không.
+ */
+export function isValidOfficialCouncilId(councilId?: string | null): boolean {
+  if (!councilId) return false;
+  return Boolean(OFFICIAL_HDGSNN_COUNCILS[councilId.trim().toUpperCase()]);
+}
+
+/**
+ * Chuẩn hóa mã và tên Hội đồng Giáo sư để tránh trùng lặp biến thể tên cho cùng 1 Hội đồng.
+ */
+export function normalizeCouncilIdentity(
+  rawCouncilId?: string | null,
+  rawCouncilName?: string | null
+): { councilId: string; councilName: string } {
+  const code = String(rawCouncilId || "").trim().toUpperCase();
+  const name = String(rawCouncilName || "").trim();
+
+  if (code && EXTENDED_COUNCIL_NAMES[code]) {
+    return {
+      councilId: code,
+      councilName: EXTENDED_COUNCIL_NAMES[code],
+    };
+  }
+
+  // Ánh xạ các mã legacy (NHOM_I..NHOM_V, HDGS_VHNT, HDGS_CHUNG...) hoặc suy luận từ tên Hội đồng
+  const search = `${code} ${name}`.toLowerCase();
+  if (
+    code.startsWith("NHOM_") ||
+    code === "HDGS_VHNT" ||
+    search.includes("văn hóa") ||
+    search.includes("van hoa") ||
+    search.includes("nghệ thuật") ||
+    search.includes("nghe thuat") ||
+    search.includes("mỹ thuật") ||
+    search.includes("my thuat") ||
+    search.includes("thể dục thể thao") ||
+    search.includes("tdtt") ||
+    search.includes("du lịch") ||
+    search.includes("báo chí, truyền thông")
+  ) {
+    return {
+      councilId: "HD24",
+      councilName: OFFICIAL_HDGSNN_COUNCILS.HD24,
+    };
+  }
+
+  if (
+    code === "HDGS_THXHH" ||
+    code === "HDGS_TRIETHOC" ||
+    search.includes("triết học") ||
+    search.includes("xã hội học") ||
+    search.includes("chính trị học")
+  ) {
+    return {
+      councilId: "HD23",
+      councilName: OFFICIAL_HDGSNN_COUNCILS.HD23,
+    };
+  }
+
+  if (
+    search.includes("sử học") ||
+    search.includes("khảo cổ") ||
+    search.includes("dân tộc học") ||
+    search.includes("nhân học")
+  ) {
+    return {
+      councilId: "HD19",
+      councilName: OFFICIAL_HDGSNN_COUNCILS.HD19,
+    };
+  }
+
+  if (code === "HDGS_GDH" || search.includes("giáo dục")) {
+    return {
+      councilId: "HD08",
+      councilName: OFFICIAL_HDGSNN_COUNCILS.HD08,
+    };
+  }
+
+  if (search.includes("kinh tế")) {
+    return {
+      councilId: "HD13",
+      councilName: OFFICIAL_HDGSNN_COUNCILS.HD13,
+    };
+  }
+
+  if (search.includes("luật")) {
+    return {
+      councilId: "HD14",
+      councilName: OFFICIAL_HDGSNN_COUNCILS.HD14,
+    };
+  }
+
+  if (search.includes("văn học")) {
+    return {
+      councilId: "HD25",
+      councilName: OFFICIAL_HDGSNN_COUNCILS.HD25,
+    };
+  }
+
+  if (search.includes("xây dựng") || search.includes("kiến trúc") || search.includes("quy hoạch")) {
+    return {
+      councilId: "HD27",
+      councilName: OFFICIAL_HDGSNN_COUNCILS.HD27,
+    };
+  }
+
+  if (search.includes("cơ khí") || search.includes("động lực")) {
+    return {
+      councilId: "HD03",
+      councilName: OFFICIAL_HDGSNN_COUNCILS.HD03,
+    };
+  }
+
+  if (search.includes("dệt may") || search.includes("thời trang")) {
+    return {
+      councilId: "HD_DETMAY",
+      councilName: EXTENDED_COUNCIL_NAMES.HD_DETMAY,
+    };
+  }
+
+  if (code === "HDGS_CHUNG") {
+    return {
+      councilId: "HD24",
+      councilName: OFFICIAL_HDGSNN_COUNCILS.HD24,
+    };
+  }
+
+  const fallbackId = code || "HD24";
+  return {
+    councilId: fallbackId,
+    councilName: name ? `${name} (${fallbackId})` : OFFICIAL_HDGSNN_COUNCILS.HD24,
+  };
+}
+
+/**
+ * Tạo khóa phức hợp (Composite Key) duy nhất cho mỗi bản ghi điểm Hội đồng:
+ * council_id + decision_number + decision_year + source_order + publication_type + conditions + valid_from
+ */
+export function buildCouncilScoreCompositeKey(score: Partial<JournalCouncilScore>): string {
+  const parts = [
+    String(score.councilId || "").trim().toUpperCase(),
+    String(score.decisionNumber || "").trim(),
+    String(score.decisionYear || "").trim(),
+    String(score.sourceOrder || "").trim(),
+    String(score.publicationType || "").trim().toUpperCase(),
+    String(score.conditions || "").trim(),
+    String(score.validFrom || "").trim(),
+  ];
+  return parts.join("__");
+}
+
+/**
+ * Phân tích giá trị số điểm an toàn: phân biệt rõ 0 (dừng tính điểm) và null (chưa có dữ liệu).
+ * Tuyệt đối KHÔNG dùng `parseFloat(val) || 0`.
+ */
+export function parseNullableScoreNumber(val: unknown): number | null {
+  if (val === null || val === undefined) return null;
+  if (typeof val === "number") {
+    return Number.isFinite(val) && val >= 0 ? val : null;
+  }
+  const str = String(val).trim();
+  if (!str || str.toLowerCase() === "null" || str.toLowerCase() === "n/a" || str === "—") {
+    return null;
+  }
+  const normalized = str.replace(",", ".");
+  const parsed = Number(normalized);
+  if (Number.isFinite(parsed) && parsed >= 0) {
+    return parsed;
+  }
+  return null;
+}
+
+export interface MultiCouncilJsonParseResult {
+  councilScores: JournalCouncilScore[];
+  scores: JournalScoreItem[];
+  maxScore: number;
+  maxScoreYear: number;
+  warnings: string[];
+  needsManualReview: boolean;
+  reconciliationStatus: SparkScoreReconciliationStatus;
+}
+
+/**
+ * Phân tích và kiểm tra nghiêm ngặt cột `diem_theo_hoi_dong_json` (Cột 48 / index 47 trong bảng 53 cột).
+ * Áp dụng đầy đủ 10 quy tắc kiểm tra dữ liệu ở Mục V:
+ * - JSON hợp lệ và là mảng
+ * - Có đủ council_id, council_name, decision_number, decision_year, verification_status
+ * - Chống trùng bản ghi điểm theo composite key
+ * - Kiểm tra council_id thuộc 28 HĐGSNN
+ * - Phân biệt rõ max_score = 0 vs max_score = null (không dùng || 0)
+ * - Kiểm tra decision_year hợp lệ
+ * - Kiểm tra source_url hợp lệ
+ * - Nếu verification_status === "VERIFIED" nhưng thiếu phụ lục QĐ 26/QĐ-HĐGSNN -> tự động chuyển sang "NEEDS_REVIEW"
+ * - Đối chiếu so_hoi_dong_cong_nhan với số Hội đồng thực tế trong JSON
+ */
+export function parseMultiCouncilScoresJson(
+  rawJson: unknown,
+  options: {
+    expectedCouncilCount?: number | string | null;
+    rawSparkStatus?: string | null;
+    fallbackField?: string;
+    journalId?: string;
+  } = {}
+): MultiCouncilJsonParseResult {
+  const warnings: string[] = [];
+  let needsManualReview = false;
+
+  const rawStatusNorm = String(options.rawSparkStatus || "")
+    .trim()
+    .toUpperCase();
+  if (rawStatusNorm === "CAN_KIEM_TRA") {
+    needsManualReview = true;
+  }
+
+  if (rawJson === null || rawJson === undefined || String(rawJson).trim() === "") {
+    warnings.push("Thiếu dữ liệu diem_theo_hoi_dong_json.");
+    return {
+      councilScores: [],
+      scores: [],
+      maxScore: 0,
+      maxScoreYear: 2025,
+      warnings,
+      needsManualReview: true,
+      reconciliationStatus: "CHUA_XAC_MINH",
+    };
+  }
+
+  let parsedArr: any[];
+  if (Array.isArray(rawJson)) {
+    parsedArr = rawJson;
+  } else {
+    const str = String(rawJson).trim();
+    try {
+      const parsed = JSON.parse(str);
+      if (!Array.isArray(parsed)) {
+        warnings.push("diem_theo_hoi_dong_json không phải là mảng JSON hợp lệ.");
+        return {
+          councilScores: [],
+          scores: [],
+          maxScore: 0,
+          maxScoreYear: 2025,
+          warnings,
+          needsManualReview: true,
+          reconciliationStatus: "CAN_KIEM_TRA",
+        };
+      }
+      parsedArr = parsed;
+    } catch (err: any) {
+      warnings.push(`Lỗi cú pháp JSON trong diem_theo_hoi_dong_json: ${err?.message || "Invalid JSON"}`);
+      return {
+        councilScores: [],
+        scores: [],
+        maxScore: 0,
+        maxScoreYear: 2025,
+        warnings,
+        needsManualReview: true,
+        reconciliationStatus: "CAN_KIEM_TRA",
+      };
+    }
+  }
+
+  const seenCompositeKeys = new Set<string>();
+  const councilScores: JournalCouncilScore[] = [];
+
+  parsedArr.forEach((rawItem, idx) => {
+    if (!rawItem || typeof rawItem !== "object") {
+      warnings.push(`Phần tử điểm thứ ${idx + 1} không phải object hợp lệ.`);
+      needsManualReview = true;
+      return;
+    }
+
+    const rawCouncilId = String(rawItem.council_id ?? rawItem.councilId ?? "").trim();
+    const rawCouncilName = String(rawItem.council_name ?? rawItem.councilName ?? "").trim();
+    const rawDecisionNumber = String(rawItem.decision_number ?? rawItem.decisionNumber ?? "").trim();
+    const rawDecisionYear = rawItem.decision_year ?? rawItem.decisionYear;
+    const rawVerifStatus = String(
+      rawItem.verification_status ?? rawItem.verificationStatus ?? ""
+    )
+      .trim()
+      .toUpperCase();
+
+    if (!rawCouncilId || !rawCouncilName || !rawDecisionNumber || !rawDecisionYear || !rawVerifStatus) {
+      warnings.push(
+        `Phần tử điểm thứ ${idx + 1} thiếu trường bắt buộc (council_id, council_name, decision_number, decision_year hoặc verification_status).`
+      );
+      needsManualReview = true;
+    }
+
+    const { councilId, councilName } = normalizeCouncilIdentity(rawCouncilId, rawCouncilName);
+
+    // Kiểm tra council_id có thuộc danh mục 28 HĐGSNN chính thức không
+    const isOfficialCouncil = isValidOfficialCouncilId(councilId);
+    if (!isOfficialCouncil) {
+      warnings.push(
+        `Mã Hội đồng "${councilId}" (${rawCouncilName}) không nằm trong danh sách 28 HĐGSNN chuẩn theo QĐ 26/QĐ-HĐGSNN.`
+      );
+      needsManualReview = true;
+    }
+
+    // Kiểm tra decision_year
+    const yearNum = Number(rawDecisionYear);
+    const validYear = Number.isInteger(yearNum) && yearNum >= 1990 && yearNum <= 2100;
+    const decisionYear = validYear ? yearNum : 2025;
+    if (!validYear) {
+      warnings.push(`Năm quyết định "${rawDecisionYear}" không hợp lệ tại Hội đồng ${councilId}.`);
+      needsManualReview = true;
+    }
+
+    // Phân tích min_score và max_score (phân biệt rõ 0 và null!)
+    const minScore = parseNullableScoreNumber(rawItem.min_score ?? rawItem.minScore);
+    let maxScore = parseNullableScoreNumber(rawItem.max_score ?? rawItem.maxScore);
+    const conditionsStr =
+      rawItem.conditions !== undefined && rawItem.conditions !== null
+        ? String(rawItem.conditions).trim()
+        : null;
+
+    // Kiểm tra nếu max_score âm hoặc không hợp lệ
+    const rawMaxVal = rawItem.max_score ?? rawItem.maxScore;
+    if (
+      rawMaxVal !== null &&
+      rawMaxVal !== undefined &&
+      String(rawMaxVal).trim() !== "" &&
+      maxScore === null
+    ) {
+      warnings.push(`Giá trị max_score "${rawMaxVal}" không hợp lệ tại Hội đồng ${councilId}.`);
+      needsManualReview = true;
+    }
+
+    // Nếu maxScore là null (chưa xác định mức điểm hoặc có nhiều nhóm ngành cần tách như J_020, J_067, J_069, J_071)
+    if (maxScore === null) {
+      warnings.push(
+        `Mức điểm tối đa (max_score) tại Hội đồng ${councilId} đang để trống (null) — cần Admin kiểm tra điều kiện: "${
+          conditionsStr || "Chưa rõ"
+        }".`
+      );
+      needsManualReview = true;
+    }
+
+    // Kiểm tra source_url nếu có
+    const rawSourceUrl =
+      rawItem.source_url !== undefined && rawItem.source_url !== null
+        ? String(rawItem.source_url).trim()
+        : null;
+    if (
+      rawSourceUrl &&
+      !rawSourceUrl.startsWith("http://") &&
+      !rawSourceUrl.startsWith("https://")
+    ) {
+      warnings.push(`source_url "${rawSourceUrl}" không đúng định dạng URL hợp lệ.`);
+      needsManualReview = true;
+    }
+
+    const sourcePage =
+      rawItem.source_page !== undefined && rawItem.source_page !== null
+        ? String(rawItem.source_page).trim()
+        : null;
+
+    // Quy tắc 8 Mục V: Một dòng có verification_status = VERIFIED nhưng không có phụ lục QĐ 26/QĐ-HĐGSNN phải tự động chuyển sang NEEDS_REVIEW
+    let verificationStatus: CouncilScoreVerificationStatus =
+      rawVerifStatus === "VERIFIED"
+        ? "VERIFIED"
+        : rawVerifStatus === "NEEDS_REVIEW"
+        ? "NEEDS_REVIEW"
+        : "UNVERIFIED";
+
+    const hasQD26 = /26\/QĐ-HĐGSNN/i.test(rawDecisionNumber);
+    const hasPhuLuc = /phụ\s*lục/i.test(String(sourcePage || ""));
+    if (verificationStatus === "VERIFIED" && (!hasQD26 || !hasPhuLuc || !isOfficialCouncil)) {
+      verificationStatus = "NEEDS_REVIEW";
+      needsManualReview = true;
+      warnings.push(
+        `Mức điểm tại ${councilId} ghi nhận VERIFIED nhưng chưa có căn cứ Phụ lục QĐ 26/QĐ-HĐGSNN (${rawDecisionNumber} / ${
+          sourcePage || "Không rõ trang"
+        }) -> đã tự động chuyển sang NEEDS_REVIEW.`
+      );
+    }
+
+    const scoreItem: JournalCouncilScore = {
+      councilId,
+      councilName,
+      rawCouncilName: rawCouncilName || undefined,
+      decisionNumber: rawDecisionNumber || "26/QĐ-HĐGSNN",
+      decisionYear,
+      sourceOrder:
+        rawItem.source_order !== undefined && rawItem.source_order !== null
+          ? String(rawItem.source_order).trim()
+          : rawItem.sourceOrder !== undefined && rawItem.sourceOrder !== null
+          ? String(rawItem.sourceOrder).trim()
+          : null,
+      publicationType:
+        rawItem.publication_type !== undefined && rawItem.publication_type !== null
+          ? String(rawItem.publication_type).trim()
+          : rawItem.publicationType !== undefined && rawItem.publicationType !== null
+          ? String(rawItem.publicationType).trim()
+          : "PRINT",
+      minScore,
+      maxScore,
+      validFrom:
+        rawItem.valid_from !== undefined && rawItem.valid_from !== null
+          ? String(rawItem.valid_from).trim()
+          : rawItem.validFrom !== undefined && rawItem.validFrom !== null
+          ? String(rawItem.validFrom).trim()
+          : null,
+      validTo:
+        rawItem.valid_to !== undefined && rawItem.valid_to !== null
+          ? String(rawItem.valid_to).trim()
+          : rawItem.validTo !== undefined && rawItem.validTo !== null
+          ? String(rawItem.validTo).trim()
+          : null,
+      conditions: conditionsStr,
+      sourceUrl: rawSourceUrl,
+      sourcePage,
+      verificationStatus,
+    };
+
+    const compositeKey = buildCouncilScoreCompositeKey(scoreItem);
+    scoreItem.id = compositeKey;
+
+    if (seenCompositeKeys.has(compositeKey)) {
+      warnings.push(`Phát hiện bản ghi điểm trùng lặp trong cùng JSON (${compositeKey}), đã loại bỏ bản trùng.`);
+      needsManualReview = true;
+      return;
+    }
+    seenCompositeKeys.add(compositeKey);
+    councilScores.push(scoreItem);
+  });
+
+  // Quy tắc 9 Mục V: So sánh so_hoi_dong_cong_nhan với số lượng Hội đồng thực tế trong JSON
+  if (
+    options.expectedCouncilCount !== undefined &&
+    options.expectedCouncilCount !== null &&
+    String(options.expectedCouncilCount).trim() !== ""
+  ) {
+    const expectedCount = Number(options.expectedCouncilCount);
+    const uniqueCouncilsCount = new Set(councilScores.map((c) => c.councilId)).size;
+    if (
+      Number.isFinite(expectedCount) &&
+      expectedCount > 0 &&
+      uniqueCouncilsCount !== expectedCount &&
+      councilScores.length !== expectedCount
+    ) {
+      warnings.push(
+        `Số Hội đồng công nhận (${expectedCount}) không khớp với số Hội đồng trong JSON (${uniqueCouncilsCount} Hội đồng / ${councilScores.length} mục điểm).`
+      );
+      needsManualReview = true;
+    }
+  }
+
+  // Chuyển đổi sang mảng scores (JournalScoreItem[]) tương thích ngược
+  const scores: JournalScoreItem[] = councilScores.map((cs, idx) => {
+    const noteParts: string[] = [];
+    if (cs.publicationType && cs.publicationType !== "PRINT") {
+      noteParts.push(`Ấn phẩm: ${cs.publicationType}`);
+    }
+    if (cs.conditions) {
+      noteParts.push(cs.conditions);
+    }
+    if (cs.sourcePage) {
+      noteParts.push(`Nguồn: ${cs.sourcePage}`);
+    }
+    return {
+      id: cs.id || `PTS-${idx + 1}`,
+      journalId: options.journalId,
+      councilCode: cs.councilId,
+      councilName: cs.councilName,
+      year: cs.decisionYear,
+      maxScore: cs.maxScore ?? 0,
+      rawMaxScore: cs.maxScore,
+      minScore: cs.minScore ?? 0,
+      decisionNumber: cs.decisionNumber,
+      decisionDate: `${cs.decisionYear}-07-11`,
+      notes: noteParts.join(" | ") || undefined,
+      sourceOrder: cs.sourceOrder,
+      publicationType: cs.publicationType,
+      validFrom: cs.validFrom,
+      validTo: cs.validTo,
+      conditions: cs.conditions,
+      sourceUrl: cs.sourceUrl,
+      sourcePage: cs.sourcePage,
+      verificationStatus: cs.verificationStatus,
+    };
+  });
+
+  const numericMaxScores = councilScores
+    .map((c) => c.maxScore)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  const maxScore = numericMaxScores.length > 0 ? Math.max(...numericMaxScores) : 0;
+  const maxScoreYear =
+    councilScores.length > 0
+      ? Math.max(...councilScores.map((c) => c.decisionYear || 2025))
+      : 2025;
+
+  let reconciliationStatus: SparkScoreReconciliationStatus = "HOAN_TAT";
+  if (councilScores.length === 0 || rawStatusNorm === "CHUA_XAC_MINH") {
+    reconciliationStatus = "CHUA_XAC_MINH";
+  } else if (
+    needsManualReview ||
+    rawStatusNorm === "CAN_KIEM_TRA" ||
+    councilScores.some((c) => c.verificationStatus !== "VERIFIED" || c.maxScore === null)
+  ) {
+    reconciliationStatus = "CAN_KIEM_TRA";
+  }
+
+  return {
+    councilScores,
+    scores,
+    maxScore,
+    maxScoreYear,
+    warnings,
+    needsManualReview: reconciliationStatus !== "HOAN_TAT",
+    reconciliationStatus,
+  };
+}
 
 export interface ParsedGoogleSheetJournalRow {
   rowIndex: number;
@@ -29,10 +606,31 @@ export interface ParsedGoogleSheetJournalRow {
 export interface FetchJournalSheetResult {
   sheetId: string;
   sheetName: string;
+  sourceSpreadsheetId: string;
+  sourceSheetName: string;
   totalRows: number;
   validJournals: Journal[];
   warnings: string[];
   manualReviewCount: number;
+  usedFallbackSheet?: boolean;
+  usedFallbackCatalogSheet: boolean;
+  fallbackNotice?: string;
+  multiCouncilStats: {
+    rowsWithJson: number;
+    totalCouncilEntries: number;
+    totalCouncilRecords: number;
+    multiCouncilJournalsCount: number;
+    diffScoreAcrossCouncilsCount: number;
+    diffScoreJournalsCount: number;
+    reconciliationCounts: {
+      HOAN_TAT: number;
+      CAN_KIEM_TRA: number;
+      CHUA_XAC_MINH: number;
+    };
+    hoanTatCount: number;
+    canKiemTraCount: number;
+    chuaXacMinhCount: number;
+  };
 }
 
 /**
@@ -235,9 +833,9 @@ export function parseScoresJson(
   if (Array.isArray(val)) {
     return val.map((s, idx) => ({
       id: s.id || `PTS-${idx + 1}`,
-      councilCode: s.councilCode || s.council_code || "HDGS_CHUNG",
+      councilCode: s.councilCode || s.council_code || s.council_id || "HDGS_CHUNG",
       councilName: s.councilName || s.council_name || fallback.primaryField,
-      year: Number(s.year) || fallback.maxScoreYear || 2025,
+      year: Number(s.year || s.decision_year) || fallback.maxScoreYear || 2025,
       maxScore: Number(s.maxScore ?? s.max_score ?? fallback.maxScore),
       minScore:
         s.minScore !== undefined
@@ -247,7 +845,7 @@ export function parseScoresJson(
           : undefined,
       decisionNumber: s.decisionNumber || s.decision_number || "26/QĐ-HĐGSNN",
       decisionDate: s.decisionDate || s.decision_date || "2025-07-11",
-      notes: s.notes || s.ghi_chu || undefined,
+      notes: s.notes || s.conditions || s.ghi_chu || undefined,
     }));
   }
 
@@ -258,9 +856,9 @@ export function parseScoresJson(
       const arr = Array.isArray(parsed) ? parsed : [parsed];
       return arr.map((s, idx) => ({
         id: s.id || `PTS-${idx + 1}`,
-        councilCode: s.councilCode || s.council_code || "HDGS_CHUNG",
+        councilCode: s.councilCode || s.council_code || s.council_id || "HDGS_CHUNG",
         councilName: s.councilName || s.council_name || fallback.primaryField,
-        year: Number(s.year) || fallback.maxScoreYear || 2025,
+        year: Number(s.year || s.decision_year) || fallback.maxScoreYear || 2025,
         maxScore: Number(s.maxScore ?? s.max_score ?? fallback.maxScore),
         minScore:
           s.minScore !== undefined
@@ -270,7 +868,7 @@ export function parseScoresJson(
             : undefined,
         decisionNumber: s.decisionNumber || s.decision_number || "26/QĐ-HĐGSNN",
         decisionDate: s.decisionDate || s.decision_date || "2025-07-11",
-        notes: s.notes || s.ghi_chu || undefined,
+        notes: s.notes || s.conditions || s.ghi_chu || undefined,
       }));
     } catch {
       // Fallback
@@ -369,9 +967,9 @@ export function parseGuidelinesValue(
 }
 
 /**
- * Fetches and parses Google Sheets single tab rows via GViz endpoint.
- * Supports primary tab "Trang tính1" and fallback "TAP_CHI".
- * Fully parses all 47 columns and identifies 17 manual inspection cases.
+ * Fetches and parses Google Sheets rows via GViz endpoint.
+ * Supports primary tab "TAP_CHI", fallback "Trang tính1", and "Untitled".
+ * Fully parses all 47 base columns AND the 6 new multi-council score columns (53 columns total).
  */
 export async function fetchJournalGoogleSheetRows(
   sheetId: string,
@@ -394,7 +992,7 @@ export async function fetchJournalGoogleSheetRows(
     const response = await fetchImpl(url, { signal: AbortSignal.timeout(25000) });
     if (!response.ok) {
       throw new Error(
-        `Lỗi kết nối Google Sheets HTTP ${response.status}: ${response.statusText}. Kiểm tra xem file đã được chia sẻ quyền xem (Anyone with the link can view) chưa.`
+        `Lỗi kết nối Google Sheets HTTP ${response.status}: ${response.statusText} (File ID: ${cleanId}, Tab: ${targetTab}). Kiểm tra xem file đã được chia sẻ quyền xem công khai (Anyone with the link can view) chưa.`
       );
     }
     const text = await response.text();
@@ -417,19 +1015,25 @@ export async function fetchJournalGoogleSheetRows(
       throw new Error(resObj.errors?.[0]?.message || "Lỗi nạp tab chính");
     }
   } catch (primaryErr) {
-    // If primary tab fails, try fallback tab
-    const alternativeTab =
-      effectiveSheetName === DEFAULT_JOURNAL_SHEET_NAME
-        ? FALLBACK_JOURNAL_SHEET_NAME
-        : DEFAULT_JOURNAL_SHEET_NAME;
-    try {
-      resObj = await tryFetchGviz(alternativeTab);
-      if (resObj.status === "ok" && resObj.table) {
-        effectiveSheetName = alternativeTab;
-      } else {
-        throw primaryErr;
+    // Try fallback tabs
+    const fallbackCandidates = ["TAP_CHI", "Trang tính1", "Untitled"].filter(
+      (t) => t !== effectiveSheetName
+    );
+    let recovered = false;
+    for (const altTab of fallbackCandidates) {
+      try {
+        const candidateRes = await tryFetchGviz(altTab);
+        if (candidateRes.status === "ok" && candidateRes.table) {
+          resObj = candidateRes;
+          effectiveSheetName = altTab;
+          recovered = true;
+          break;
+        }
+      } catch {
+        // continue trying next fallback tab
       }
-    } catch {
+    }
+    if (!recovered) {
       throw primaryErr;
     }
   }
@@ -460,7 +1064,7 @@ export async function fetchJournalGoogleSheetRows(
     return -1;
   };
 
-  // 47 column indexes
+  // 47 base column indexes
   const cJournalId = getCol(["journal_id", "ma_tap_chi", "id", "stt"]);
   const cName = getCol(["ten_chinh_thuc_vn", "ten_tap_chi", "journal_name", "name", "ten_tieng_viet", "tap_chi"]);
   const cEnglishName = getCol(["ten_tieng_anh", "english_name", "english"]);
@@ -477,7 +1081,7 @@ export async function fetchJournalGoogleSheetRows(
   const cStatus = getCol(["trang_thai_hoat_dong"]);
   const cPdfIndex = getCol(["so_tt_pdf"]);
 
-  // Scores
+  // Legacy 6-column Scores
   const cNhomNganh = getCol(["nhom_nganh_hdgsnn"]);
   const cTenNhom = getCol(["ten_nhom_nganh"]);
   const cPhanLoai = getCol(["phan_loai_an_pham"]);
@@ -486,6 +1090,14 @@ export async function fetchJournalGoogleSheetRows(
   const cGhiChuDiem = getCol(["ghi_chu_diem_hdgsnn"]);
   const cScoresJson = getCol(["scores", "scores_json", "diem_hdgsnn_json"]);
   const cFields = getCol(["fields", "nhom_nganh", "cac_hoi_dong", "hoi_dong_nganh"]);
+
+  // 6 NEW Multi-Council Score Columns (Columns 48..53 / indices 47..52)
+  const cDiemTheoHoiDongJson = getCol(["diem_theo_hoi_dong_json"]);
+  const cSoHoiDongCongNhan = getCol(["so_hoi_dong_cong_nhan"]);
+  const cHoiDongDaXacMinh = getCol(["hoi_dong_da_xac_minh"]);
+  const cNamQuyetDinh = getCol(["nam_quyet_dinh"]);
+  const cTrangThaiDoiSoatDiem = getCol(["trang_thai_doi_soat_diem"]);
+  const cNguonDiemTheoHoiDong = getCol(["nguon_diem_theo_hoi_dong"]);
 
   // Guidelines
   const cTheLe = getCol(["the_le_dang_bai", "guidelines", "huong_dan_tac_gia", "the_le"]);
@@ -559,35 +1171,122 @@ export async function fetchJournalGoogleSheetRows(
         : pubAgency || hostAgency || "Đang cập nhật cơ quan xuất bản";
 
     const primaryField = getVal(cPrimaryField) || "Văn hóa - Nghệ thuật";
+    const nameHistory = getVal(cNameHistory) || undefined;
 
-    // Score resolution: check JSON first if present, otherwise use 6-column adapter
+    // Score resolution: Prefer 53-column `diem_theo_hoi_dong_json` if present
     let scores: JournalScoreItem[] = [];
+    let councilScores: JournalCouncilScore[] = [];
     let maxScore = 0;
     let maxScoreYear = 2025;
+    let scoreReconciliationStatus: SparkScoreReconciliationStatus = "HOAN_TAT";
+    let rowScoreWarnings: string[] = [];
 
-    const rawScoresJson = getVal(cScoresJson);
-    if (rawScoresJson && (rawScoresJson.startsWith("[") || rawScoresJson.startsWith("{"))) {
-      scores = parseScoresJson(rawScoresJson, { maxScore: 0, maxScoreYear: 2025, primaryField });
-      maxScore = scores.length > 0 ? Math.max(...scores.map((s) => s.maxScore)) : 0;
-      maxScoreYear = scores.length > 0 ? scores[0].year : 2025;
-    } else {
-      const adapted = parseScoreAdapter({
-        nhomNganhRaw: getVal(cNhomNganh),
-        tenNhomRaw: getVal(cTenNhom),
-        phanLoaiRaw: getVal(cPhanLoai),
-        diem2025Raw: getVal(cDiem2025),
-        cacMocRaw: getVal(cCacMocDiem),
-        ghiChuRaw: getVal(cGhiChuDiem),
+    const rawMultiCouncilJson = getVal(cDiemTheoHoiDongJson);
+    const rawSoHoiDong = getVal(cSoHoiDongCongNhan);
+    const rawHoiDongVerified = getVal(cHoiDongDaXacMinh);
+    const rawNamQuyetDinh = getVal(cNamQuyetDinh);
+    const rawTrangThaiDoiSoat = getVal(cTrangThaiDoiSoatDiem);
+    const rawNguonDiem = getVal(cNguonDiemTheoHoiDong);
+
+    if (rawMultiCouncilJson) {
+      const multiParsed = parseMultiCouncilScoresJson(rawMultiCouncilJson, {
+        expectedCouncilCount: rawSoHoiDong,
+        rawSparkStatus: rawTrangThaiDoiSoat,
         fallbackField: primaryField,
+        journalId,
       });
-      scores = adapted.scores;
-      maxScore = adapted.maxScore;
-      maxScoreYear = adapted.maxScoreYear;
+      councilScores = multiParsed.councilScores;
+      scores = multiParsed.scores;
+      maxScore = multiParsed.maxScore;
+      maxScoreYear = multiParsed.maxScoreYear;
+      scoreReconciliationStatus = multiParsed.reconciliationStatus;
+      rowScoreWarnings = multiParsed.warnings;
+
+      // Fallback maxScore from legacy column if JSON had null max_score (e.g., J_067, J_069, J_071)
+      if (maxScore === 0 && councilScores.every((c) => c.maxScore === null)) {
+        const legacyAdapted = parseScoreAdapter({
+          nhomNganhRaw: getVal(cNhomNganh),
+          tenNhomRaw: getVal(cTenNhom),
+          phanLoaiRaw: getVal(cPhanLoai),
+          diem2025Raw: getVal(cDiem2025),
+          cacMocRaw: getVal(cCacMocDiem),
+          ghiChuRaw: getVal(cGhiChuDiem),
+          fallbackField: primaryField,
+        });
+        maxScore = legacyAdapted.maxScore;
+        maxScoreYear = legacyAdapted.maxScoreYear;
+      }
+    } else {
+      const rawScoresJson = getVal(cScoresJson);
+      if (rawScoresJson && (rawScoresJson.startsWith("[") || rawScoresJson.startsWith("{"))) {
+        scores = parseScoresJson(rawScoresJson, { maxScore: 0, maxScoreYear: 2025, primaryField });
+        maxScore = scores.length > 0 ? Math.max(...scores.map((s) => s.maxScore)) : 0;
+        maxScoreYear = scores.length > 0 ? scores[0].year : 2025;
+      } else {
+        const adapted = parseScoreAdapter({
+          nhomNganhRaw: getVal(cNhomNganh),
+          tenNhomRaw: getVal(cTenNhom),
+          phanLoaiRaw: getVal(cPhanLoai),
+          diem2025Raw: getVal(cDiem2025),
+          cacMocRaw: getVal(cCacMocDiem),
+          ghiChuRaw: getVal(cGhiChuDiem),
+          fallbackField: primaryField,
+        });
+        scores = adapted.scores;
+        maxScore = adapted.maxScore;
+        maxScoreYear = adapted.maxScoreYear;
+      }
+
+      // Build councilScores from legacy scores
+      councilScores = scores.map((s) => {
+        const norm = normalizeCouncilIdentity(s.councilCode, s.councilName);
+        const cs: JournalCouncilScore = {
+          councilId: norm.councilId,
+          councilName: norm.councilName,
+          rawCouncilName: s.councilName,
+          decisionNumber: s.decisionNumber || "26/QĐ-HĐGSNN",
+          decisionYear: s.year || maxScoreYear || 2025,
+          publicationType: s.publicationType || "PRINT",
+          minScore: s.minScore ?? 0,
+          maxScore: s.rawMaxScore !== undefined ? s.rawMaxScore : s.maxScore,
+          conditions: s.conditions || s.notes || null,
+          sourcePage: "Phụ lục 24",
+          verificationStatus: s.verificationStatus || "VERIFIED",
+        };
+        cs.id = buildCouncilScoreCompositeKey(cs);
+        return cs;
+      });
     }
+
+    if (rowScoreWarnings.length > 0) {
+      rowScoreWarnings.forEach((w) => warnings.push(`${journalId} (${name}): ${w}`));
+    }
+
+    // Verified councils list
+    const verifiedCouncils = rawHoiDongVerified
+      ? rawHoiDongVerified
+          .split(/[,;|]/)
+          .map((s) => s.trim().toUpperCase())
+          .filter(Boolean)
+      : Array.from(
+          new Set(
+            councilScores
+              .filter((c) => c.verificationStatus === "VERIFIED")
+              .map((c) => c.councilId)
+          )
+        );
+
+    const recognizedCouncilCount =
+      rawSoHoiDong && !isNaN(Number(rawSoHoiDong))
+        ? Number(rawSoHoiDong)
+        : new Set(councilScores.map((c) => c.councilId)).size;
 
     // Fields aggregation
     const fieldsSet = new Set<string>();
     fieldsSet.add(primaryField);
+    councilScores.forEach((cs) => {
+      if (cs.councilName) fieldsSet.add(cs.councilName);
+    });
     scores.forEach((s) => {
       if (s.councilName) fieldsSet.add(s.councilName);
     });
@@ -615,16 +1314,25 @@ export async function fetchJournalGoogleSheetRows(
           websiteVerifiedVal.includes("verified"))
     );
 
-    // Manual check needed flag (17 official Spark cases)
+    // Manual check needed flag (17 official Spark cases + any multi-council validation warnings)
     const canCheckManualVal = getVal(cCanAdminKiemTra).trim().toUpperCase();
-    const isManualCheckNeeded =
+    const isSparkManualCheck =
       canCheckManualVal.includes("CÓ") ||
       canCheckManualVal.includes("CO") ||
       canCheckManualVal === "1" ||
-      canCheckManualVal === "TRUE";
-    const manualCheckReason = getVal(cLyDoKiemTra);
+      canCheckManualVal === "TRUE" ||
+      rawTrangThaiDoiSoat.toUpperCase() === "CAN_KIEM_TRA";
 
-    if (isManualCheckNeeded) {
+    const isManualCheckNeeded =
+      isSparkManualCheck || scoreReconciliationStatus === "CAN_KIEM_TRA";
+
+    const manualCheckReasonsList = [
+      getVal(cLyDoKiemTra),
+      ...rowScoreWarnings,
+    ].filter(Boolean);
+    const manualCheckReason = manualCheckReasonsList.join(" | ");
+
+    if (isSparkManualCheck) {
       manualReviewCount++;
     }
 
@@ -650,7 +1358,7 @@ export async function fetchJournalGoogleSheetRows(
     const guidelinesSummaryParts = [
       getVal(cTheLe),
       getVal(cHinhThucNop) ? `Hình thức nộp: ${getVal(cHinhThucNop)}` : "",
-      getVal(cNameHistory) ? `Lịch sử đổi tên: ${getVal(cNameHistory)}` : "",
+      nameHistory ? `Lịch sử đổi tên: ${nameHistory}` : "",
     ].filter(Boolean);
 
     const guidelines = parseGuidelinesValue(guidelinesSummaryParts.join("\n\n"), {
@@ -710,7 +1418,8 @@ export async function fetchJournalGoogleSheetRows(
         : "unverified",
       verifiedBy: "Spark Agent",
       verifiedDate: getVal(cNgayXacMinh) || now.split("T")[0],
-      sourceReference: getVal(cNguonDoiSoat) || "Quyết định 26/QĐ-HĐGSNN ngày 11/7/2025",
+      sourceReference:
+        rawNguonDiem || getVal(cNguonDoiSoat) || "Quyết định 26/QĐ-HĐGSNN ngày 11/7/2025",
       notes: verificationNotes || undefined,
       schemaVersion: 1,
       manualReviewNeeded: isManualCheckNeeded,
@@ -725,17 +1434,25 @@ export async function fetchJournalGoogleSheetRows(
       englishName: getVal(cEnglishName) || undefined,
       abbreviation: getVal(cAbbr) || undefined,
       publisher,
+      hostAgency: hostAgency || undefined,
+      nameHistory,
       issnPrint: normalizeIssn(getVal(cIssnPrint)) || undefined,
       issnOnline: normalizeIssn(getVal(cIssnOnline)) || undefined,
       isbn: getVal(cIsbn) || undefined,
       category: "domestic",
       primaryField,
-      fields: Array.from(fieldsSet),
+      fields: Array.from(fieldsSet).slice(0, 45),
       website,
       websiteVerified,
       maxScore,
       maxScoreYear,
       scores,
+      councilScores,
+      recognizedCouncilCount,
+      verifiedCouncils,
+      decisionYear: rawNamQuyetDinh ? Number(rawNamQuyetDinh) || maxScoreYear : maxScoreYear,
+      scoreReconciliationStatus,
+      scoreSourceNote: rawNguonDiem || undefined,
       guidelines,
       links,
       verification,
@@ -749,13 +1466,408 @@ export async function fetchJournalGoogleSheetRows(
     validJournals.push(journalObj);
   }
 
+  const rowsWithJson = validJournals.filter((j) => (j.councilScores?.length || 0) > 0).length;
+  const totalCouncilRecords = validJournals.reduce(
+    (acc, j) => acc + (j.councilScores?.length || 0),
+    0
+  );
+  const multiCouncilJournalsCount = validJournals.filter(
+    (j) => (j.recognizedCouncilCount || new Set((j.councilScores || []).map((c) => c.councilId)).size) >= 2
+  ).length;
+  const diffScoreJournalsCount = validJournals.filter((j) => {
+    const numSet = new Set(
+      (j.councilScores || [])
+        .map((c) => c.maxScore)
+        .filter((v): v is number => typeof v === "number")
+    );
+    return numSet.size >= 2;
+  }).length;
+  const hoanTatCount = validJournals.filter(
+    (j) => j.scoreReconciliationStatus === "HOAN_TAT"
+  ).length;
+  const canKiemTraCount = validJournals.filter(
+    (j) => j.scoreReconciliationStatus === "CAN_KIEM_TRA"
+  ).length;
+  const chuaXacMinhCount = validJournals.filter(
+    (j) => j.scoreReconciliationStatus === "CHUA_XAC_MINH"
+  ).length;
+
   return {
     sheetId: cleanId,
     sheetName: effectiveSheetName,
+    sourceSpreadsheetId: cleanId,
+    sourceSheetName: effectiveSheetName,
     totalRows: rows.length,
     validJournals,
     warnings,
     manualReviewCount,
+    usedFallbackCatalogSheet: false,
+    multiCouncilStats: {
+      rowsWithJson,
+      totalCouncilEntries: totalCouncilRecords,
+      totalCouncilRecords,
+      multiCouncilJournalsCount,
+      diffScoreAcrossCouncilsCount: diffScoreJournalsCount,
+      diffScoreJournalsCount,
+      reconciliationCounts: {
+        HOAN_TAT: hoanTatCount,
+        CAN_KIEM_TRA: canKiemTraCount,
+        CHUA_XAC_MINH: chuaXacMinhCount,
+      },
+      hoanTatCount,
+      canKiemTraCount,
+      chuaXacMinhCount,
+    },
+  };
+}
+
+/**
+ * Fetches multi-council HDGSNN 53-column rows from Sheet 2 (`1KqLzOaUsynoMd7oBhe3Fxlvo1ssX4lC4TkD_8Duqm0c`, tab `Untitled`).
+ * If Sheet 2 returns HTTP 401/403 (not shared publicly yet) and `allowFallbackToCatalogSheet` is true,
+ * falls back to reading the 53-column data from the official catalog sheet (`1QJKvNd7s0eZpr8HiO_FYGi5HQF3sHhlqR6_G5SODXWE`, tab `TAP_CHI`)
+ * while recording an explicit transparency notice in `warnings`.
+ */
+export async function fetchMultiCouncilGoogleSheetRows(
+  sheetId: string = DEFAULT_SPARK_HDGSNN_SPREADSHEET_ID,
+  sheetName: string = DEFAULT_SPARK_HDGSNN_SHEET_NAME,
+  options: {
+    fetchImpl?: typeof fetch;
+    allowFallbackToCatalogSheet?: boolean;
+    catalogSheetId?: string;
+    catalogSheetName?: string;
+  } = {}
+): Promise<FetchJournalSheetResult> {
+  const {
+    fetchImpl = fetch,
+    allowFallbackToCatalogSheet = true,
+    catalogSheetId = DEFAULT_JOURNAL_SPREADSHEET_ID,
+    catalogSheetName = DEFAULT_JOURNAL_SHEET_NAME,
+  } = options;
+
+  try {
+    return await fetchJournalGoogleSheetRows(sheetId, sheetName, { fetchImpl });
+  } catch (err: any) {
+    const errMsg = String(err?.message || err);
+    if (allowFallbackToCatalogSheet && sheetId !== catalogSheetId) {
+      const fallbackRes = await fetchJournalGoogleSheetRows(catalogSheetId, catalogSheetName, {
+        fetchImpl,
+      });
+      const hasMultiCouncilCols = fallbackRes.validJournals.some(
+        (j) => (j.councilScores?.length || 0) > 0
+      );
+      if (hasMultiCouncilCols) {
+        const notice = `Lưu ý nguồn dữ liệu: Bảng phụ ${sheetId} (tab ${sheetName}) hiện chưa mở quyền xem công khai (${errMsg}). Hệ thống đã đọc 53 cột điểm đa Hội đồng từ bảng chính ${catalogSheetId} (tab ${fallbackRes.sheetName}).`;
+        return {
+          ...fallbackRes,
+          usedFallbackSheet: true,
+          usedFallbackCatalogSheet: true,
+          fallbackNotice: notice,
+          warnings: [notice, ...fallbackRes.warnings],
+        };
+      }
+    }
+    throw err;
+  }
+}
+
+export interface JournalIdentityMatchResult {
+  status: JournalIdentityMatchStatus;
+  matchedJournal?: Journal;
+  method: string;
+  notes?: string;
+}
+
+/**
+ * Đối soát định danh tạp chí giữa bảng nguồn mới và danh sách tạp chí hiện có (Mục IV.1 & IV.2).
+ * Tuyệt đối không mặc định journal_id là cùng một tạp chí nếu chưa kiểm tra định danh:
+ * - So sánh: issnPrint, issnOnline, tên tiếng Việt chuẩn hóa, tên tiếng Anh, đơn vị xuất bản, cơ quan chủ quản, lịch sử đổi tên, website.
+ * - Chống gộp nhầm các tạp chí trùng tên chung "Tạp chí Khoa học" nhưng khác trường đại học hoặc khác chuyên san (Bản B vs Bản D).
+ */
+export function matchJournalIdentity(
+  incoming: Journal,
+  existingJournals: Journal[]
+): JournalIdentityMatchResult {
+  const inIssnP = normalizeIssn(incoming.issnPrint || "");
+  const inIssnO = normalizeIssn(incoming.issnOnline || "");
+  const inNormName = normalizeTitle(incoming.name || "");
+  const inBaseName = normalizeTitle((incoming.name || "").split("(")[0]);
+  const inNormPub = normalizeTitle(incoming.publisher || "");
+  const inNormHost = normalizeTitle(incoming.hostAgency || "");
+  const inNormEng = normalizeTitle(incoming.englishName || "");
+  const inNormHistory = normalizeTitle(incoming.nameHistory || "");
+
+  const isGenericName =
+    inBaseName === "tapchikhoahoc" ||
+    inBaseName === "tapchikhoahocvacongnghe" ||
+    inBaseName === "tapchikhoahocvacongnghevietnam";
+
+  // 1. Check if there is an existing journal with the same journalId
+  const byId = existingJournals.find(
+    (j) => j.journalId === incoming.journalId || j.id === incoming.journalId
+  );
+
+  // 2. Check by ISSN Print / E-ISSN
+  const byIssnP = inIssnP
+    ? existingJournals.filter(
+        (j) =>
+          normalizeIssn(j.issnPrint || "") === inIssnP ||
+          normalizeIssn(j.issnOnline || "") === inIssnP
+      )
+    : [];
+  const byIssnO = inIssnO
+    ? existingJournals.filter(
+        (j) =>
+          normalizeIssn(j.issnOnline || "") === inIssnO ||
+          normalizeIssn(j.issnPrint || "") === inIssnO
+      )
+    : [];
+
+  // 3. Check by full normalized Vietnamese title
+  const byFullTitle = inNormName
+    ? existingJournals.filter((j) => normalizeTitle(j.name || "") === inNormName)
+    : [];
+
+  // Detect CONFLICT if byId exists but points to a completely different journal
+  if (byId) {
+    const idNormName = normalizeTitle(byId.name || "");
+    const idIssnP = normalizeIssn(byId.issnPrint || "");
+    const idIssnO = normalizeIssn(byId.issnOnline || "");
+    const idNormPub = normalizeTitle(byId.publisher || "");
+
+    const sameIssn =
+      (inIssnP && (inIssnP === idIssnP || inIssnP === idIssnO)) ||
+      (inIssnO && (inIssnO === idIssnO || inIssnO === idIssnP));
+    const sameName = inNormName && inNormName === idNormName;
+    const inHistory =
+      inNormHistory.includes(idNormName) ||
+      normalizeTitle(byId.nameHistory || "").includes(inNormName);
+
+    if (!sameIssn && !sameName && !inHistory) {
+      return {
+        status: "CONFLICT",
+        matchedJournal: byId,
+        method: "CONFLICT_JOURNAL_ID",
+        notes: `Xung đột mã ${incoming.journalId}: Bảng mới là "${incoming.name}" (ISSN: ${
+          inIssnP || "—"
+        }) nhưng hệ thống đang lưu là "${byId.name}" (ISSN: ${idIssnP || "—"}, ĐVXB: ${
+          byId.publisher
+        }). Không tự động gộp.`,
+      };
+    }
+
+    // If generic name ("Tạp chí Khoa học"), verify that ISSN or publisher also matches
+    if (isGenericName && !sameIssn && idNormPub && inNormPub && idNormPub !== inNormPub) {
+      return {
+        status: "AMBIGUOUS",
+        matchedJournal: byId,
+        method: "GENERIC_NAME_DIFF_PUBLISHER",
+        notes: `Tạp chí có tên chung "${incoming.name}" nhưng đơn vị xuất bản khác nhau ("${incoming.publisher}" vs "${byId.publisher}"). Cần Admin xác nhận.`,
+      };
+    }
+
+    return {
+      status: "MATCHED",
+      matchedJournal: byId,
+      method: sameIssn ? "ID_AND_ISSN_VERIFIED" : "ID_AND_NAME_VERIFIED",
+    };
+  }
+
+  // Match by ISSN Print
+  if (byIssnP.length === 1) {
+    const target = byIssnP[0];
+    const targetNormName = normalizeTitle(target.name || "");
+    const nameCompatible =
+      targetNormName === inNormName ||
+      targetNormName.includes(inBaseName) ||
+      inNormName.includes(normalizeTitle((target.name || "").split("(")[0])) ||
+      inNormHistory.includes(targetNormName);
+
+    if (nameCompatible) {
+      return {
+        status: "MATCHED",
+        matchedJournal: target,
+        method: "ISSN_PRINT_AND_NAME",
+      };
+    }
+    return {
+      status: "CONFLICT",
+      matchedJournal: target,
+      method: "ISSN_CONFLICT_NAME",
+      notes: `Trùng ISSN bản in (${inIssnP}) nhưng tên tạp chí khác nhau: "${incoming.name}" vs "${target.name}".`,
+    };
+  } else if (byIssnP.length > 1) {
+    return {
+      status: "AMBIGUOUS",
+      matchedJournal: byIssnP[0],
+      method: "MULTIPLE_ISSN_MATCHES",
+      notes: `Có ${byIssnP.length} tạp chí cùng mang ISSN ${inIssnP}. Cần Admin kiểm tra.`,
+    };
+  }
+
+  // Match by E-ISSN
+  if (byIssnO.length === 1) {
+    const target = byIssnO[0];
+    const targetNormName = normalizeTitle(target.name || "");
+    const nameCompatible =
+      targetNormName === inNormName ||
+      targetNormName.includes(inBaseName) ||
+      inNormHistory.includes(targetNormName);
+    if (nameCompatible) {
+      return {
+        status: "MATCHED",
+        matchedJournal: target,
+        method: "E_ISSN_AND_NAME",
+      };
+    }
+    return {
+      status: "CONFLICT",
+      matchedJournal: target,
+      method: "E_ISSN_CONFLICT_NAME",
+      notes: `Trùng E-ISSN (${inIssnO}) nhưng tên tạp chí khác nhau: "${incoming.name}" vs "${target.name}".`,
+    };
+  }
+
+  // Match by exact full title
+  if (byFullTitle.length === 1) {
+    const target = byFullTitle[0];
+    const targetIssnP = normalizeIssn(target.issnPrint || "");
+    const targetNormPub = normalizeTitle(target.publisher || "");
+
+    // If both have ISSN Print and they differ -> conflict or sub-series (e.g. Bản B vs Bản D)
+    if (inIssnP && targetIssnP && inIssnP !== targetIssnP) {
+      return {
+        status: "CONFLICT",
+        matchedJournal: target,
+        method: "SAME_TITLE_DIFF_ISSN",
+        notes: `Cùng tên "${incoming.name}" nhưng khác mã ISSN (${inIssnP} vs ${targetIssnP}). Có thể là hai chuyên san khác nhau.`,
+      };
+    }
+
+    if (
+      isGenericName &&
+      inNormPub &&
+      targetNormPub &&
+      !inNormPub.includes(targetNormPub) &&
+      !targetNormPub.includes(inNormPub) &&
+      !inNormHost
+    ) {
+      return {
+        status: "AMBIGUOUS",
+        matchedJournal: target,
+        method: "GENERIC_TITLE_AMBIGUOUS_PUB",
+        notes: `Trùng tên chung "${incoming.name}" nhưng chưa xác minh trùng cơ quan chủ quản ("${incoming.publisher}" vs "${target.publisher}").`,
+      };
+    }
+
+    return {
+      status: "MATCHED",
+      matchedJournal: target,
+      method: "EXACT_NAME_AND_PUBLISHER",
+    };
+  } else if (byFullTitle.length > 1) {
+    return {
+      status: "AMBIGUOUS",
+      matchedJournal: byFullTitle[0],
+      method: "MULTIPLE_TITLE_MATCHES",
+      notes: `Có ${byFullTitle.length} tạp chí trùng tên "${incoming.name}" trong hệ thống.`,
+    };
+  }
+
+  // Check if incoming base name matches an existing generic journal with different parenthetical
+  if (isGenericName) {
+    const sameBase = existingJournals.filter(
+      (j) => normalizeTitle((j.name || "").split("(")[0]) === inBaseName
+    );
+    if (sameBase.length > 0 && !inIssnP && !inIssnO) {
+      return {
+        status: "AMBIGUOUS",
+        method: "GENERIC_BASE_NAME_NO_ISSN",
+        notes: `Tạp chí "${incoming.name}" thiếu mã ISSN và trùng tên cơ sở với ${sameBase.length} tạp chí khác.`,
+      };
+    }
+  }
+
+  // Check by English Name if non-empty
+  if (inNormEng && inNormEng.length > 10) {
+    const byEng = existingJournals.filter(
+      (j) => normalizeTitle(j.englishName || "") === inNormEng
+    );
+    if (byEng.length === 1) {
+      return {
+        status: "AMBIGUOUS",
+        matchedJournal: byEng[0],
+        method: "ENGLISH_NAME_ONLY",
+        notes: `Khớp qua tên tiếng Anh "${incoming.englishName}" với "${byEng[0].name}", cần Admin xác nhận.`,
+      };
+    }
+  }
+
+  return {
+    status: "UNMATCHED",
+    method: "NEW_JOURNAL",
+  };
+}
+
+/**
+ * Compares two journals' council scores to count newly added scores and modified scores.
+ */
+export function computeCouncilScoresDiff(
+  oldScores: JournalCouncilScore[] = [],
+  newScores: JournalCouncilScore[] = []
+): {
+  newScoresCount: number;
+  changedScoresCount: number;
+  hasScoreChanges: boolean;
+} {
+  const oldByKey = new Map<string, JournalCouncilScore>();
+  const oldByCouncilAndType = new Map<string, JournalCouncilScore>();
+
+  oldScores.forEach((s) => {
+    const key = s.id || buildCouncilScoreCompositeKey(s);
+    oldByKey.set(key, s);
+    const shortKey = `${s.councilId}__${s.decisionYear}__${s.publicationType || "PRINT"}__${
+      s.sourceOrder || ""
+    }`;
+    oldByCouncilAndType.set(shortKey, s);
+  });
+
+  let newScoresCount = 0;
+  let changedScoresCount = 0;
+
+  newScores.forEach((ns) => {
+    const key = ns.id || buildCouncilScoreCompositeKey(ns);
+    if (oldByKey.has(key)) {
+      const os = oldByKey.get(key)!;
+      if (os.maxScore !== ns.maxScore || os.verificationStatus !== ns.verificationStatus) {
+        changedScoresCount++;
+      }
+      return;
+    }
+
+    const shortKey = `${ns.councilId}__${ns.decisionYear}__${ns.publicationType || "PRINT"}__${
+      ns.sourceOrder || ""
+    }`;
+    if (oldByCouncilAndType.has(shortKey)) {
+      const os = oldByCouncilAndType.get(shortKey)!;
+      if (
+        os.maxScore !== ns.maxScore ||
+        (os.conditions || "") !== (ns.conditions || "") ||
+        os.verificationStatus !== ns.verificationStatus
+      ) {
+        changedScoresCount++;
+      }
+    } else {
+      newScoresCount++;
+    }
+  });
+
+  return {
+    newScoresCount,
+    changedScoresCount,
+    hasScoreChanges:
+      newScoresCount > 0 ||
+      changedScoresCount > 0 ||
+      oldScores.length !== newScores.length,
   };
 }
 
@@ -801,6 +1913,41 @@ export function computeJournalFieldDiffs(
     });
   }
 
+  const oldCouncilCount =
+    oldJ.recognizedCouncilCount ||
+    new Set((oldJ.councilScores || []).map((c) => c.councilId)).size ||
+    (oldJ.scores?.length ? 1 : 0);
+  const newCouncilCount =
+    newJ.recognizedCouncilCount ||
+    new Set((newJ.councilScores || []).map((c) => c.councilId)).size ||
+    (newJ.scores?.length ? 1 : 0);
+
+  if (oldCouncilCount !== newCouncilCount && (oldJ.councilScores || newJ.councilScores)) {
+    diffs.push({
+      field: "recognizedCouncilCount",
+      label: "Số Hội đồng công nhận",
+      oldValue: `${oldCouncilCount} Hội đồng`,
+      newValue: `${newCouncilCount} Hội đồng`,
+    });
+  } else if (newJ.councilScores && newJ.councilScores.length > 0 && !oldJ.councilScores) {
+    diffs.push({
+      field: "councilScores",
+      label: "Điểm chi tiết theo Hội đồng Giáo sư",
+      oldValue: "Bản ghi điểm đơn (cũ)",
+      newValue: `${newJ.councilScores.length} bản ghi điểm đa Hội đồng (${newCouncilCount} HĐ)`,
+    });
+  } else if (oldJ.councilScores && newJ.councilScores) {
+    const scoreDiff = computeCouncilScoresDiff(oldJ.councilScores, newJ.councilScores);
+    if (scoreDiff.hasScoreChanges) {
+      diffs.push({
+        field: "councilScores",
+        label: "Cập nhật điểm theo Hội đồng",
+        oldValue: `${oldJ.councilScores.length} bản ghi điểm`,
+        newValue: `+${scoreDiff.newScoresCount} mới, ${scoreDiff.changedScoresCount} thay đổi`,
+      });
+    }
+  }
+
   if (Boolean(oldJ.guidelines?.hasGuidelines) !== Boolean(newJ.guidelines?.hasGuidelines)) {
     diffs.push({
       field: "guidelines",
@@ -826,27 +1973,28 @@ export function computeJournalFieldDiffs(
 export function buildJournalCandidatesFromSheet(
   incomingJournals: Journal[],
   existingJournals: Journal[],
-  existingPendingCandidates: JournalCandidate[] = []
+  existingPendingCandidates: JournalCandidate[] = [],
+  options: { forceUpdateMultiCouncil?: boolean } = {}
 ): {
   candidatesToCreate: JournalCandidate[];
   newCount: number;
   updatedCount: number;
   unchangedCount: number;
   skippedDuplicates: number;
+  matchedCount: number;
+  ambiguousCount: number;
+  conflictCount: number;
+  identityMatchStats: {
+    matchedCount: number;
+    ambiguousCount: number;
+    unmatchedCount: number;
+    conflictCount: number;
+    matched: number;
+    ambiguous: number;
+    unmatched: number;
+    conflict: number;
+  };
 } {
-  const existingById = new Map<string, Journal>();
-  const existingByIssn = new Map<string, Journal>();
-  const existingByTitle = new Map<string, Journal>();
-
-  existingJournals.forEach((j) => {
-    existingById.set(j.journalId, j);
-    if (j.id) existingById.set(j.id, j);
-    if (j.issnPrint) existingByIssn.set(normalizeIssn(j.issnPrint), j);
-    if (j.issnOnline) existingByIssn.set(normalizeIssn(j.issnOnline), j);
-    const nTitle = normalizeTitle(j.name);
-    if (nTitle) existingByTitle.set(nTitle, j);
-  });
-
   // Track currently active pending candidates to avoid duplicating pending queue items
   const activePendingMap = new Map<string, JournalCandidate>();
   existingPendingCandidates.forEach((c) => {
@@ -860,6 +2008,9 @@ export function buildJournalCandidatesFromSheet(
   let updatedCount = 0;
   let unchangedCount = 0;
   let skippedDuplicates = 0;
+  let matchedCount = 0;
+  let ambiguousCount = 0;
+  let conflictCount = 0;
 
   const seenInBatch = new Set<string>();
 
@@ -871,10 +2022,25 @@ export function buildJournalCandidatesFromSheet(
     }
     seenInBatch.add(incoming.journalId);
 
+    // Match identity strictly
+    const identityMatch = matchJournalIdentity(incoming, existingJournals);
+    if (identityMatch.status === "MATCHED") matchedCount++;
+    else if (identityMatch.status === "AMBIGUOUS") ambiguousCount++;
+    else if (identityMatch.status === "CONFLICT") conflictCount++;
+
     // Identify unverified fields
     const unverifiedFields: string[] = [];
-    const isManualCheck = incoming.verification?.manualReviewNeeded === true;
-    const manualReason = incoming.verification?.manualReviewReason;
+    const isManualCheck =
+      incoming.verification?.manualReviewNeeded === true ||
+      incoming.scoreReconciliationStatus === "CAN_KIEM_TRA" ||
+      identityMatch.status === "AMBIGUOUS" ||
+      identityMatch.status === "CONFLICT";
+
+    const manualReasonParts = [
+      incoming.verification?.manualReviewReason,
+      identityMatch.notes,
+    ].filter(Boolean);
+    const manualReason = manualReasonParts.join(" | ");
 
     if (isManualCheck && manualReason) {
       unverifiedFields.push(`Cần kiểm tra thủ công: ${manualReason}`);
@@ -894,35 +2060,40 @@ export function buildJournalCandidatesFromSheet(
       unverifiedFields.push("Chưa kiểm chứng nguồn");
     }
 
-    // Match with existing public journals
-    let matched = existingById.get(incoming.journalId);
-    if (!matched && incoming.issnPrint) {
-      matched = existingByIssn.get(normalizeIssn(incoming.issnPrint));
-    }
-    if (!matched && incoming.issnOnline) {
-      matched = existingByIssn.get(normalizeIssn(incoming.issnOnline));
-    }
-    if (!matched) {
-      const nTitle = normalizeTitle(incoming.name);
-      if (nTitle) matched = existingByTitle.get(nTitle);
-    }
+    const matched =
+      identityMatch.status === "MATCHED" || identityMatch.status === "AMBIGUOUS"
+        ? identityMatch.matchedJournal
+        : undefined;
 
     const now = new Date().toISOString();
-    const candidateStatus = isManualCheck ? "needs_review" : "pending";
+    const candidateStatus: JournalCandidate["status"] = isManualCheck
+      ? "needs_review"
+      : "pending";
+    const effectiveReconciliationStatus: SparkScoreReconciliationStatus = isManualCheck
+      ? "CAN_KIEM_TRA"
+      : incoming.scoreReconciliationStatus || "HOAN_TAT";
 
     if (!matched) {
       // Check if already in pending queue
       const existingPending = activePendingMap.get(incoming.journalId);
       if (existingPending) {
-        skippedDuplicates++;
-        return;
+        // If forceUpdateMultiCouncil is enabled and existingPending lacks councilScores, allow updating the pending candidate
+        const needsMultiCouncilEnrich =
+          options.forceUpdateMultiCouncil &&
+          (incoming.councilScores?.length || 0) > 0 &&
+          (!existingPending.councilScores ||
+            existingPending.councilScores.length !== incoming.councilScores?.length);
+        if (!needsMultiCouncilEnrich) {
+          skippedDuplicates++;
+          return;
+        }
       }
 
-      // Case A: Completely NEW journal!
+      // Case A: Completely NEW journal (or CONFLICT kept separate for Admin review)!
       newCount++;
 
-      // Deterministic ID for idempotency
       const candId = `cand_new_${incoming.journalId}`;
+      const newScoresCount = incoming.councilScores?.length || incoming.scores?.length || 0;
 
       const candidateDoc: JournalCandidate = {
         id: candId,
@@ -931,6 +2102,8 @@ export function buildJournalCandidatesFromSheet(
         englishName: incoming.englishName,
         abbreviation: incoming.abbreviation,
         publisher: incoming.publisher,
+        hostAgency: incoming.hostAgency,
+        nameHistory: incoming.nameHistory,
         issnPrint: incoming.issnPrint,
         issnOnline: incoming.issnOnline,
         isbn: incoming.isbn,
@@ -938,17 +2111,34 @@ export function buildJournalCandidatesFromSheet(
         primaryField: incoming.primaryField,
         fields: incoming.fields,
         website: incoming.website,
-        websiteVerified: incoming.websiteVerified,
-        maxScore: incoming.maxScore,
-        maxScoreYear: incoming.maxScoreYear,
+        websiteVerified: Boolean(incoming.websiteVerified),
+        maxScore: incoming.maxScore ?? 0,
+        maxScoreYear: incoming.maxScoreYear ?? 2025,
         scores: incoming.scores,
+        councilScores: incoming.councilScores,
+        recognizedCouncilCount: incoming.recognizedCouncilCount,
+        verifiedCouncils: incoming.verifiedCouncils,
+        decisionYear: incoming.decisionYear,
+        scoreReconciliationStatus: effectiveReconciliationStatus,
+        scoreSourceNote: incoming.scoreSourceNote,
+        identityMatchStatus: identityMatch.status,
+        identityMatchMethod: identityMatch.method,
+        identityMatchNotes: identityMatch.notes,
+        newScoresCount,
+        changedScoresCount: 0,
         guidelines: incoming.guidelines,
         links: incoming.links,
-        verification: incoming.verification,
+        verification: incoming.verification
+          ? {
+              ...incoming.verification,
+              manualReviewNeeded: isManualCheck,
+              manualReviewReason: manualReason || incoming.verification.manualReviewReason,
+            }
+          : undefined,
         sourceType: "GOOGLE_SHEETS",
         changeType: "create",
         status: candidateStatus,
-        unverifiedFields,
+        unverifiedFields: unverifiedFields.slice(0, 45),
         sheetRowIndex: idx + 2,
         createdAt: now,
         updatedAt: now,
@@ -958,17 +2148,18 @@ export function buildJournalCandidatesFromSheet(
     } else {
       // Case B: Existing journal matched! Check if any changes
       const diffs = computeJournalFieldDiffs(matched, incoming);
+      const scoreDiff = computeCouncilScoresDiff(
+        matched.councilScores || [],
+        incoming.councilScores || []
+      );
 
-      if (diffs.length === 0) {
-        // No changes, data is up-to-date!
+      if (diffs.length === 0 && !scoreDiff.hasScoreChanges) {
         unchangedCount++;
         return;
       }
 
-      // Changes detected!
-      // If already has an active pending candidate in queue, skip duplicate
       const existingPending = activePendingMap.get(matched.journalId);
-      if (existingPending) {
+      if (existingPending && !options.forceUpdateMultiCouncil) {
         skippedDuplicates++;
         return;
       }
@@ -977,7 +2168,6 @@ export function buildJournalCandidatesFromSheet(
 
       const candId = `cand_upd_${matched.journalId}`;
 
-
       const candidateDoc: JournalCandidate = {
         id: candId,
         journalId: matched.journalId,
@@ -985,6 +2175,8 @@ export function buildJournalCandidatesFromSheet(
         englishName: incoming.englishName,
         abbreviation: incoming.abbreviation,
         publisher: incoming.publisher,
+        hostAgency: incoming.hostAgency,
+        nameHistory: incoming.nameHistory,
         issnPrint: incoming.issnPrint,
         issnOnline: incoming.issnOnline,
         isbn: incoming.isbn,
@@ -992,20 +2184,37 @@ export function buildJournalCandidatesFromSheet(
         primaryField: incoming.primaryField,
         fields: incoming.fields,
         website: incoming.website,
-        websiteVerified: incoming.websiteVerified,
-        maxScore: incoming.maxScore,
-        maxScoreYear: incoming.maxScoreYear,
+        websiteVerified: Boolean(incoming.websiteVerified),
+        maxScore: incoming.maxScore ?? 0,
+        maxScoreYear: incoming.maxScoreYear ?? 2025,
         scores: incoming.scores,
+        councilScores: incoming.councilScores,
+        recognizedCouncilCount: incoming.recognizedCouncilCount,
+        verifiedCouncils: incoming.verifiedCouncils,
+        decisionYear: incoming.decisionYear,
+        scoreReconciliationStatus: effectiveReconciliationStatus,
+        scoreSourceNote: incoming.scoreSourceNote,
+        identityMatchStatus: identityMatch.status,
+        identityMatchMethod: identityMatch.method,
+        identityMatchNotes: identityMatch.notes,
+        newScoresCount: scoreDiff.newScoresCount,
+        changedScoresCount: scoreDiff.changedScoresCount,
         guidelines: incoming.guidelines,
         links: incoming.links,
-        verification: incoming.verification,
+        verification: incoming.verification
+          ? {
+              ...incoming.verification,
+              manualReviewNeeded: isManualCheck,
+              manualReviewReason: manualReason || incoming.verification.manualReviewReason,
+            }
+          : undefined,
         sourceType: "GOOGLE_SHEETS",
         changeType: "update",
         existingJournalId: matched.id || matched.journalId,
-        diffSummary: diffs,
+        diffSummary: diffs.slice(0, 45),
         status: candidateStatus,
         isManualPreserved: matched.isManualEdited,
-        unverifiedFields,
+        unverifiedFields: unverifiedFields.slice(0, 45),
         sheetRowIndex: idx + 2,
         createdAt: now,
         updatedAt: now,
@@ -1021,5 +2230,18 @@ export function buildJournalCandidatesFromSheet(
     updatedCount,
     unchangedCount,
     skippedDuplicates,
+    matchedCount,
+    ambiguousCount,
+    conflictCount,
+    identityMatchStats: {
+      matchedCount,
+      ambiguousCount,
+      unmatchedCount: newCount,
+      conflictCount,
+      matched: matchedCount,
+      ambiguous: ambiguousCount,
+      unmatched: newCount,
+      conflict: conflictCount,
+    },
   };
 }

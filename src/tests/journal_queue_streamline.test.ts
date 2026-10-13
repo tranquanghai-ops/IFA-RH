@@ -108,6 +108,7 @@ describe("Danh mục Tạp chí Khoa học — Tinh gọn Hàng chờ & Phân lo
     const counts: Record<CandidateQueueTab, number> = {
       pending: 0,
       needs_review: 0,
+      approved: 0,
       rejected: 0,
       all: 0,
     };

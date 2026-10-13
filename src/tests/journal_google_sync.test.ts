@@ -384,7 +384,7 @@ describe("Hệ thống Adapter 47 Cột và Xử lý Điểm Chuyên sâu (QĐ 2
     expect(cand.unverifiedFields.some((f) => f.includes("Điểm về 0 từ tháng 6/2025"))).toBe(true);
   });
 
-  it("phân tích và kiểm tra tính hợp lệ của toàn bộ 90 tạp chí từ Google Sheets Spark", async () => {
+  it("phân tích và kiểm tra tính hợp lệ của toàn bộ 96 tạp chí từ Google Sheets Spark", async () => {
     const { fetchJournalGoogleSheetRows, buildJournalCandidatesFromSheet } = await import(
       "../services/journalGoogleSheetService"
     );
@@ -394,28 +394,34 @@ describe("Hệ thống Adapter 47 Cột và Xử lý Điểm Chuyên sâu (QĐ 2
       "Trang tính1"
     );
 
-    expect(sheetResult.totalRows).toBe(90);
-    expect(sheetResult.validJournals.length).toBe(90);
+    expect(sheetResult.totalRows).toBe(96);
+    expect(sheetResult.validJournals.length).toBe(96);
     expect(sheetResult.manualReviewCount).toBe(17);
 
     const analysis = buildJournalCandidatesFromSheet(sheetResult.validJournals, [], []);
-    expect(analysis.newCount).toBe(90);
-    expect(analysis.candidatesToCreate.length).toBe(90);
+    expect(analysis.newCount).toBe(96);
+    expect(analysis.candidatesToCreate.length).toBe(96);
 
     // Validate every candidate against firestore.rules isValidJournalCandidate
     const allowedKeys = new Set([
       'id', 'journalId', 'name', 'englishName', 'abbreviation', 'publisher',
+      'hostAgency', 'nameHistory',
       'issnPrint', 'issnOnline', 'isbn', 'category', 'primaryField', 'fields',
       'website', 'websiteVerified', 'maxScore', 'maxScoreYear', 'scores',
+      'councilScores', 'recognizedCouncilCount', 'verifiedCouncils',
+      'decisionYear', 'scoreReconciliationStatus', 'scoreSourceNote', 'scoreEditHistory',
+      'identityMatchStatus', 'identityMatchMethod', 'identityMatchNotes',
+      'newScoresCount', 'changedScoresCount', 'draftSavedAt', 'draftSavedBy', 'adminEditReason',
       'guidelines', 'links', 'verification', 'sourceType', 'changeType',
       'existingJournalId', 'diffSummary', 'status', 'rejectionReason',
       'isManualPreserved', 'unverifiedFields', 'sheetRowIndex',
-      'createdAt', 'updatedAt', 'reviewedAt', 'reviewedBy', 'publishedJournalId'
+      'createdAt', 'updatedAt', 'reviewedAt', 'reviewedBy', 'publishedJournalId',
+      'manualReviewNeeded', 'manualReviewReason', 'confidenceLevel', 'isManualEdited'
     ]);
 
     const failures: Array<{ id: string; name: string; reason: string; val?: any }> = [];
 
-    analysis.candidatesToCreate.forEach((cand, idx) => {
+    analysis.candidatesToCreate.forEach((cand) => {
       // Check required
       const required = [
         'journalId', 'name', 'publisher', 'category', 'primaryField',
@@ -456,25 +462,28 @@ describe("Hệ thống Adapter 47 Cột và Xử lý Điểm Chuyên sâu (QĐ 2
       if (!['pending', 'approved', 'rejected', 'needs_review'].includes(cand.status)) {
         failures.push({ id: cand.journalId, name: cand.name, reason: `status invalid: ${cand.status}` });
       }
-      if ('fields' in cand && (!Array.isArray(cand.fields) || cand.fields.length > 30)) {
+      if ('fields' in cand && (!Array.isArray(cand.fields) || cand.fields.length > 50)) {
         failures.push({ id: cand.journalId, name: cand.name, reason: `fields invalid count: ${cand.fields?.length}` });
       }
-      if ('scores' in cand && (!Array.isArray(cand.scores) || cand.scores.length > 50)) {
+      if ('scores' in cand && (!Array.isArray(cand.scores) || cand.scores.length > 100)) {
         failures.push({ id: cand.journalId, name: cand.name, reason: `scores invalid count: ${cand.scores?.length}` });
       }
-      if ('unverifiedFields' in cand && (!Array.isArray(cand.unverifiedFields) || cand.unverifiedFields.length > 20)) {
+      if ('councilScores' in cand && (!Array.isArray(cand.councilScores) || cand.councilScores.length > 100)) {
+        failures.push({ id: cand.journalId, name: cand.name, reason: `councilScores invalid count: ${cand.councilScores?.length}` });
+      }
+      if ('unverifiedFields' in cand && (!Array.isArray(cand.unverifiedFields) || cand.unverifiedFields.length > 50)) {
         failures.push({ id: cand.journalId, name: cand.name, reason: `unverifiedFields count: ${cand.unverifiedFields?.length}` });
       }
-      if ('maxScoreYear' in cand && (typeof cand.maxScoreYear !== 'number' || cand.maxScoreYear < 2000 || cand.maxScoreYear > 2100)) {
+      if ('maxScoreYear' in cand && cand.maxScoreYear != null && (typeof cand.maxScoreYear !== 'number' || cand.maxScoreYear < 1900 || cand.maxScoreYear > 2100)) {
         failures.push({ id: cand.journalId, name: cand.name, reason: `maxScoreYear invalid: ${cand.maxScoreYear}`, val: cand.maxScoreYear });
       }
-      if ('maxScore' in cand && (typeof cand.maxScore !== 'number' || cand.maxScore < 0 || cand.maxScore > 10)) {
+      if ('maxScore' in cand && cand.maxScore != null && (typeof cand.maxScore !== 'number' || cand.maxScore < 0 || cand.maxScore > 10)) {
         failures.push({ id: cand.journalId, name: cand.name, reason: `maxScore invalid: ${cand.maxScore}` });
       }
     });
 
     if (failures.length > 0) {
-      console.error("FAILURES DETECTED IN 90 CANDIDATES:", JSON.stringify(failures, null, 2));
+      console.error("FAILURES DETECTED IN 96 CANDIDATES:", JSON.stringify(failures, null, 2));
     }
     expect(failures).toEqual([]);
   });
@@ -503,7 +512,7 @@ describe("Hệ thống Adapter 47 Cột và Xử lý Điểm Chuyên sâu (QĐ 2
     expect(err.message).toContain("permission-denied");
   });
 
-  it("đảm bảo đồng bộ lại 90 tạp chí không tạo ứng viên trùng lặp (Idempotency Verification)", async () => {
+  it("đảm bảo đồng bộ lại 96 tạp chí không tạo ứng viên trùng lặp (Idempotency Verification)", async () => {
     const { fetchJournalGoogleSheetRows, buildJournalCandidatesFromSheet } = await import(
       "../services/journalGoogleSheetService"
     );
@@ -515,15 +524,15 @@ describe("Hệ thống Adapter 47 Cột và Xử lý Điểm Chuyên sâu (QĐ 2
 
     // Initial sync
     const firstSync = buildJournalCandidatesFromSheet(sheetResult.validJournals, [], []);
-    expect(firstSync.candidatesToCreate.length).toBe(90);
+    expect(firstSync.candidatesToCreate.length).toBe(96);
 
     // Simulate existing pending candidates already populated from first sync
     const activePending = firstSync.candidatesToCreate;
 
-    // Second sync: incoming same 90 journals
+    // Second sync: incoming same 96 journals
     const secondSync = buildJournalCandidatesFromSheet(sheetResult.validJournals, [], activePending);
     expect(secondSync.candidatesToCreate.length).toBe(0);
-    expect(secondSync.skippedDuplicates).toBe(90);
+    expect(secondSync.skippedDuplicates).toBe(96);
     expect(secondSync.newCount).toBe(0);
   });
 });

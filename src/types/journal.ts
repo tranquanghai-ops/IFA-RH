@@ -4,6 +4,46 @@ export type JournalStatus = "active" | "hidden";
 
 export type VerificationStatus = "verified" | "unverified" | "needs_update";
 
+export type CouncilScoreVerificationStatus = "VERIFIED" | "UNVERIFIED" | "NEEDS_REVIEW";
+
+export type SparkScoreReconciliationStatus = "HOAN_TAT" | "CAN_KIEM_TRA" | "CHUA_XAC_MINH";
+
+export type JournalIdentityMatchStatus = "MATCHED" | "AMBIGUOUS" | "UNMATCHED" | "CONFLICT";
+
+export interface JournalCouncilScore {
+  id?: string; // Composite key: councilId + decisionNumber + decisionYear + sourceOrder + publicationType + conditions + validFrom
+  councilId: string; // e.g. "HD24", "HD23", "HD19"
+  councilName: string; // Chuẩn hóa hiển thị, vd: "Văn hóa – Nghệ thuật – Thể dục thể thao (HD24)"
+  rawCouncilName?: string; // Tên gốc trong nguồn Spark
+  decisionNumber: string; // vd: "26/QĐ-HĐGSNN"
+  decisionYear: number; // vd: 2025
+  sourceOrder?: string | number | null; // Số TT trong phụ lục QĐ 26
+  publicationType?: string | null; // "PRINT" | "ONLINE" | "PRINT_AND_ONLINE" | ...
+  scientificFields?: string[]; // Nhóm ngành / chuyên ngành áp dụng
+  minScore?: number | null;
+  maxScore: number | null; // Phân biệt rõ 0 (dừng tính điểm) và null (chưa xác định / thiếu dữ liệu)
+  validFrom?: string | null;
+  validTo?: string | null;
+  conditions?: string | null; // Nhóm ngành / chuyên mục / điều kiện tính điểm
+  note?: string | null; // Ghi chú thêm
+  sourceUrl?: string | null;
+  sourcePage?: string | null; // vd: "Phụ lục 24, Trang 4"
+  verificationStatus: CouncilScoreVerificationStatus;
+}
+
+export interface JournalScoreEditLog {
+  editedBy: string;
+  editedAt: string;
+  reason: string;
+  action?: "add" | "edit" | "delete" | "draft_save" | "approve" | string;
+  actionType?: string;
+  summary?: string;
+  oldValue?: any;
+  newValue?: any;
+  previousCouncilScoresCount?: number;
+  newCouncilScoresCount?: number;
+}
+
 export interface JournalScoreItem {
   id?: string;
   journalId?: string;
@@ -11,10 +51,19 @@ export interface JournalScoreItem {
   councilName: string;
   year: number;
   maxScore: number;
-  minScore?: number;
+  rawMaxScore?: number | null;
+  minScore?: number | null;
   decisionNumber?: string;
   decisionDate?: string;
   notes?: string;
+  sourceOrder?: string | number | null;
+  publicationType?: string | null;
+  validFrom?: string | null;
+  validTo?: string | null;
+  conditions?: string | null;
+  sourceUrl?: string | null;
+  sourcePage?: string | null;
+  verificationStatus?: CouncilScoreVerificationStatus;
 }
 
 export interface JournalGuidelines {
@@ -52,6 +101,8 @@ export interface JournalVerification {
   status: VerificationStatus;
   verifiedBy?: string;
   verifiedDate?: string;
+  verifiedAt?: string;
+  verificationMethod?: string;
   sourceReference?: string;
   notes?: string;
   schemaVersion: number;
@@ -62,11 +113,13 @@ export interface JournalVerification {
 
 export interface Journal {
   id: string; // Firestore document ID
-  journalId: string; // Stable primary key, e.g. "TC-VHNT-001"
+  journalId: string; // Stable primary key, e.g. "TC-VHNT-001" or "J_001"
   name: string; // Tên tiếng Việt
   englishName?: string;
   abbreviation?: string;
   publisher: string; // Cơ quan xuất bản / chủ quản
+  hostAgency?: string; // Cơ quan chủ quản riêng (nếu có)
+  nameHistory?: string; // Lịch sử thay đổi tên gọi
   issnPrint?: string;
   issnOnline?: string;
   isbn?: string;
@@ -78,6 +131,13 @@ export interface Journal {
   maxScore: number; // Điểm tối đa hiện hành (vd: 1.0)
   maxScoreYear: number; // Năm đạt điểm tối đa (vd: 2025)
   scores: JournalScoreItem[];
+  councilScores?: JournalCouncilScore[]; // Danh sách điểm chi tiết theo từng Hội đồng Giáo sư (53 cột)
+  recognizedCouncilCount?: number; // so_hoi_dong_cong_nhan
+  verifiedCouncils?: string[]; // hoi_dong_da_xac_minh (vd: ["HD24", "HD23"])
+  decisionYear?: string | number; // nam_quyet_dinh
+  scoreReconciliationStatus?: SparkScoreReconciliationStatus; // trang_thai_doi_soat_diem
+  scoreSourceNote?: string; // nguon_diem_theo_hoi_dong
+  scoreEditHistory?: JournalScoreEditLog[]; // Lịch sử Admin chỉnh sửa điểm
   guidelines?: JournalGuidelines;
   links?: JournalLinkItem[];
   verification?: JournalVerification;
@@ -141,6 +201,8 @@ export interface JournalCandidate {
   englishName?: string;
   abbreviation?: string;
   publisher: string;
+  hostAgency?: string;
+  nameHistory?: string;
   issnPrint?: string;
   issnOnline?: string;
   isbn?: string;
@@ -152,6 +214,27 @@ export interface JournalCandidate {
   maxScore: number;
   maxScoreYear: number;
   scores: JournalScoreItem[];
+  councilScores?: JournalCouncilScore[];
+  recognizedCouncilCount?: number;
+  verifiedCouncils?: string[];
+  decisionYear?: string | number;
+  scoreReconciliationStatus?: SparkScoreReconciliationStatus;
+  scoreSourceNote?: string;
+  scoreEditHistory?: JournalScoreEditLog[];
+  identityMatchStatus?: JournalIdentityMatchStatus;
+  identityMatchMethod?: string;
+  identityMatchNotes?: string;
+  identityMatchNote?: string;
+  newScoresCount?: number;
+  changedScoresCount?: number;
+  newCouncilRecordsCount?: number;
+  updatedCouncilRecordsCount?: number;
+  needsReviewCouncilCount?: number;
+  draftCouncilScores?: JournalCouncilScore[];
+  draftReason?: string;
+  draftSavedAt?: string;
+  draftSavedBy?: string;
+  adminEditReason?: string;
   guidelines?: JournalGuidelines;
   links?: JournalLinkItem[];
   verification?: JournalVerification;
@@ -162,6 +245,7 @@ export interface JournalCandidate {
   status: JournalCandidateStatus;
   rejectionReason?: string;
   isManualPreserved?: boolean;
+  isManualEdited?: boolean;
   unverifiedFields: string[];
   sheetRowIndex?: number;
   createdAt: string;
@@ -174,10 +258,18 @@ export interface JournalCandidate {
 export interface JournalSyncSettings {
   sheetId: string;
   sheetName: string;
+  hdgsnnSheetId?: string;
+  hdgsnnSheetName?: string;
+  multiCouncilSheetId?: string;
+  multiCouncilSheetName?: string;
   folderUrl?: string;
   autoSyncEnabled?: boolean;
   lastSyncedAt?: string;
   lastSyncedBy?: string;
+  lastHdgsnnSyncedAt?: string;
+  lastHdgsnnSyncedBy?: string;
+  lastMultiCouncilSyncedAt?: string;
+  lastMultiCouncilSyncedBy?: string;
   lastStats?: {
     totalRead: number;
     validRows: number;
@@ -187,4 +279,5 @@ export interface JournalSyncSettings {
     skippedCount: number;
     errorCount: number;
   };
+  lastMultiCouncilStats?: any;
 }

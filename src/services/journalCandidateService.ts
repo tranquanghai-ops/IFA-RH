@@ -14,13 +14,19 @@ import { firestore } from "../firebase/config";
 import type {
   Journal,
   JournalCandidate,
+  JournalCouncilScore,
+  JournalScoreEditLog,
   JournalSyncSettings,
 } from "../types/journal";
 import {
   fetchJournalGoogleSheetRows,
+  fetchMultiCouncilGoogleSheetRows,
   buildJournalCandidatesFromSheet,
+  buildCouncilScoreCompositeKey,
   DEFAULT_JOURNAL_SHEET_NAME,
   DEFAULT_JOURNAL_SPREADSHEET_ID,
+  DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID,
+  DEFAULT_MULTI_COUNCIL_SHEET_NAME,
 } from "./journalGoogleSheetService";
 import { fetchJournals, createJournal, updateJournal } from "./journalService";
 
@@ -42,6 +48,32 @@ function cleanUndefined<T = any>(obj: T): T {
     }
   }
   return result as T;
+}
+
+/**
+ * Merge two councilScores arrays by composite key without losing historical entries.
+ */
+export function mergeCouncilScoresList(
+  existingList: JournalCouncilScore[] = [],
+  incomingList: JournalCouncilScore[] = []
+): JournalCouncilScore[] {
+  const merged = [...existingList];
+  const keyIndexMap = new Map<string, number>();
+  merged.forEach((item, idx) => {
+    keyIndexMap.set(buildCouncilScoreCompositeKey(item), idx);
+  });
+
+  for (const inc of incomingList) {
+    const key = buildCouncilScoreCompositeKey(inc);
+    const existingIdx = keyIndexMap.get(key);
+    if (existingIdx !== undefined) {
+      merged[existingIdx] = inc;
+    } else {
+      keyIndexMap.set(key, merged.length);
+      merged.push(inc);
+    }
+  }
+  return merged;
 }
 
 /**
@@ -279,10 +311,11 @@ export async function syncJournalsFromGoogleSheetsToQueue({
     const docRef = doc(firestore, "journalCandidates", cand.id);
     const existing = existingMap.get(cand.id);
 
-    // If candidate already exists in queue, preserve original createdAt to ensure immutability compliance
+    // If candidate already exists in queue, preserve original createdAt & scoreEditHistory
     const candidatePayload: JournalCandidate = {
       ...cand,
       createdAt: existing?.createdAt || cand.createdAt,
+      scoreEditHistory: existing?.scoreEditHistory || cand.scoreEditHistory,
       updatedAt: new Date().toISOString(),
     };
 
@@ -386,12 +419,276 @@ export async function syncJournalsFromGoogleSheetsToQueue({
 }
 
 /**
- * Approve candidate: Publishes to public `journals` and marks candidate as approved.
+ * Multi-Council HDGSNN Score Sync Engine:
+ * Reads the 53-column Spark multi-council spreadsheet (or fallback catalog sheet if Sheet 2 is private),
+ * performs strict journal identity reconciliation (MATCHED, AMBIGUOUS, UNMATCHED, CONFLICT),
+ * and queues candidates into `journalCandidates` for Admin review and approval.
  */
-export async function approveJournalCandidate(
+export async function syncMultiCouncilScoresFromGoogleSheetsToQueue({
+  sheetId = DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID,
+  sheetName = DEFAULT_MULTI_COUNCIL_SHEET_NAME,
+  user,
+}: {
+  sheetId?: string;
+  sheetName?: string;
+  user: { uid: string; email?: string };
+}): Promise<{
+  success: boolean;
+  totalRead: number;
+  newCandidatesCount: number;
+  updatedCandidatesCount: number;
+  unchangedCount: number;
+  skippedDuplicates: number;
+  manualReviewCount: number;
+  warnings: string[];
+  writtenCount: number;
+  batchId?: string;
+  sourceSpreadsheetId: string;
+  sourceSheetName: string;
+  usedFallbackCatalogSheet: boolean;
+  multiCouncilStats: {
+    rowsWithJson: number;
+    totalCouncilEntries: number;
+    multiCouncilJournalsCount: number;
+    diffScoreAcrossCouncilsCount: number;
+    reconciliationCounts: {
+      HOAN_TAT: number;
+      CAN_KIEM_TRA: number;
+      CHUA_XAC_MINH: number;
+    };
+  };
+  identityMatchStats: {
+    matchedCount: number;
+    ambiguousCount: number;
+    unmatchedCount: number;
+    conflictCount: number;
+  };
+}> {
+  const effectiveSheetId = sheetId || DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID;
+  const effectiveSheetName = sheetName || DEFAULT_MULTI_COUNCIL_SHEET_NAME;
+
+  // 1. Fetch 53-column multi-council rows
+  let sheetResult: Awaited<ReturnType<typeof fetchMultiCouncilGoogleSheetRows>>;
+  try {
+    sheetResult = await fetchMultiCouncilGoogleSheetRows(
+      effectiveSheetId,
+      effectiveSheetName,
+      { allowFallbackToCatalogSheet: true }
+    );
+    if (!sheetResult || !Array.isArray(sheetResult.validJournals)) {
+      throw new Error("Không có dữ liệu điểm HĐGSNN hợp lệ trả về từ Google Sheets.");
+    }
+  } catch (sheetErr: any) {
+    throw new JournalSyncStageError({
+      stage: "FETCH_SHEET",
+      collectionName: "google_sheets",
+      operationType: "get",
+      originalError: sheetErr,
+      userSummary: `Lỗi kết nối hoặc đọc bảng điểm HĐGSNN (${effectiveSheetName}): ${sheetErr.message || "Không thể đọc dữ liệu"}`,
+      actorUid: user.uid,
+      actorRole: user.email,
+    });
+  }
+
+  // 2. Fetch existing journals and active candidates
+  let existingJournals: Journal[] = [];
+  try {
+    existingJournals = await fetchJournals({ includeHidden: true });
+  } catch (jErr: any) {
+    throw new JournalSyncStageError({
+      stage: "READ_JOURNALS",
+      collectionName: "journals",
+      operationType: "list",
+      originalError: jErr,
+      userSummary: "Không đủ quyền đọc danh mục tạp chí đã công bố",
+      actorUid: user.uid,
+      actorRole: user.email,
+    });
+  }
+
+  let existingCandidates: JournalCandidate[] = [];
+  try {
+    const colRef = collection(firestore, "journalCandidates");
+    const q = query(colRef, orderBy("createdAt", "desc"));
+    const snap = await getDocs(q);
+    snap.forEach((d) => {
+      existingCandidates.push({ ...(d.data() as any), id: d.id });
+    });
+  } catch (cErr: any) {
+    throw new JournalSyncStageError({
+      stage: "READ_CANDIDATES",
+      collectionName: "journalCandidates",
+      operationType: "list",
+      originalError: cErr,
+      userSummary: "Không đủ quyền đọc danh sách ứng viên trong hàng chờ duyệt",
+      actorUid: user.uid,
+      actorRole: user.email,
+    });
+  }
+
+  // 3. Build candidate diffs with strict identity reconciliation
+  let diffResult: ReturnType<typeof buildJournalCandidatesFromSheet>;
+  try {
+    diffResult = buildJournalCandidatesFromSheet(
+      sheetResult.validJournals,
+      existingJournals,
+      existingCandidates,
+      { forceUpdateMultiCouncil: true }
+    );
+  } catch (diffErr: any) {
+    throw new JournalSyncStageError({
+      stage: "DIFF_ANALYSIS",
+      collectionName: "in_memory",
+      operationType: "get",
+      originalError: diffErr,
+      userSummary: "Lỗi trong quá trình phân tích điểm HĐGSNN và đối soát định danh tạp chí",
+      actorUid: user.uid,
+      actorRole: user.email,
+    });
+  }
+
+  const {
+    candidatesToCreate,
+    newCount,
+    updatedCount,
+    unchangedCount,
+    skippedDuplicates,
+    identityMatchStats,
+  } = diffResult;
+
+  // 4. Write candidates to Firestore
+  let writtenCount = 0;
+  const existingMap = new Map(existingCandidates.map((c) => [c.id, c]));
+
+  for (const cand of candidatesToCreate) {
+    const docRef = doc(firestore, "journalCandidates", cand.id);
+    const existing = existingMap.get(cand.id);
+
+    const candidatePayload: JournalCandidate = {
+      ...cand,
+      createdAt: existing?.createdAt || cand.createdAt,
+      scoreEditHistory: existing?.scoreEditHistory || cand.scoreEditHistory,
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      await setDoc(docRef, cleanUndefined(candidatePayload));
+      writtenCount++;
+    } catch (writeErr: any) {
+      throw new JournalSyncStageError({
+        stage: "WRITE_CANDIDATE",
+        collectionName: "journalCandidates",
+        documentId: cand.id,
+        operationType: existing ? "update" : "create",
+        originalError: writeErr,
+        userSummary: `Không đủ quyền lưu ứng viên điểm HĐGSNN "${cand.name}" (ID: ${cand.journalId}). Đã lưu ${writtenCount}/${candidatesToCreate.length} bản ghi.`,
+        actorUid: user.uid,
+        actorRole: user.email,
+      });
+    }
+  }
+
+  // 5. Write audit log entry in journalImports
+  const now = new Date().toISOString();
+  const batchId = `batch_hdgsnn_${Date.now()}`;
+  try {
+    const importLog = {
+      batchId,
+      fileName: `HDGSNN Multi-Council: ${sheetResult.sourceSheetName} (${sheetResult.sourceSpreadsheetId})`,
+      totalParsed: sheetResult.totalRows,
+      createdCount: newCount,
+      updatedCount,
+      skippedCount: skippedDuplicates,
+      errorCount: sheetResult.warnings.length,
+      errors: sheetResult.warnings.slice(0, 100).map((w: string) => ({ message: w })),
+      importedAt: now,
+      importedBy: user.email || user.uid,
+      schemaVersion: 2,
+      sheetId: sheetResult.sourceSpreadsheetId,
+      sheetName: sheetResult.sourceSheetName,
+      sourceType: "GOOGLE_SHEETS_HDGSNN",
+      createdAt: now,
+    };
+    const logRef = doc(firestore, "journalImports", batchId);
+    await setDoc(logRef, cleanUndefined(importLog));
+  } catch (importErr: any) {
+    console.warn("Lỗi ghi nhật ký journalImports (HDGSNN):", importErr);
+    throw new JournalSyncStageError({
+      stage: "WRITE_IMPORT_LOG",
+      collectionName: "journalImports",
+      documentId: batchId,
+      operationType: "create",
+      originalError: importErr,
+      userSummary: `Không đủ quyền ghi lịch sử cập nhật điểm HĐGSNN vào journalImports. (Lưu ý: ${writtenCount} ứng viên đã được đưa vào hàng chờ duyệt thành công).`,
+      actorUid: user.uid,
+      actorRole: user.email,
+    });
+  }
+
+  // 6. Update sync settings in systemConfig/journal_sync
+  try {
+    await saveJournalSyncSettings({
+      multiCouncilSheetId: effectiveSheetId,
+      multiCouncilSheetName: effectiveSheetName,
+      lastMultiCouncilSyncedAt: now,
+      lastMultiCouncilSyncedBy: user.email || user.uid,
+      lastMultiCouncilStats: {
+        totalRead: sheetResult.totalRows,
+        validRows: sheetResult.validJournals.length,
+        matchedCount: identityMatchStats.matchedCount,
+        ambiguousCount: identityMatchStats.ambiguousCount,
+        unmatchedCount: identityMatchStats.unmatchedCount,
+        conflictCount: identityMatchStats.conflictCount,
+        newCouncilRecordsCount: sheetResult.multiCouncilStats.totalCouncilEntries,
+        updatedCouncilRecordsCount: updatedCount,
+        needsReviewCount: sheetResult.manualReviewCount,
+      },
+    });
+  } catch (configErr: any) {
+    console.warn("Lỗi ghi cấu hình systemConfig/journal_sync (HDGSNN):", configErr);
+    throw new JournalSyncStageError({
+      stage: "WRITE_CONFIG",
+      collectionName: "systemConfig",
+      documentId: "journal_sync",
+      operationType: "update",
+      originalError: configErr,
+      userSummary: `Không đủ quyền cập nhật cấu hình đồng bộ HĐGSNN trong systemConfig/journal_sync.`,
+      actorUid: user.uid,
+      actorRole: user.email,
+    });
+  }
+
+  return {
+    success: true,
+    totalRead: sheetResult.totalRows,
+    newCandidatesCount: newCount,
+    updatedCandidatesCount: updatedCount,
+    unchangedCount,
+    skippedDuplicates,
+    manualReviewCount: sheetResult.manualReviewCount,
+    warnings: sheetResult.warnings,
+    writtenCount,
+    batchId,
+    sourceSpreadsheetId: sheetResult.sourceSpreadsheetId,
+    sourceSheetName: sheetResult.sourceSheetName,
+    usedFallbackCatalogSheet: sheetResult.usedFallbackCatalogSheet,
+    multiCouncilStats: sheetResult.multiCouncilStats,
+    identityMatchStats,
+  };
+}
+
+/**
+ * Save candidate draft in the Admin Review Queue:
+ * - Saves edited council scores or metadata on the candidate document
+ * - Appends an audit log entry to `scoreEditHistory`
+ * - Does NOT publish to `journals`
+ * - Does NOT automatically clear `CAN_KIEM_TRA` or mark as approved
+ */
+export async function saveJournalCandidateDraft(
   candidateId: string,
+  updates: Partial<JournalCandidate>,
   user: { uid: string; email?: string },
-  options?: { overrideManual?: boolean }
+  editReason?: string
 ): Promise<void> {
   const candRef = doc(firestore, "journalCandidates", candidateId);
   const candSnap = await getDoc(candRef);
@@ -399,9 +696,124 @@ export async function approveJournalCandidate(
     throw new Error("Không tìm thấy bản ghi chờ duyệt: " + candidateId);
   }
 
-  const cand = candSnap.data() as JournalCandidate;
+  const existing = candSnap.data() as JournalCandidate;
+  const now = new Date().toISOString();
+  const actor = user.email || user.uid;
+
+  const nextCouncilScores = updates.councilScores ?? existing.councilScores ?? [];
+  const uniqueVerifiedCouncils = Array.from(
+    new Set(
+      nextCouncilScores
+        .filter((cs) => cs.verificationStatus === "VERIFIED")
+        .map((cs) => cs.councilName)
+    )
+  );
+  const uniqueAllCouncils = Array.from(
+    new Set(nextCouncilScores.map((cs) => cs.councilId || cs.councilName))
+  );
+
+  // Compute max verified score across councils if councilScores were edited
+  const numericScores = nextCouncilScores
+    .filter((cs) => cs.verificationStatus === "VERIFIED" && typeof cs.maxScore === "number")
+    .map((cs) => cs.maxScore as number);
+  const computedMaxScore =
+    updates.maxScore !== undefined
+      ? updates.maxScore
+      : numericScores.length > 0
+      ? Math.max(...numericScores)
+      : existing.maxScore;
+
+  const logEntry: JournalScoreEditLog = {
+    editedAt: now,
+    editedBy: actor,
+    actionType: "draft_save",
+    reason: editReason?.trim() || "Lưu nháp chỉnh sửa thông tin / điểm Hội đồng",
+    summary: `Lưu nháp (${nextCouncilScores.length} bản ghi điểm thuộc ${uniqueAllCouncils.length} Hội đồng)`,
+  };
+
+  const nextHistory = [...(existing.scoreEditHistory || []), logEntry];
+
+  const payload: Partial<JournalCandidate> = {
+    ...updates,
+    councilScores: nextCouncilScores,
+    recognizedCouncilCount: updates.recognizedCouncilCount ?? uniqueAllCouncils.length,
+    verifiedCouncils: updates.verifiedCouncils ?? uniqueVerifiedCouncils,
+    maxScore: computedMaxScore,
+    // Keep status in pending / needs_review (do not auto-approve on draft save)
+    status:
+      updates.status && (updates.status === "pending" || updates.status === "needs_review")
+        ? updates.status
+        : existing.status === "approved" || existing.status === "rejected"
+        ? "needs_review"
+        : existing.status,
+    // Preserve CAN_KIEM_TRA on draft save unless explicitly overridden
+    scoreReconciliationStatus:
+      updates.scoreReconciliationStatus ?? existing.scoreReconciliationStatus,
+    draftSavedAt: now,
+    draftSavedBy: actor,
+    scoreEditHistory: nextHistory,
+    updatedAt: now,
+  };
+
+  await updateDoc(candRef, cleanUndefined(payload));
+}
+
+/**
+ * Approve candidate: Publishes to public `journals` and marks candidate as approved.
+ * Supports optional inline overrides from the Admin Review Modal so Admin can edit & approve in one step.
+ */
+export async function approveJournalCandidate(
+  candidateId: string,
+  user: { uid: string; email?: string },
+  options?: {
+    overrideManual?: boolean;
+    candidateOverrides?: Partial<JournalCandidate>;
+    editReason?: string;
+    replaceCouncilScoresExact?: boolean;
+  }
+): Promise<void> {
+  const candRef = doc(firestore, "journalCandidates", candidateId);
+  const candSnap = await getDoc(candRef);
+  if (!candSnap.exists()) {
+    throw new Error("Không tìm thấy bản ghi chờ duyệt: " + candidateId);
+  }
+
+  const rawCand = candSnap.data() as JournalCandidate;
+  const cand: JournalCandidate = options?.candidateOverrides
+    ? { ...rawCand, ...options.candidateOverrides }
+    : rawCand;
+
   const now = new Date().toISOString();
   const reviewer = user.email || user.uid;
+
+  // Normalize councilScores summary fields before publishing
+  const candCouncilScores = cand.councilScores || [];
+  const allCouncilsSet = new Set(
+    candCouncilScores.map((cs) => cs.councilId || cs.councilName)
+  );
+  const verifiedCouncilNames = Array.from(
+    new Set(
+      candCouncilScores
+        .filter((cs) => cs.verificationStatus === "VERIFIED")
+        .map((cs) => cs.councilName)
+    )
+  );
+  const verifiedNumericScores = candCouncilScores
+    .filter((cs) => cs.verificationStatus === "VERIFIED" && typeof cs.maxScore === "number")
+    .map((cs) => cs.maxScore as number);
+  const effectiveCandMaxScore =
+    verifiedNumericScores.length > 0
+      ? Math.max(...verifiedNumericScores)
+      : cand.maxScore;
+
+  const publishLogEntry: JournalScoreEditLog = {
+    editedAt: now,
+    editedBy: reviewer,
+    actionType: "approve_publish",
+    reason: options?.editReason?.trim() || "Admin phê duyệt và công bố dữ liệu tạp chí / điểm HĐGSNN",
+    summary: `Phê duyệt công bố (${candCouncilScores.length} bản ghi điểm thuộc ${allCouncilsSet.size} Hội đồng)`,
+  };
+  const nextEditHistory = [...(cand.scoreEditHistory || []), publishLogEntry];
 
   if (cand.changeType === "create") {
     // A. Create new journal document
@@ -419,14 +831,24 @@ export async function approveJournalCandidate(
       fields: cand.fields,
       website: cand.website,
       websiteVerified: cand.websiteVerified,
-      maxScore: cand.maxScore,
+      maxScore: effectiveCandMaxScore,
       maxScoreYear: cand.maxScoreYear,
       scores: cand.scores,
+      councilScores: candCouncilScores,
+      recognizedCouncilCount: allCouncilsSet.size || cand.recognizedCouncilCount || 0,
+      verifiedCouncils:
+        verifiedCouncilNames.length > 0 ? verifiedCouncilNames : cand.verifiedCouncils || [],
+      decisionYear: cand.decisionYear || cand.maxScoreYear,
+      scoreReconciliationStatus: "HOAN_TAT",
+      scoreSourceNote: cand.scoreSourceNote,
+      scoreEditHistory: nextEditHistory,
       guidelines: cand.guidelines,
       links: cand.links,
-      verification: cand.verification,
+      verification: cand.verification
+        ? { ...cand.verification, manualReviewNeeded: false }
+        : undefined,
       status: "active",
-      isManualEdited: false,
+      isManualEdited: Boolean(options?.candidateOverrides),
       createdBy: reviewer,
     };
 
@@ -440,7 +862,7 @@ export async function approveJournalCandidate(
     if (existingSnap.exists()) {
       const existing = existingSnap.data() as Journal;
 
-      // Merge scores without overwriting older history
+      // Merge legacy scores without overwriting older history
       const mergedScores = [...(existing.scores || [])];
       (cand.scores || []).forEach((newScore) => {
         const idx = mergedScores.findIndex(
@@ -456,6 +878,35 @@ export async function approveJournalCandidate(
         }
       });
 
+      // Merge multi-council scores by composite key (or use exact list if Admin edited in modal)
+      const mergedCouncilScores = options?.replaceCouncilScoresExact
+        ? candCouncilScores
+        : mergeCouncilScoresList(existing.councilScores || [], candCouncilScores);
+
+      const mergedAllCouncils = new Set(
+        mergedCouncilScores.map((cs) => cs.councilId || cs.councilName)
+      );
+      const mergedVerifiedCouncils = Array.from(
+        new Set(
+          mergedCouncilScores
+            .filter((cs) => cs.verificationStatus === "VERIFIED")
+            .map((cs) => cs.councilName)
+        )
+      );
+      const mergedVerifiedNumeric = mergedCouncilScores
+        .filter((cs) => cs.verificationStatus === "VERIFIED" && typeof cs.maxScore === "number")
+        .map((cs) => cs.maxScore as number);
+
+      const mergedMaxScore =
+        mergedVerifiedNumeric.length > 0
+          ? Math.max(...mergedVerifiedNumeric)
+          : Math.max(effectiveCandMaxScore, existing.maxScore || 0);
+
+      const mergedEditHistory = [
+        ...(existing.scoreEditHistory || []),
+        ...nextEditHistory,
+      ];
+
       // Prepare updates
       const updates: Partial<Journal> = {
         name: existing.isManualEdited && !options?.overrideManual ? existing.name : cand.name,
@@ -469,25 +920,82 @@ export async function approveJournalCandidate(
         fields: Array.from(new Set([...(existing.fields || []), ...(cand.fields || [])])),
         website: cand.website || existing.website,
         websiteVerified: cand.websiteVerified || existing.websiteVerified,
-        maxScore: Math.max(cand.maxScore, existing.maxScore || 0),
+        maxScore: mergedMaxScore,
         maxScoreYear: cand.maxScoreYear || existing.maxScoreYear,
         scores: mergedScores,
+        councilScores: mergedCouncilScores,
+        recognizedCouncilCount: mergedAllCouncils.size,
+        verifiedCouncils: mergedVerifiedCouncils,
+        decisionYear: cand.decisionYear || existing.decisionYear || cand.maxScoreYear,
+        scoreReconciliationStatus: "HOAN_TAT",
+        scoreSourceNote: cand.scoreSourceNote || existing.scoreSourceNote,
+        scoreEditHistory: mergedEditHistory,
         guidelines: cand.guidelines || existing.guidelines,
-        verification: cand.verification || existing.verification,
+        verification: cand.verification
+          ? { ...cand.verification, manualReviewNeeded: false }
+          : existing.verification,
       };
 
       await updateJournal(existingDocId, updates, user);
+    } else {
+      // Fallback if existingDocId no longer exists: create it
+      const journalData: Omit<Journal, "id" | "createdAt" | "updatedAt"> = {
+        journalId: cand.journalId,
+        name: cand.name,
+        englishName: cand.englishName,
+        abbreviation: cand.abbreviation,
+        publisher: cand.publisher,
+        issnPrint: cand.issnPrint,
+        issnOnline: cand.issnOnline,
+        isbn: cand.isbn,
+        category: cand.category,
+        primaryField: cand.primaryField,
+        fields: cand.fields,
+        website: cand.website,
+        websiteVerified: cand.websiteVerified,
+        maxScore: effectiveCandMaxScore,
+        maxScoreYear: cand.maxScoreYear,
+        scores: cand.scores,
+        councilScores: candCouncilScores,
+        recognizedCouncilCount: allCouncilsSet.size || cand.recognizedCouncilCount || 0,
+        verifiedCouncils:
+          verifiedCouncilNames.length > 0 ? verifiedCouncilNames : cand.verifiedCouncils || [],
+        decisionYear: cand.decisionYear || cand.maxScoreYear,
+        scoreReconciliationStatus: "HOAN_TAT",
+        scoreSourceNote: cand.scoreSourceNote,
+        scoreEditHistory: nextEditHistory,
+        guidelines: cand.guidelines,
+        links: cand.links,
+        verification: cand.verification
+          ? { ...cand.verification, manualReviewNeeded: false }
+          : undefined,
+        status: "active",
+        isManualEdited: Boolean(options?.candidateOverrides),
+        createdBy: reviewer,
+      };
+      await createJournal(journalData, user);
     }
   }
 
-  // Mark candidate as approved
-  await updateDoc(candRef, {
-    status: "approved",
-    reviewedAt: now,
-    reviewedBy: reviewer,
-    publishedJournalId: cand.journalId,
-    updatedAt: now,
-  });
+  // Mark candidate as approved and persist any inline overrides
+  await updateDoc(
+    candRef,
+    cleanUndefined({
+      ...(options?.candidateOverrides || {}),
+      councilScores: candCouncilScores,
+      recognizedCouncilCount: allCouncilsSet.size || cand.recognizedCouncilCount || 0,
+      verifiedCouncils:
+        verifiedCouncilNames.length > 0 ? verifiedCouncilNames : cand.verifiedCouncils || [],
+      maxScore: effectiveCandMaxScore,
+      scoreReconciliationStatus: "HOAN_TAT",
+      scoreEditHistory: nextEditHistory,
+      status: "approved",
+      reviewedAt: now,
+      reviewedBy: reviewer,
+      publishedJournalId: cand.existingJournalId || cand.journalId,
+      updatedAt: now,
+    })
+  );
 }
 
 /**
@@ -507,9 +1015,12 @@ export async function bulkApproveJournalCandidates(
       const candSnap = await getDoc(candRef);
       if (candSnap.exists()) {
         const cand = candSnap.data() as JournalCandidate;
-        // Enforce rule: candidates with verification warning cannot be bulk approved
+        // Enforce rule: candidates with verification warning, CAN_KIEM_TRA, or identity ambiguity cannot be bulk approved
         const hasWarning =
           cand.status === "needs_review" ||
+          cand.scoreReconciliationStatus === "CAN_KIEM_TRA" ||
+          cand.identityMatchStatus === "AMBIGUOUS" ||
+          cand.identityMatchStatus === "CONFLICT" ||
           cand.verification?.manualReviewNeeded === true ||
           cand.unverifiedFields?.some((f) => f.includes("Cần kiểm tra thủ công"));
 

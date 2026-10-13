@@ -5,7 +5,10 @@ import { fetchPublishedOpportunities } from "../firebase/firestore";
 import {
   subscribeJournals,
   filterJournalsList,
+  sortJournalsList,
+  getAvailableCouncilsFromJournals,
 } from "../services/journalService";
+import { DEFAULT_FACULTY_COUNCIL_ID } from "../services/journalGoogleSheetService";
 import { getOpportunityDeadlineInfo } from "../utils/date";
 import { OpportunityCard } from "../components/OpportunityCard";
 import { OpportunityDetailModal } from "../components/OpportunityDetailModal";
@@ -21,6 +24,7 @@ import {
   Compass,
   BookOpen,
   X,
+  Layers,
 } from "lucide-react";
 
 const FILTER_TAGS = [
@@ -72,7 +76,8 @@ export function resolveHomeTabFromUrl(
 }
 
 /**
- * Pure helper to build URL for switching tabs on PublicHome.
+ * Pure helper preserved for compatibility; note that PublicHome does NOT mutate window.location
+ * when switching tabs or filters so it works seamlessly inside iframes.
  */
 export function buildHomeTabUrl(tab: PublicHomeTab): string {
   return tab === "journals" ? "/?tab=journals" : "/";
@@ -96,10 +101,14 @@ export const PublicHome: React.FC = () => {
   const [selectedOpp, setSelectedOpp] = useState<Opportunity | null>(null);
 
   // ============================================================================
-  // TAB 2 STATE: TẠP CHÍ (APPROVED DOMESTIC JOURNALS)
+  // TAB 2 STATE: TẠP CHÍ (APPROVED DOMESTIC JOURNALS & MULTI-COUNCIL SCORES)
   // ============================================================================
   const [journals, setJournals] = useState<Journal[]>([]);
   const [journalsLoading, setJournalsLoading] = useState(true);
+  const [selectedCouncilId, setSelectedCouncilId] = useState<string>(
+    DEFAULT_FACULTY_COUNCIL_ID
+  );
+  const [councilScope, setCouncilScope] = useState<"has_score" | "all">("has_score");
   const [journalSearch, setJournalSearch] = useState("");
   const [journalField, setJournalField] = useState("all");
   const [journalScore, setJournalScore] = useState("all");
@@ -138,7 +147,7 @@ export const PublicHome: React.FC = () => {
     return () => unsub();
   }, []);
 
-  // Sync activeMainTab with browser Back/Forward (popstate) and custom navigation events
+  // Sync activeMainTab with custom navigation events without mutating URL
   useEffect(() => {
     const syncTabFromLocation = () => {
       setActiveMainTab(
@@ -154,12 +163,12 @@ export const PublicHome: React.FC = () => {
     };
   }, []);
 
+  /**
+   * Switch main tab in React state only — NEVER mutate URL/query/hash
+   * so iframe embedding on https://ifa.tdtu.edu.vn/ stays stable.
+   */
   const handleSelectMainTab = (tab: PublicHomeTab) => {
     setActiveMainTab(tab);
-    const nextUrl = buildHomeTabUrl(tab);
-    if (window.location.pathname + window.location.search !== nextUrl) {
-      window.history.pushState({ tab: "public", homeTab: tab }, "", nextUrl);
-    }
   };
 
   // ============================================================================
@@ -219,6 +228,25 @@ export const PublicHome: React.FC = () => {
     [journals]
   );
 
+  // Dynamic list of Professor Councils from published journals (always includes HD24 first)
+  const availableCouncils = useMemo(
+    () => getAvailableCouncilsFromJournals(domesticActiveJournals),
+    [domesticActiveJournals]
+  );
+
+  const selectedCouncilMeta = useMemo(
+    () =>
+      availableCouncils.find((c) => c.councilId === selectedCouncilId) || {
+        councilId: selectedCouncilId,
+        councilName:
+          selectedCouncilId === "ALL"
+            ? "Tất cả Hội đồng Giáo sư"
+            : "Văn hóa – Nghệ thuật – Thể dục thể thao",
+        journalCount: domesticActiveJournals.length,
+      },
+    [availableCouncils, selectedCouncilId, domesticActiveJournals.length]
+  );
+
   const uniqueJournalFields = useMemo(() => {
     const set = new Set<string>();
     domesticActiveJournals.forEach((j) => {
@@ -232,40 +260,49 @@ export const PublicHome: React.FC = () => {
     const set = new Set<number>();
     domesticActiveJournals.forEach((j) => {
       if (j.maxScoreYear) set.add(j.maxScoreYear);
+      if (j.decisionYear && Number.isFinite(Number(j.decisionYear))) set.add(Number(j.decisionYear));
       (j.scores || []).forEach((s) => {
         if (s.year) set.add(s.year);
+      });
+      (j.councilScores || []).forEach((cs) => {
+        if (cs.decisionYear) set.add(cs.decisionYear);
       });
     });
     return Array.from(set).sort((a, b) => b - a);
   }, [domesticActiveJournals]);
 
-  const filteredJournals = useMemo(
-    () =>
-      filterJournalsList(domesticActiveJournals, {
-        category: "domestic",
-        onlyActive: true,
-        searchQuery: journalSearch,
-        selectedField: journalField,
-        selectedScore: journalScore,
-        selectedYear: journalYear,
-        selectedGuidelineStatus: journalGuidelineStatus,
-      }),
-    [
-      domesticActiveJournals,
-      journalSearch,
-      journalField,
-      journalScore,
-      journalYear,
-      journalGuidelineStatus,
-    ]
-  );
+  const filteredJournals = useMemo(() => {
+    const list = filterJournalsList(domesticActiveJournals, {
+      category: "domestic",
+      onlyActive: true,
+      searchQuery: journalSearch,
+      selectedField: journalField,
+      selectedScore: journalScore,
+      selectedYear: journalYear,
+      selectedGuidelineStatus: journalGuidelineStatus,
+      selectedCouncilId,
+      councilScope,
+    });
+    return sortJournalsList(list, "score_desc", selectedCouncilId);
+  }, [
+    domesticActiveJournals,
+    journalSearch,
+    journalField,
+    journalScore,
+    journalYear,
+    journalGuidelineStatus,
+    selectedCouncilId,
+    councilScope,
+  ]);
 
   const hasActiveJournalFilters =
     journalSearch.trim().length > 0 ||
     journalField !== "all" ||
     journalScore !== "all" ||
     journalYear !== "all" ||
-    journalGuidelineStatus !== "all";
+    journalGuidelineStatus !== "all" ||
+    selectedCouncilId !== DEFAULT_FACULTY_COUNCIL_ID ||
+    councilScope !== "has_score";
 
   return (
     <div className="app-container">
@@ -315,18 +352,20 @@ export const PublicHome: React.FC = () => {
         </div>
       </section>
 
-      {/* Main Content Switcher: Hội thảo vs Tạp chí */}
+      {/* Main Content Switcher: Hội thảo (50%) vs Tạp chí (50%) - Full Width */}
       <div
         role="tablist"
         aria-label="Danh mục học thuật chính"
         style={{
-          display: "inline-flex",
-          flexWrap: "wrap",
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          width: "100%",
           gap: "8px",
           backgroundColor: "#e2e8f0",
-          padding: "5px",
+          padding: "6px",
           borderRadius: "10px",
           marginBottom: "18px",
+          boxSizing: "border-box",
         }}
       >
         <button
@@ -335,21 +374,26 @@ export const PublicHome: React.FC = () => {
           aria-selected={activeMainTab === "conferences"}
           onClick={() => handleSelectMainTab("conferences")}
           style={{
-            display: "inline-flex",
+            display: "flex",
             alignItems: "center",
+            justifyContent: "center",
             gap: "8px",
-            padding: "10px 20px",
+            width: "100%",
+            padding: "12px 16px",
             borderRadius: "8px",
-            border: "none",
+            border:
+              activeMainTab === "conferences"
+                ? "1px solid #bfdbfe"
+                : "1px solid transparent",
             backgroundColor:
               activeMainTab === "conferences" ? "#ffffff" : "transparent",
             color: activeMainTab === "conferences" ? "#0f3557" : "#475569",
             fontWeight: 700,
-            fontSize: "0.95rem",
+            fontSize: "0.98rem",
             cursor: "pointer",
             boxShadow:
               activeMainTab === "conferences"
-                ? "0 1px 3px rgba(0, 0, 0, 0.1)"
+                ? "0 2px 4px rgba(15, 53, 87, 0.12)"
                 : "none",
             transition: "all 0.15s ease",
           }}
@@ -377,21 +421,26 @@ export const PublicHome: React.FC = () => {
           aria-selected={activeMainTab === "journals"}
           onClick={() => handleSelectMainTab("journals")}
           style={{
-            display: "inline-flex",
+            display: "flex",
             alignItems: "center",
+            justifyContent: "center",
             gap: "8px",
-            padding: "10px 20px",
+            width: "100%",
+            padding: "12px 16px",
             borderRadius: "8px",
-            border: "none",
+            border:
+              activeMainTab === "journals"
+                ? "1px solid #bfdbfe"
+                : "1px solid transparent",
             backgroundColor:
               activeMainTab === "journals" ? "#ffffff" : "transparent",
             color: activeMainTab === "journals" ? "#0f3557" : "#475569",
             fontWeight: 700,
-            fontSize: "0.95rem",
+            fontSize: "0.98rem",
             cursor: "pointer",
             boxShadow:
               activeMainTab === "journals"
-                ? "0 1px 3px rgba(0, 0, 0, 0.1)"
+                ? "0 2px 4px rgba(15, 53, 87, 0.12)"
                 : "none",
             transition: "all 0.15s ease",
           }}
@@ -746,6 +795,140 @@ export const PublicHome: React.FC = () => {
         /* TAB 2: TẠP CHÍ (APPROVED DOMESTIC SCIENTIFIC JOURNALS)                 */
         /* ====================================================================== */
         <>
+          {/* Professor Council Selector Banner */}
+          <div
+            className="card"
+            style={{
+              marginBottom: 14,
+              padding: "16px 20px",
+              background: "linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%)",
+              border: "1px solid #bfdbfe",
+            }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+                gap: 14,
+                alignItems: "end",
+              }}
+            >
+              {/* Council Selector Dropdown */}
+              <div>
+                <label
+                  htmlFor="home-council-selector"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontSize: "0.8rem",
+                    fontWeight: 700,
+                    color: "#1e3a8a",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.02em",
+                    marginBottom: 6,
+                  }}
+                >
+                  <Layers size={15} />
+                  Hội đồng Giáo sư tra cứu điểm
+                </label>
+                <select
+                  id="home-council-selector"
+                  className="form-control"
+                  value={selectedCouncilId}
+                  onChange={(e) => setSelectedCouncilId(e.target.value)}
+                  style={{
+                    fontWeight: 700,
+                    color: "#0f172a",
+                    borderColor: "#93c5fd",
+                    backgroundColor: "#ffffff",
+                  }}
+                  aria-label="Chọn Hội đồng Giáo sư để xem điểm tạp chí"
+                >
+                  {availableCouncils.map((c) => (
+                    <option key={c.councilId} value={c.councilId}>
+                      {c.councilName} ({c.councilId}) — {c.journalCount} tạp chí
+                    </option>
+                  ))}
+                  <option value="ALL">
+                    Tất cả Hội đồng Giáo sư (Hiển thị điểm cao nhất toàn danh mục)
+                  </option>
+                </select>
+              </div>
+
+              {/* Scope Selector: Có điểm tại Hội đồng đang chọn vs Tất cả tạp chí */}
+              <div>
+                <label
+                  style={{
+                    display: "block",
+                    fontSize: "0.78rem",
+                    fontWeight: 700,
+                    color: "#334155",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.02em",
+                    marginBottom: 6,
+                  }}
+                >
+                  Phạm vi hiển thị tạp chí
+                </label>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 6,
+                    backgroundColor: "#e2e8f0",
+                    padding: 4,
+                    borderRadius: 8,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setCouncilScope("has_score")}
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: 6,
+                      border: "none",
+                      fontSize: "0.8rem",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      backgroundColor:
+                        councilScope === "has_score" ? "#ffffff" : "transparent",
+                      color:
+                        councilScope === "has_score" ? "#1e3a8a" : "#475569",
+                      boxShadow:
+                        councilScope === "has_score"
+                          ? "0 1px 2px rgba(0, 0, 0, 0.08)"
+                          : "none",
+                    }}
+                  >
+                    Có điểm tại Hội đồng đang chọn
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCouncilScope("all")}
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: 6,
+                      border: "none",
+                      fontSize: "0.8rem",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      backgroundColor:
+                        councilScope === "all" ? "#ffffff" : "transparent",
+                      color: councilScope === "all" ? "#1e3a8a" : "#475569",
+                      boxShadow:
+                        councilScope === "all"
+                          ? "0 1px 2px rgba(0, 0, 0, 0.08)"
+                          : "none",
+                    }}
+                  >
+                    Tất cả tạp chí ({domesticActiveJournals.length})
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Search and Filters Bar for Journals */}
           <div className="card" style={{ marginBottom: 20, padding: "16px 20px" }}>
             {/* Search Input Row */}
@@ -840,7 +1023,7 @@ export const PublicHome: React.FC = () => {
                     marginBottom: 4,
                   }}
                 >
-                  Điểm HĐGSNN
+                  Điểm tại Hội đồng đang chọn
                 </label>
                 <select
                   className="form-control"
@@ -849,10 +1032,10 @@ export const PublicHome: React.FC = () => {
                   aria-label="Lọc tạp chí theo điểm HĐGSNN"
                 >
                   <option value="all">Tất cả mức điểm</option>
-                  <option value="1.0">Từ 1.00 điểm trở lên</option>
-                  <option value="0.75">Từ 0.75 điểm trở lên</option>
-                  <option value="0.5">Từ 0.50 điểm trở lên</option>
-                  <option value="0.25">Từ 0.25 điểm trở lên</option>
+                  <option value="1.0">Từ 1,00 điểm trở lên</option>
+                  <option value="0.75">Từ 0,75 điểm trở lên</option>
+                  <option value="0.5">Từ 0,50 điểm trở lên</option>
+                  <option value="0.25">Từ 0,25 điểm trở lên</option>
                 </select>
               </div>
 
@@ -928,7 +1111,16 @@ export const PublicHome: React.FC = () => {
           >
             <div>
               Hiển thị <strong>{filteredJournals.length}</strong> /{" "}
-              {domesticActiveJournals.length} tạp chí khoa học trong nước được tính điểm HĐGSNN
+              {domesticActiveJournals.length} tạp chí khoa học trong nước
+              {selectedCouncilId !== "ALL" && (
+                <span>
+                  {" "}
+                  · Hội đồng đang chọn:{" "}
+                  <strong style={{ color: "#1e3a8a" }}>
+                    {selectedCouncilMeta.councilName} ({selectedCouncilId})
+                  </strong>
+                </span>
+              )}
             </div>
             {hasActiveJournalFilters && (
               <button
@@ -939,6 +1131,8 @@ export const PublicHome: React.FC = () => {
                   setJournalScore("all");
                   setJournalYear("all");
                   setJournalGuidelineStatus("all");
+                  setSelectedCouncilId(DEFAULT_FACULTY_COUNCIL_ID);
+                  setCouncilScope("has_score");
                 }}
                 style={{
                   background: "none",
@@ -986,13 +1180,35 @@ export const PublicHome: React.FC = () => {
               >
                 {domesticActiveJournals.length === 0
                   ? "Chưa có tạp chí nào được công bố trong danh mục."
+                  : councilScope === "has_score" && selectedCouncilId !== "ALL"
+                  ? `Không có tạp chí nào phù hợp có mức điểm tại Hội đồng "${selectedCouncilMeta.councilName}".`
                   : "Không tìm thấy tạp chí khoa học phù hợp."}
               </div>
-              <p style={{ maxWidth: 480, margin: "0 auto", fontSize: "0.875rem" }}>
+              <p style={{ maxWidth: 520, margin: "0 auto 14px auto", fontSize: "0.875rem" }}>
                 {domesticActiveJournals.length === 0
                   ? "Danh mục tạp chí khoa học trong nước sẽ hiển thị tại đây ngay sau khi Admin phê duyệt và công bố."
+                  : councilScope === "has_score" && selectedCouncilId !== "ALL"
+                  ? "Bạn có thể chuyển sang chế độ “Tất cả tạp chí” hoặc chọn Hội đồng Giáo sư khác để tra cứu."
                   : "Hãy thử thay đổi từ khóa tìm kiếm hoặc đặt lại bộ lọc để xem toàn bộ danh mục tạp chí."}
               </p>
+              {domesticActiveJournals.length > 0 && councilScope === "has_score" && (
+                <button
+                  type="button"
+                  onClick={() => setCouncilScope("all")}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: 6,
+                    border: "1px solid #2563eb",
+                    backgroundColor: "#eff6ff",
+                    color: "#1e40af",
+                    fontWeight: 700,
+                    fontSize: "0.85rem",
+                    cursor: "pointer",
+                  }}
+                >
+                  Xem tất cả {domesticActiveJournals.length} tạp chí trong danh mục
+                </button>
+              )}
             </div>
           ) : (
             <div className="opportunity-grid" style={{ marginBottom: 32 }}>
@@ -1000,6 +1216,7 @@ export const PublicHome: React.FC = () => {
                 <JournalCard
                   key={journal.id || journal.journalId}
                   journal={journal}
+                  selectedCouncilId={selectedCouncilId}
                   isAdmin={false}
                   onViewDetails={(item) => setSelectedJournal(item)}
                 />
@@ -1011,6 +1228,7 @@ export const PublicHome: React.FC = () => {
           <JournalDetailModal
             isOpen={Boolean(selectedJournal)}
             journal={selectedJournal}
+            selectedCouncilId={selectedCouncilId}
             onClose={() => setSelectedJournal(null)}
           />
         </>

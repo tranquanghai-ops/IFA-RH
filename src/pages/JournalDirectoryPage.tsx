@@ -2,13 +2,16 @@ import React, { useState, useEffect, useMemo } from "react";
 import type {
   Journal,
   JournalCandidate,
-  JournalCandidateStatus,
 } from "../types/journal";
 import {
   subscribeJournals,
   createJournal,
   updateJournal,
   setJournalStatus,
+  getAvailableCouncilsFromJournals,
+  filterJournalsList,
+  sortJournalsList,
+  formatVietnameseScore,
 } from "../services/journalService";
 import {
   subscribeJournalCandidates,
@@ -16,13 +19,18 @@ import {
   bulkApproveJournalCandidates,
   rejectJournalCandidate,
   markJournalCandidateNeedsReview,
+  saveJournalCandidateDraft,
   getJournalSyncSettings,
   syncJournalsFromGoogleSheetsToQueue,
+  syncMultiCouncilScoresFromGoogleSheetsToQueue,
   JournalSyncStageError,
 } from "../services/journalCandidateService";
 import {
   DEFAULT_JOURNAL_SPREADSHEET_ID,
   DEFAULT_JOURNAL_SHEET_NAME,
+  DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID,
+  DEFAULT_MULTI_COUNCIL_SHEET_NAME,
+  DEFAULT_FACULTY_COUNCIL_ID,
 } from "../services/journalGoogleSheetService";
 import { useAuth } from "../firebase/auth";
 import { JournalCard } from "../components/JournalCard";
@@ -40,24 +48,24 @@ import {
   BookOpen,
   Search,
   Plus,
-  Upload,
   Award,
   Sparkles,
   RefreshCw,
   X,
-  UploadCloud,
   CheckCircle2,
   Clock,
-  HelpCircle,
-  XCircle,
-  Eye,
-  CheckSquare,
-  Square,
   AlertCircle,
   Settings,
+  Layers,
+  Edit,
 } from "lucide-react";
 
-export type CandidateQueueTab = "pending" | "needs_review" | "rejected" | "all";
+export type CandidateQueueTab =
+  | "pending"
+  | "needs_review"
+  | "approved"
+  | "rejected"
+  | "all";
 
 export const isTodayDate = (dateStr?: string | null): boolean => {
   if (!dateStr) return false;
@@ -79,10 +87,17 @@ export const getJournalCandidateCategory = (
 ): "pending" | "needs_review" | "rejected" | "approved" => {
   if (c.status === "approved") return "approved";
   if (c.status === "rejected") return "rejected";
-  if (c.status === "needs_review" || c.verification?.manualReviewNeeded) return "needs_review";
+  if (
+    c.status === "needs_review" ||
+    c.scoreReconciliationStatus === "CAN_KIEM_TRA" ||
+    c.identityMatchStatus === "AMBIGUOUS" ||
+    c.identityMatchStatus === "CONFLICT" ||
+    c.verification?.manualReviewNeeded
+  ) {
+    return "needs_review";
+  }
   return "pending";
 };
-
 
 export const JournalDirectoryPage: React.FC = () => {
   const { profile, user } = useAuth();
@@ -95,7 +110,9 @@ export const JournalDirectoryPage: React.FC = () => {
   const [journals, setJournals] = useState<Journal[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Search & Filters for Public View
+  // Council & Search Filters for Public View
+  const [selectedCouncilId, setSelectedCouncilId] = useState<string>(DEFAULT_FACULTY_COUNCIL_ID);
+  const [councilScope, setCouncilScope] = useState<"has_score" | "all">("all");
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [selectedField, setSelectedField] = useState<string>("ALL");
   const [selectedMinScore, setSelectedMinScore] = useState<string>("ALL");
@@ -116,9 +133,11 @@ export const JournalDirectoryPage: React.FC = () => {
   const [isFormOpen, setIsFormOpen] = useState<boolean>(false);
   const [isImportOpen, setIsImportOpen] = useState<boolean>(false);
   const [candidateForReview, setCandidateForReview] = useState<JournalCandidate | null>(null);
+  const [reviewInitialEditMode, setReviewInitialEditMode] = useState<boolean>(false);
 
   // Direct sync & source configuration state
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [isSyncingMultiCouncil, setIsSyncingMultiCouncil] = useState<boolean>(false);
   const [isConfigSourceOpen, setIsConfigSourceOpen] = useState<boolean>(false);
   const [isSyncResultOpen, setIsSyncResultOpen] = useState<boolean>(false);
   const [syncResultData, setSyncResultData] = useState<JournalSyncResultData | null>(null);
@@ -147,17 +166,30 @@ export const JournalDirectoryPage: React.FC = () => {
     return () => unsub();
   }, [isAdmin]);
 
-  // Calculate candidate non-overlapping counts for review queue (excluding approved)
+  // Keep candidateForReview fresh when Firestore updates (e.g., after Lưu nháp)
+  useEffect(() => {
+    if (!candidateForReview) return;
+    const updated = candidates.find((c) => c.id === candidateForReview.id);
+    if (updated) {
+      setCandidateForReview(updated);
+    }
+  }, [candidates, candidateForReview?.id]);
+
+  // Calculate candidate counts for review queue
   const candidateTabCounts = useMemo(() => {
     const counts: Record<CandidateQueueTab, number> = {
       pending: 0,
       needs_review: 0,
+      approved: 0,
       rejected: 0,
       all: 0,
     };
     candidates.forEach((c) => {
-      if (c.status === "approved") return;
       const cat = getJournalCandidateCategory(c);
+      if (cat === "approved") {
+        counts.approved++;
+        return;
+      }
       if (cat === "rejected") counts.rejected++;
       else if (cat === "needs_review") counts.needs_review++;
       else if (cat === "pending") counts.pending++;
@@ -166,104 +198,91 @@ export const JournalDirectoryPage: React.FC = () => {
     return counts;
   }, [candidates]);
 
+  const domesticJournals = useMemo(
+    () =>
+      journals.filter(
+        (j) => j.category === "domestic" && (showHidden || j.status !== "hidden")
+      ),
+    [journals, showHidden]
+  );
+
+  const availableCouncils = useMemo(
+    () => getAvailableCouncilsFromJournals(domesticJournals),
+    [domesticJournals]
+  );
+
   // Unique fields & years
   const uniqueFields = useMemo(() => {
     const set = new Set<string>();
-    journals.forEach((j) => {
+    domesticJournals.forEach((j) => {
       if (j.primaryField) set.add(j.primaryField);
       (j.fields || []).forEach((f) => set.add(f));
     });
-    return Array.from(set).sort();
-  }, [journals]);
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "vi"));
+  }, [domesticJournals]);
 
   const uniqueYears = useMemo(() => {
     const set = new Set<number>();
-    journals.forEach((j) => {
+    domesticJournals.forEach((j) => {
       if (j.maxScoreYear) set.add(j.maxScoreYear);
+      if (j.decisionYear && Number.isFinite(Number(j.decisionYear))) set.add(Number(j.decisionYear));
       (j.scores || []).forEach((s) => {
         if (s.year) set.add(s.year);
       });
+      (j.councilScores || []).forEach((cs) => {
+        if (cs.decisionYear) set.add(cs.decisionYear);
+      });
     });
     return Array.from(set).sort((a, b) => b - a);
-  }, [journals]);
+  }, [domesticJournals]);
 
   // Filtered public journals (domestic only)
   const filteredJournals = useMemo(() => {
-    return journals.filter((j) => {
-      if (j.category !== "domestic") return false;
-      if (!showHidden && j.status === "hidden") return false;
-
-      if (searchTerm.trim()) {
-        const q = searchTerm.toLowerCase().trim();
-        const matchTitle = j.name?.toLowerCase().includes(q) || false;
-        const matchEnglish = j.englishName?.toLowerCase().includes(q) || false;
-        const matchPub = j.publisher?.toLowerCase().includes(q) || false;
-        const matchIssn =
-          (j.issnPrint && j.issnPrint.toLowerCase().includes(q)) ||
-          (j.issnOnline && j.issnOnline.toLowerCase().includes(q)) ||
-          false;
-        const matchField =
-          j.primaryField?.toLowerCase().includes(q) ||
-          (j.fields || []).some((f) => f.toLowerCase().includes(q));
-
-        if (!matchTitle && !matchEnglish && !matchPub && !matchIssn && !matchField) {
-          return false;
-        }
+    const list = filterJournalsList(domesticJournals, {
+      category: "domestic",
+      onlyActive: !showHidden,
+      searchQuery: searchTerm,
+      selectedField: selectedField === "ALL" ? "all" : selectedField,
+      selectedScore: selectedMinScore === "ALL" ? "all" : selectedMinScore,
+      selectedYear: selectedYear === "ALL" ? "all" : selectedYear,
+      selectedGuidelineStatus:
+        selectedInfoStatus === "has_guidelines" ? "has_guidelines" : "all",
+      selectedCouncilId,
+      councilScope,
+    }).filter((j) => {
+      if (selectedInfoStatus === "verified_website") {
+        return Boolean(j.website && j.websiteVerified);
       }
-
-      if (selectedField !== "ALL") {
-        const hasField =
-          j.primaryField === selectedField || (j.fields || []).includes(selectedField);
-        if (!hasField) return false;
+      if (selectedInfoStatus === "no_website") {
+        return !j.website || j.website.trim().length === 0;
       }
-
-      if (selectedMinScore !== "ALL") {
-        const minVal = parseFloat(selectedMinScore);
-        if (isNaN(minVal) || j.maxScore < minVal) return false;
-      }
-
-      if (selectedYear !== "ALL") {
-        const y = parseInt(selectedYear, 10);
-        const hasYear =
-          j.maxScoreYear === y || (j.scores || []).some((s) => s.year === y);
-        if (!hasYear) return false;
-      }
-
-      if (selectedInfoStatus !== "ALL") {
-        if (selectedInfoStatus === "has_guidelines") {
-          if (!j.guidelines?.hasGuidelines) return false;
-        } else if (selectedInfoStatus === "verified_website") {
-          if (!j.website || !j.websiteVerified) return false;
-        } else if (selectedInfoStatus === "no_website") {
-          if (j.website && j.website.trim().length > 0) return false;
-        }
-      }
-
       return true;
     });
+
+    return sortJournalsList(list, "score_desc", selectedCouncilId);
   }, [
-    journals,
+    domesticJournals,
     searchTerm,
     selectedField,
     selectedMinScore,
     selectedYear,
     selectedInfoStatus,
     showHidden,
+    selectedCouncilId,
+    councilScope,
   ]);
 
-  // Filtered candidate items (approved candidates are displayed in Public Directory)
+  // Filtered candidate items
   const filteredCandidates = useMemo(() => {
     return candidates.filter((c) => {
-      // Exclude approved candidates from review queue
-      if (c.status === "approved") return false;
+      const cat = getJournalCandidateCategory(c);
 
-      // Tab filter
-      if (candidateFilterTab !== "all") {
-        const cat = getJournalCandidateCategory(c);
-        if (cat !== candidateFilterTab) return false;
+      if (candidateFilterTab === "all") {
+        if (cat === "approved") return false;
+      } else if (cat !== candidateFilterTab) {
+        return false;
       }
 
-      // Search filter
       if (candidateSearch.trim()) {
         const q = candidateSearch.toLowerCase().trim();
         const matchTitle = c.name?.toLowerCase().includes(q) || false;
@@ -274,7 +293,21 @@ export const JournalDirectoryPage: React.FC = () => {
           false;
         const matchId = c.journalId?.toLowerCase().includes(q) || false;
         const matchPub = c.publisher?.toLowerCase().includes(q) || false;
-        if (!matchTitle && !matchEng && !matchIssn && !matchId && !matchPub) return false;
+        const matchCouncil = (c.councilScores || []).some(
+          (cs) =>
+            cs.councilName.toLowerCase().includes(q) ||
+            cs.councilId.toLowerCase().includes(q)
+        );
+        if (
+          !matchTitle &&
+          !matchEng &&
+          !matchIssn &&
+          !matchId &&
+          !matchPub &&
+          !matchCouncil
+        ) {
+          return false;
+        }
       }
 
       return true;
@@ -311,7 +344,7 @@ export const JournalDirectoryPage: React.FC = () => {
       });
       if (res.skippedWarningCount > 0) {
         alert(
-          `Đã duyệt thành công ${res.successCount} bản ghi! Lưu ý: ${res.skippedWarningCount} bản ghi có cảnh báo kiểm tra thủ công đã được giữ lại trong danh sách để Admin đối chiếu riêng.`
+          `Đã duyệt thành công ${res.successCount} bản ghi! Lưu ý: ${res.skippedWarningCount} bản ghi có cảnh báo CAN_KIEM_TRA hoặc cần kiểm tra thủ công đã được giữ lại trong danh sách để Admin đối chiếu riêng.`
         );
       } else {
         alert(`Đã duyệt thành công ${res.successCount} bản ghi!`);
@@ -340,9 +373,9 @@ export const JournalDirectoryPage: React.FC = () => {
     await setJournalStatus(journal.id, nextStatus, { uid: user.uid, email: user.email || "" });
   };
 
-  // Direct Google Sheets Synchronization (Immediate execution using saved settings)
+  // Primary Action: Direct Google Sheets Catalog Synchronization
   const handleDirectSync = async () => {
-    if (!user || isSyncing) return;
+    if (!user || isSyncing || isSyncingMultiCouncil) return;
     setIsSyncing(true);
     setSyncErrorData(null);
     setSyncResultData(null);
@@ -359,6 +392,7 @@ export const JournalDirectoryPage: React.FC = () => {
       });
 
       setSyncResultData({
+        syncMode: "catalog",
         totalRead: res.totalRead,
         newCandidatesCount: res.newCandidatesCount,
         updatedCandidatesCount: res.updatedCandidatesCount,
@@ -391,6 +425,65 @@ export const JournalDirectoryPage: React.FC = () => {
     }
   };
 
+  // Secondary Action: Multi-Council HDGSNN Scores Sync ("Cập nhật điểm HĐGSNN")
+  const handleMultiCouncilScoreSync = async () => {
+    if (!user || isSyncing || isSyncingMultiCouncil) return;
+    setIsSyncingMultiCouncil(true);
+    setSyncErrorData(null);
+    setSyncResultData(null);
+
+    try {
+      const savedSettings = await getJournalSyncSettings();
+      const sheetId =
+        savedSettings?.multiCouncilSheetId || DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID;
+      const sheetName =
+        savedSettings?.multiCouncilSheetName || DEFAULT_MULTI_COUNCIL_SHEET_NAME;
+
+      const res = await syncMultiCouncilScoresFromGoogleSheetsToQueue({
+        sheetId,
+        sheetName,
+        user: { uid: user.uid, email: user.email || "" },
+      });
+
+      setSyncResultData({
+        syncMode: "multi_council",
+        totalRead: res.totalRead,
+        newCandidatesCount: res.newCandidatesCount,
+        updatedCandidatesCount: res.updatedCandidatesCount,
+        unchangedCount: res.unchangedCount,
+        skippedDuplicates: res.skippedDuplicates,
+        manualReviewCount: res.manualReviewCount,
+        warnings: res.warnings,
+        batchId: res.batchId,
+        sourceSpreadsheetId: res.sourceSpreadsheetId,
+        sourceSheetName: res.sourceSheetName,
+        usedFallbackCatalogSheet: res.usedFallbackCatalogSheet,
+        multiCouncilStats: res.multiCouncilStats,
+        identityMatchStats: res.identityMatchStats,
+      });
+      setIsSyncResultOpen(true);
+    } catch (err: any) {
+      if (err instanceof JournalSyncStageError) {
+        setSyncErrorData({
+          message: err.message,
+          stage: err.stage,
+          collectionName: err.collectionName,
+          operationType: err.operationType,
+          userSummary: err.userSummary,
+          documentId: err.documentId,
+        });
+      } else {
+        setSyncErrorData({
+          message: err.message || "Cập nhật điểm HĐGSNN thất bại.",
+          userSummary: "Lỗi kết nối hoặc đọc bảng điểm HĐGSNN",
+        });
+      }
+      setIsSyncResultOpen(true);
+    } finally {
+      setIsSyncingMultiCouncil(false);
+    }
+  };
+
   return (
     <div className="journal-directory-page" style={{ padding: "20px 24px", maxWidth: "1400px", margin: "0 auto" }}>
       {/* Top Banner & Header */}
@@ -413,17 +506,17 @@ export const JournalDirectoryPage: React.FC = () => {
             Danh mục Tạp chí Khoa học
           </h1>
           <p style={{ margin: "6px 0 0 0", color: "#64748b", fontSize: "0.92rem", maxWidth: "780px" }}>
-            Tra cứu hồ sơ định danh, chỉ số ISSN/E-ISSN, khung điểm Hội đồng Giáo sư Nhà nước và thể lệ công bố dành cho giảng viên Khoa Mỹ thuật Công nghiệp — TDTU.
+            Tra cứu hồ sơ định danh, chỉ số ISSN/E-ISSN, mức điểm theo từng Hội đồng Giáo sư ngành/liên ngành và thể lệ công bố dành cho giảng viên Khoa Mỹ thuật Công nghiệp — TDTU.
           </p>
         </div>
 
         {/* Admin Action Toolbar */}
         {isAdmin && (
           <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-            {/* Primary Action: Direct Sync */}
+            {/* Primary Action: Direct Catalog Sync */}
             <button
               onClick={handleDirectSync}
-              disabled={isSyncing}
+              disabled={isSyncing || isSyncingMultiCouncil}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -436,12 +529,12 @@ export const JournalDirectoryPage: React.FC = () => {
                 color: "#ffffff",
                 fontSize: "0.86rem",
                 fontWeight: 600,
-                cursor: isSyncing ? "not-allowed" : "pointer",
-                opacity: isSyncing ? 0.75 : 1,
+                cursor: isSyncing || isSyncingMultiCouncil ? "not-allowed" : "pointer",
+                opacity: isSyncing || isSyncingMultiCouncil ? 0.75 : 1,
                 boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
                 transition: "all 0.15s ease",
               }}
-              title="Đồng bộ ngay từ Google Sheets theo cấu hình đã lưu"
+              title="Đồng bộ danh mục tạp chí từ bảng Google Sheets chuẩn"
             >
               <RefreshCw
                 size={15}
@@ -450,6 +543,40 @@ export const JournalDirectoryPage: React.FC = () => {
                 }}
               />
               <span>{isSyncing ? "Đang đồng bộ..." : "Đồng bộ Google Sheets"}</span>
+            </button>
+
+            {/* Secondary Action: Update Multi-Council HDGSNN Scores */}
+            <button
+              onClick={handleMultiCouncilScoreSync}
+              disabled={isSyncing || isSyncingMultiCouncil}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "7px",
+                height: "38px",
+                padding: "0 15px",
+                backgroundColor: "#eff6ff",
+                border: "1px solid #93c5fd",
+                borderRadius: "6px",
+                color: "#1e3a8a",
+                fontSize: "0.86rem",
+                fontWeight: 700,
+                cursor: isSyncing || isSyncingMultiCouncil ? "not-allowed" : "pointer",
+                opacity: isSyncing || isSyncingMultiCouncil ? 0.75 : 1,
+                boxShadow: "0 1px 2px rgba(0, 0, 0, 0.04)",
+                transition: "all 0.15s ease",
+              }}
+              title="Đọc dữ liệu điểm nhiều Hội đồng (53 cột) từ bảng IFA-RH_DANH_MUC_TAP_CHI_HDGSNN vào Hàng chờ duyệt"
+            >
+              <Layers
+                size={15}
+                style={{
+                  animation: isSyncingMultiCouncil ? "spin 1s linear infinite" : undefined,
+                }}
+              />
+              <span>
+                {isSyncingMultiCouncil ? "Đang nạp điểm HĐGSNN..." : "Cập nhật điểm HĐGSNN"}
+              </span>
             </button>
 
             {/* Minor Action: Source Config (Gear Icon) */}
@@ -469,12 +596,12 @@ export const JournalDirectoryPage: React.FC = () => {
                 boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
                 transition: "all 0.15s ease",
               }}
-              title="Cấu hình nguồn Google Sheets (Spreadsheet ID, Tên tab)"
+              title="Cấu hình 2 nguồn Google Sheets"
             >
               <Settings size={16} />
             </button>
 
-            {/* Secondary Action: Add Journal */}
+            {/* Add Journal */}
             <button
               onClick={() => {
                 setJournalForForm(null);
@@ -610,8 +737,9 @@ export const JournalDirectoryPage: React.FC = () => {
               [
                 { id: "pending", label: "Chờ duyệt", count: candidateTabCounts.pending },
                 { id: "needs_review", label: "Cần hiệu chỉnh", count: candidateTabCounts.needs_review },
+                { id: "approved", label: "Đã công bố", count: candidateTabCounts.approved },
                 { id: "rejected", label: "Từ chối", count: candidateTabCounts.rejected },
-                { id: "all", label: "Tất cả", count: candidateTabCounts.all },
+                { id: "all", label: "Tất cả chờ xử lý", count: candidateTabCounts.all },
               ] as const
             ).map((t) => {
               const isActive = candidateFilterTab === t.id;
@@ -671,14 +799,14 @@ export const JournalDirectoryPage: React.FC = () => {
             }}
           >
             {/* Search input */}
-            <div style={{ position: "relative", minWidth: "280px" }}>
+            <div style={{ position: "relative", minWidth: "280px", flex: "1 1 320px", maxWidth: "460px" }}>
               <Search
                 size={16}
                 style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }}
               />
               <input
                 type="text"
-                placeholder="Tìm theo tên tạp chí, ISSN, cơ quan xuất bản..."
+                placeholder="Tìm theo tên tạp chí, ISSN, Hội đồng Giáo sư, cơ quan xuất bản..."
                 value={candidateSearch}
                 onChange={(e) => setCandidateSearch(e.target.value)}
                 style={{
@@ -761,11 +889,11 @@ export const JournalDirectoryPage: React.FC = () => {
             >
               <table
                 className="journal-queue-table"
-                style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "0.85rem" }}
+                style={{ width: "100%", borderCollapse: "collapse", textAlign: "left", fontSize: "0.84rem" }}
               >
                 <thead>
                   <tr style={{ backgroundColor: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
-                    <th style={{ padding: "12px 12px", width: "40px", textAlign: "center" }}>
+                    <th style={{ padding: "12px 10px", width: "36px", textAlign: "center" }}>
                       <input
                         type="checkbox"
                         checked={
@@ -775,17 +903,39 @@ export const JournalDirectoryPage: React.FC = () => {
                         onChange={toggleSelectAllCandidates}
                       />
                     </th>
-                    <th style={{ padding: "12px 14px", minWidth: "280px", width: "36%" }}>Tên tạp chí</th>
-                    <th style={{ padding: "12px 12px", width: "120px" }}>Loại thay đổi</th>
-                    <th style={{ padding: "12px 14px", minWidth: "200px", width: "24%" }}>Cơ quan xuất bản</th>
-                    <th style={{ padding: "12px 12px", width: "110px" }}>Điểm HĐGS</th>
-                    <th style={{ padding: "12px 12px", width: "125px" }}>Trạng thái</th>
-                    <th style={{ padding: "12px 14px", width: "130px", textAlign: "right" }}>Thao tác</th>
+                    <th style={{ padding: "12px 12px", minWidth: "240px", width: "30%" }}>Tên tạp chí</th>
+                    <th style={{ padding: "12px 10px", width: "140px" }}>Loại thay đổi</th>
+                    <th style={{ padding: "12px 10px", width: "130px" }}>Số Hội đồng có điểm</th>
+                    <th style={{ padding: "12px 10px", width: "150px" }}>Điểm mới / Thay đổi</th>
+                    <th style={{ padding: "12px 10px", width: "135px" }}>Đối soát Spark</th>
+                    <th style={{ padding: "12px 10px", width: "125px" }}>Kiểm duyệt Admin</th>
+                    <th style={{ padding: "12px 12px", width: "175px", textAlign: "right" }}>Thao tác</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredCandidates.map((c) => {
                     const isSelected = selectedCandidateIds.includes(c.id);
+                    const cScores = c.councilScores || [];
+                    const councilCount =
+                      c.recognizedCouncilCount ||
+                      new Set(cScores.map((cs) => cs.councilId || cs.councilName)).size ||
+                      (c.scores || []).length;
+                    const newRecordsCount = c.newCouncilRecordsCount ?? cScores.length;
+                    const updatedRecordsCount = c.updatedCouncilRecordsCount ?? 0;
+                    const needsReviewRecordsCount =
+                      c.needsReviewCouncilCount ??
+                      cScores.filter((cs) => cs.verificationStatus === "NEEDS_REVIEW").length;
+
+                    const sparkStatus = c.scoreReconciliationStatus || "HOAN_TAT";
+                    const adminCat = getJournalCandidateCategory(c);
+
+                    const hasMultiCouncilDiff = (c.diffSummary || []).some(
+                      (d) =>
+                        d.field === "councilScores" ||
+                        d.field === "recognizedCouncilCount" ||
+                        d.field === "scoreReconciliationStatus"
+                    );
+
                     return (
                       <tr
                         key={c.id}
@@ -794,14 +944,16 @@ export const JournalDirectoryPage: React.FC = () => {
                           backgroundColor: isSelected ? "#f0fdf4" : "#ffffff",
                         }}
                       >
-                        <td style={{ padding: "12px 12px", textAlign: "center", verticalAlign: "top" }}>
+                        <td style={{ padding: "12px 10px", textAlign: "center", verticalAlign: "top" }}>
                           <input
                             type="checkbox"
                             checked={isSelected}
                             onChange={() => toggleSelectCandidate(c.id)}
                           />
                         </td>
-                        <td style={{ padding: "12px 14px", verticalAlign: "top" }}>
+
+                        {/* Col 1: Tên tạp chí (prominent, no Spark code) */}
+                        <td style={{ padding: "12px 12px", verticalAlign: "top" }}>
                           <div
                             style={{
                               fontWeight: 700,
@@ -815,7 +967,7 @@ export const JournalDirectoryPage: React.FC = () => {
                           {c.englishName && (
                             <div
                               style={{
-                                fontSize: "0.82rem",
+                                fontSize: "0.8rem",
                                 color: "#64748b",
                                 fontStyle: "italic",
                                 marginTop: "2px",
@@ -825,107 +977,256 @@ export const JournalDirectoryPage: React.FC = () => {
                               {c.englishName}
                             </div>
                           )}
-                          {(isTodayDate(c.createdAt) ||
-                            c.isManualPreserved ||
-                            c.verification?.manualReviewNeeded) && (
-                            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
-                              {isTodayDate(c.createdAt) && (
-                                <span
-                                  style={{
-                                    fontSize: "0.68rem",
-                                    fontWeight: 700,
-                                    color: "#166534",
-                                    backgroundColor: "#dcfce7",
-                                    border: "1px solid #bbf7d0",
-                                    padding: "1px 6px",
-                                    borderRadius: "4px",
-                                    letterSpacing: "0.02em",
-                                  }}
-                                >
-                                  MỚI
-                                </span>
-                              )}
-                              {c.isManualPreserved && (
-                                <span
-                                  style={{
-                                    fontSize: "0.72rem",
-                                    color: "#854d0e",
-                                    backgroundColor: "#fefce8",
-                                    padding: "1px 6px",
-                                    borderRadius: "4px",
-                                    border: "1px solid #fef08a",
-                                    fontWeight: 600,
-                                  }}
-                                >
-                                  Đã sửa thủ công
-                                </span>
-                              )}
-                              {c.verification?.manualReviewNeeded && (
-                                <span
-                                  style={{
-                                    fontSize: "0.72rem",
-                                    color: "#92400e",
-                                    backgroundColor: "#fef3c7",
-                                    padding: "1px 6px",
-                                    borderRadius: "4px",
-                                    border: "1px solid #fde68a",
-                                    fontWeight: 600,
-                                  }}
-                                  title={c.verification.manualReviewReason || "Cần kiểm tra thủ công"}
-                                >
-                                  ⚠ Cần kiểm tra
-                                </span>
-                              )}
-                            </div>
-                          )}
+                          <div style={{ fontSize: "0.76rem", color: "#64748b", marginTop: "3px" }}>
+                            {c.publisher}
+                          </div>
+                          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "5px" }}>
+                            {isTodayDate(c.createdAt) && (
+                              <span
+                                style={{
+                                  fontSize: "0.68rem",
+                                  fontWeight: 700,
+                                  color: "#166534",
+                                  backgroundColor: "#dcfce7",
+                                  border: "1px solid #bbf7d0",
+                                  padding: "1px 6px",
+                                  borderRadius: "4px",
+                                }}
+                              >
+                                MỚI
+                              </span>
+                            )}
+                            {c.draftSavedAt && (
+                              <span
+                                style={{
+                                  fontSize: "0.7rem",
+                                  fontWeight: 600,
+                                  color: "#1e40af",
+                                  backgroundColor: "#eff6ff",
+                                  border: "1px solid #bfdbfe",
+                                  padding: "1px 6px",
+                                  borderRadius: "4px",
+                                }}
+                              >
+                                Đã lưu nháp
+                              </span>
+                            )}
+                            {c.isManualPreserved && (
+                              <span
+                                style={{
+                                  fontSize: "0.7rem",
+                                  color: "#854d0e",
+                                  backgroundColor: "#fefce8",
+                                  padding: "1px 6px",
+                                  borderRadius: "4px",
+                                  border: "1px solid #fef08a",
+                                  fontWeight: 600,
+                                }}
+                              >
+                                Đã sửa thủ công
+                              </span>
+                            )}
+                            {(c.identityMatchStatus === "AMBIGUOUS" ||
+                              c.identityMatchStatus === "CONFLICT") && (
+                              <span
+                                style={{
+                                  fontSize: "0.7rem",
+                                  color: "#991b1b",
+                                  backgroundColor: "#fef2f2",
+                                  padding: "1px 6px",
+                                  borderRadius: "4px",
+                                  border: "1px solid #fecaca",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                Định danh: {c.identityMatchStatus}
+                              </span>
+                            )}
+                          </div>
                         </td>
 
-                        <td style={{ padding: "12px 12px", verticalAlign: "top" }}>
+                        {/* Col 2: Loại thay đổi */}
+                        <td style={{ padding: "12px 10px", verticalAlign: "top" }}>
                           {c.changeType === "create" ? (
-                            <span style={{ color: "#059669", fontWeight: 700 }}>Tạp chí mới</span>
+                            <span
+                              style={{
+                                display: "inline-block",
+                                color: "#059669",
+                                backgroundColor: "#ecfdf5",
+                                border: "1px solid #a7f3d0",
+                                padding: "2px 8px",
+                                borderRadius: "5px",
+                                fontWeight: 700,
+                                fontSize: "0.78rem",
+                              }}
+                            >
+                              Tạp chí mới
+                            </span>
+                          ) : hasMultiCouncilDiff ? (
+                            <div>
+                              <span
+                                style={{
+                                  display: "inline-block",
+                                  color: "#1e40af",
+                                  backgroundColor: "#eff6ff",
+                                  border: "1px solid #bfdbfe",
+                                  padding: "2px 8px",
+                                  borderRadius: "5px",
+                                  fontWeight: 700,
+                                  fontSize: "0.78rem",
+                                }}
+                              >
+                                Cập nhật điểm HĐGSNN
+                              </span>
+                              <div style={{ fontSize: "0.73rem", color: "#64748b", marginTop: 3 }}>
+                                {c.diffSummary?.length || 0} mục thay đổi
+                              </div>
+                            </div>
                           ) : (
                             <div>
-                              <span style={{ color: "#2563eb", fontWeight: 700 }}>Cập nhật</span>
-                              <div style={{ fontSize: "0.75rem", color: "#64748b" }}>
+                              <span
+                                style={{
+                                  display: "inline-block",
+                                  color: "#0369a1",
+                                  backgroundColor: "#f0f9ff",
+                                  border: "1px solid #bae6fd",
+                                  padding: "2px 8px",
+                                  borderRadius: "5px",
+                                  fontWeight: 700,
+                                  fontSize: "0.78rem",
+                                }}
+                              >
+                                Cập nhật thông tin
+                              </span>
+                              <div style={{ fontSize: "0.73rem", color: "#64748b", marginTop: 3 }}>
                                 {c.diffSummary?.length || 0} trường thay đổi
                               </div>
                             </div>
                           )}
                         </td>
-                        <td style={{ padding: "12px 14px", color: "#475569", verticalAlign: "top", lineHeight: 1.4 }}>
-                          {c.publisher}
+
+                        {/* Col 3: Số Hội đồng có điểm */}
+                        <td style={{ padding: "12px 10px", verticalAlign: "top" }}>
+                          <div style={{ fontWeight: 700, color: "#0f172a" }}>
+                            {councilCount} Hội đồng
+                          </div>
+                          <div style={{ fontSize: "0.74rem", color: "#166534", fontWeight: 600 }}>
+                            Tối đa: {formatVietnameseScore(c.maxScore)} ({c.decisionYear || c.maxScoreYear || 2025})
+                          </div>
                         </td>
-                        <td style={{ padding: "12px 12px", verticalAlign: "top" }}>
-                          <span style={{ fontWeight: 700, color: "#166534" }}>
-                            {c.maxScore > 0 ? c.maxScore.toFixed(2) : "0"} ({c.maxScoreYear})
-                          </span>
-                        </td>
-                        <td style={{ padding: "12px 12px", verticalAlign: "top" }}>
-                          {c.status === "rejected" ? (
-                            <span style={{ color: "#991b1b", fontWeight: 600 }}>Từ chối</span>
-                          ) : c.status === "needs_review" || c.verification?.manualReviewNeeded ? (
-                            <span style={{ color: "#854d0e", fontWeight: 600 }}>Cần hiệu chỉnh</span>
-                          ) : (
-                            <span style={{ color: "#1e40af", fontWeight: 600 }}>Chờ duyệt</span>
+
+                        {/* Col 4: Số bản ghi điểm mới / thay đổi */}
+                        <td style={{ padding: "12px 10px", verticalAlign: "top", fontSize: "0.78rem" }}>
+                          <div style={{ color: "#334155" }}>
+                            Tổng: <strong>{cScores.length || (c.scores || []).length}</strong> bản ghi
+                          </div>
+                          {(newRecordsCount > 0 || updatedRecordsCount > 0) && (
+                            <div style={{ color: "#15803d", fontWeight: 600 }}>
+                              +{newRecordsCount} mới
+                              {updatedRecordsCount > 0 ? ` · ${updatedRecordsCount} sửa` : ""}
+                            </div>
+                          )}
+                          {needsReviewRecordsCount > 0 && (
+                            <div style={{ color: "#b45309", fontWeight: 600 }}>
+                              ⚠ {needsReviewRecordsCount} mục cần kiểm tra
+                            </div>
                           )}
                         </td>
-                        <td style={{ padding: "12px 14px", textAlign: "right", verticalAlign: "top" }}>
-                          <button
-                            onClick={() => setCandidateForReview(c)}
+
+                        {/* Col 5: Trạng thái đối soát Spark */}
+                        <td style={{ padding: "12px 10px", verticalAlign: "top" }}>
+                          <span
                             style={{
-                              padding: "6px 12px",
-                              borderRadius: "6px",
-                              backgroundColor: "#1e3a8a",
-                              color: "#ffffff",
-                              border: "none",
-                              fontSize: "0.8rem",
-                              fontWeight: 600,
-                              cursor: "pointer",
-                              whiteSpace: "nowrap",
+                              display: "inline-block",
+                              padding: "2px 8px",
+                              borderRadius: "5px",
+                              fontSize: "0.74rem",
+                              fontWeight: 700,
+                              backgroundColor:
+                                sparkStatus === "HOAN_TAT"
+                                  ? "#ecfdf5"
+                                  : sparkStatus === "CAN_KIEM_TRA"
+                                  ? "#fef3c7"
+                                  : "#f1f5f9",
+                              color:
+                                sparkStatus === "HOAN_TAT"
+                                  ? "#065f46"
+                                  : sparkStatus === "CAN_KIEM_TRA"
+                                  ? "#92400e"
+                                  : "#475569",
+                              border:
+                                sparkStatus === "HOAN_TAT"
+                                  ? "1px solid #a7f3d0"
+                                  : sparkStatus === "CAN_KIEM_TRA"
+                                  ? "1px solid #fde68a"
+                                  : "1px solid #cbd5e1",
                             }}
                           >
-                            Xem & Duyệt
-                          </button>
+                            {sparkStatus}
+                          </span>
+                        </td>
+
+                        {/* Col 6: Trạng thái kiểm duyệt Admin */}
+                        <td style={{ padding: "12px 10px", verticalAlign: "top" }}>
+                          {adminCat === "approved" ? (
+                            <span style={{ color: "#166534", fontWeight: 700 }}>Đã công bố</span>
+                          ) : adminCat === "rejected" ? (
+                            <span style={{ color: "#991b1b", fontWeight: 700 }}>Từ chối</span>
+                          ) : adminCat === "needs_review" ? (
+                            <span style={{ color: "#b45309", fontWeight: 700 }}>Cần hiệu chỉnh</span>
+                          ) : (
+                            <span style={{ color: "#1e40af", fontWeight: 700 }}>Chờ duyệt</span>
+                          )}
+                        </td>
+
+                        {/* Col 7: Thao tác (Xem & Duyệt / Chỉnh sửa) */}
+                        <td style={{ padding: "12px 12px", textAlign: "right", verticalAlign: "top" }}>
+                          <div style={{ display: "inline-flex", gap: "6px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setReviewInitialEditMode(true);
+                                setCandidateForReview(c);
+                              }}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px",
+                                padding: "6px 10px",
+                                borderRadius: "6px",
+                                backgroundColor: "#ffffff",
+                                color: "#334155",
+                                border: "1px solid #cbd5e1",
+                                fontSize: "0.78rem",
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              <Edit size={13} />
+                              Chỉnh sửa
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setReviewInitialEditMode(false);
+                                setCandidateForReview(c);
+                              }}
+                              style={{
+                                padding: "6px 11px",
+                                borderRadius: "6px",
+                                backgroundColor: "#1e3a8a",
+                                color: "#ffffff",
+                                border: "none",
+                                fontSize: "0.78rem",
+                                fontWeight: 600,
+                                cursor: "pointer",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              Xem &amp; Duyệt
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -949,7 +1250,7 @@ export const JournalDirectoryPage: React.FC = () => {
                 Không có bản ghi nào trong mục này
               </h3>
               <p style={{ margin: "4px 0 0 0", fontSize: "0.82rem" }}>
-                Bấm "Đồng bộ Google Sheets" ở đầu trang để nạp dữ liệu điều tra từ Spark.
+                Bấm &ldquo;Đồng bộ Google Sheets&rdquo; hoặc &ldquo;Cập nhật điểm HĐGSNN&rdquo; ở đầu trang để nạp dữ liệu từ Spark.
               </p>
             </div>
           )}
@@ -964,7 +1265,7 @@ export const JournalDirectoryPage: React.FC = () => {
             style={{
               display: "flex",
               borderBottom: "2px solid #e2e8f0",
-              marginBottom: "20px",
+              marginBottom: "18px",
               gap: "8px",
             }}
           >
@@ -982,7 +1283,121 @@ export const JournalDirectoryPage: React.FC = () => {
               }}
             >
               <BookOpen size={18} />
-              Tạp chí khoa học trong nước ({journals.filter((j) => j.category === "domestic").length})
+              Tạp chí khoa học trong nước ({domesticJournals.length})
+            </div>
+          </div>
+
+          {/* Professor Council Selector Bar */}
+          <div
+            style={{
+              backgroundColor: "#eff6ff",
+              border: "1px solid #bfdbfe",
+              borderRadius: "10px",
+              padding: "14px 18px",
+              marginBottom: "16px",
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+              gap: "14px",
+              alignItems: "end",
+            }}
+          >
+            <div>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  fontSize: "0.78rem",
+                  fontWeight: 700,
+                  color: "#1e3a8a",
+                  textTransform: "uppercase",
+                  marginBottom: "5px",
+                }}
+              >
+                <Layers size={14} />
+                Hội đồng Giáo sư tra cứu điểm
+              </label>
+              <select
+                value={selectedCouncilId}
+                onChange={(e) => setSelectedCouncilId(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "8px 10px",
+                  borderRadius: "6px",
+                  border: "1px solid #93c5fd",
+                  fontSize: "0.86rem",
+                  fontWeight: 700,
+                  color: "#0f172a",
+                  backgroundColor: "#ffffff",
+                }}
+              >
+                {availableCouncils.map((c) => (
+                  <option key={c.councilId} value={c.councilId}>
+                    {c.councilName} ({c.councilId}) — {c.journalCount} tạp chí
+                  </option>
+                ))}
+                <option value="ALL">
+                  Tất cả Hội đồng Giáo sư (Hiển thị điểm cao nhất)
+                </option>
+              </select>
+            </div>
+
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: "0.78rem",
+                  fontWeight: 700,
+                  color: "#334155",
+                  textTransform: "uppercase",
+                  marginBottom: "5px",
+                }}
+              >
+                Phạm vi hiển thị tạp chí
+              </label>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: "6px",
+                  backgroundColor: "#dbeafe",
+                  padding: "4px",
+                  borderRadius: "8px",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setCouncilScope("has_score")}
+                  style={{
+                    padding: "7px 10px",
+                    borderRadius: "6px",
+                    border: "none",
+                    fontSize: "0.8rem",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    backgroundColor: councilScope === "has_score" ? "#ffffff" : "transparent",
+                    color: councilScope === "has_score" ? "#1e3a8a" : "#475569",
+                  }}
+                >
+                  Có điểm tại Hội đồng đang chọn
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCouncilScope("all")}
+                  style={{
+                    padding: "7px 10px",
+                    borderRadius: "6px",
+                    border: "none",
+                    fontSize: "0.8rem",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    backgroundColor: councilScope === "all" ? "#ffffff" : "transparent",
+                    color: councilScope === "all" ? "#1e3a8a" : "#475569",
+                  }}
+                >
+                  Tất cả tạp chí ({domesticJournals.length})
+                </button>
+              </div>
             </div>
           </div>
 
@@ -1055,7 +1470,7 @@ export const JournalDirectoryPage: React.FC = () => {
                 {/* Field filter */}
                 <div>
                   <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: "4px" }}>
-                    Nhóm ngành / Hội đồng
+                    Nhóm ngành
                   </label>
                   <select
                     value={selectedField}
@@ -1082,10 +1497,10 @@ export const JournalDirectoryPage: React.FC = () => {
                     style={{ width: "100%", padding: "7px 10px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "0.85rem", backgroundColor: "#ffffff" }}
                   >
                     <option value="ALL">Tất cả mức điểm</option>
-                    <option value="1.0">Từ 1.00 điểm trở lên</option>
-                    <option value="0.75">Từ 0.75 điểm trở lên</option>
-                    <option value="0.5">Từ 0.50 điểm trở lên</option>
-                    <option value="0.25">Từ 0.25 điểm trở lên</option>
+                    <option value="1.0">Từ 1,00 điểm trở lên</option>
+                    <option value="0.75">Từ 0,75 điểm trở lên</option>
+                    <option value="0.5">Từ 0,50 điểm trở lên</option>
+                    <option value="0.25">Từ 0,25 điểm trở lên</option>
                   </select>
                 </div>
 
@@ -1150,13 +1565,21 @@ export const JournalDirectoryPage: React.FC = () => {
                 marginBottom: "16px",
                 fontSize: "0.88rem",
                 color: "#475569",
+                flexWrap: "wrap",
+                gap: "8px",
               }}
             >
               <div>
-                Hiển thị <strong>{filteredJournals.length}</strong> / {journals.filter((j) => j.category === "domestic").length} tạp chí trong nước
+                Hiển thị <strong>{filteredJournals.length}</strong> / {domesticJournals.length} tạp chí trong nước
               </div>
 
-              {(searchTerm || selectedField !== "ALL" || selectedMinScore !== "ALL" || selectedYear !== "ALL" || selectedInfoStatus !== "ALL") && (
+              {(searchTerm ||
+                selectedField !== "ALL" ||
+                selectedMinScore !== "ALL" ||
+                selectedYear !== "ALL" ||
+                selectedInfoStatus !== "ALL" ||
+                selectedCouncilId !== DEFAULT_FACULTY_COUNCIL_ID ||
+                councilScope !== "all") && (
                 <button
                   onClick={() => {
                     setSearchTerm("");
@@ -1164,6 +1587,8 @@ export const JournalDirectoryPage: React.FC = () => {
                     setSelectedMinScore("ALL");
                     setSelectedYear("ALL");
                     setSelectedInfoStatus("ALL");
+                    setSelectedCouncilId(DEFAULT_FACULTY_COUNCIL_ID);
+                    setCouncilScope("all");
                   }}
                   style={{
                     background: "none",
@@ -1197,6 +1622,7 @@ export const JournalDirectoryPage: React.FC = () => {
                   <JournalCard
                     key={journal.id || journal.journalId}
                     journal={journal}
+                    selectedCouncilId={selectedCouncilId}
                     isAdmin={isAdmin}
                     onViewDetails={(j) => setSelectedJournalForDetail(j)}
                     onEdit={(j) => {
@@ -1223,7 +1649,7 @@ export const JournalDirectoryPage: React.FC = () => {
                   Không tìm thấy tạp chí phù hợp
                 </h3>
                 <p style={{ margin: "6px 0 0 0", fontSize: "0.85rem" }}>
-                  Thử thay đổi từ khóa tìm kiếm hoặc bỏ bớt các tiêu chí lọc.
+                  Thử thay đổi từ khóa tìm kiếm, chọn &ldquo;Tất cả tạp chí&rdquo; hoặc bỏ bớt các tiêu chí lọc.
                 </p>
               </div>
             )}
@@ -1236,6 +1662,7 @@ export const JournalDirectoryPage: React.FC = () => {
         isOpen={Boolean(selectedJournalForDetail)}
         onClose={() => setSelectedJournalForDetail(null)}
         journal={selectedJournalForDetail}
+        selectedCouncilId={selectedCouncilId}
       />
 
       {isFormOpen && (
@@ -1276,7 +1703,11 @@ export const JournalDirectoryPage: React.FC = () => {
           setAdminViewMode("queue");
           setCandidateFilterTab("pending");
         }}
-        onRetry={handleDirectSync}
+        onRetry={
+          syncResultData?.syncMode === "multi_council"
+            ? handleMultiCouncilScoreSync
+            : handleDirectSync
+        }
       />
 
       {candidateForReview && user && (
@@ -1284,6 +1715,15 @@ export const JournalDirectoryPage: React.FC = () => {
           isOpen={Boolean(candidateForReview)}
           onClose={() => setCandidateForReview(null)}
           candidate={candidateForReview}
+          initialEditMode={reviewInitialEditMode}
+          onSaveDraft={async (id, updates, reason) => {
+            await saveJournalCandidateDraft(
+              id,
+              updates,
+              { uid: user.uid, email: user.email || "" },
+              reason
+            );
+          }}
           onApprove={async (id, opts) => {
             await approveJournalCandidate(id, { uid: user.uid, email: user.email || "" }, opts);
           }}

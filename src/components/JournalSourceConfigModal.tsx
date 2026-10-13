@@ -6,13 +6,15 @@ import {
   ExternalLink,
   Save,
   CheckCircle2,
-  FileSpreadsheet,
 } from "lucide-react";
 import {
   DEFAULT_JOURNAL_DRIVE_FOLDER_URL,
   DEFAULT_JOURNAL_SHEET_NAME,
   DEFAULT_JOURNAL_SPREADSHEET_ID,
+  DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID,
+  DEFAULT_MULTI_COUNCIL_SHEET_NAME,
   EXPECTED_FILE_NAME,
+  EXPECTED_MULTI_COUNCIL_FILE_NAME,
 } from "../services/journalGoogleSheetService";
 import {
   getJournalSyncSettings,
@@ -23,7 +25,12 @@ import type { JournalSyncSettings } from "../types/journal";
 interface JournalSourceConfigModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSaved?: (newSettings: { sheetId: string; sheetName: string }) => void;
+  onSaved?: (newSettings: {
+    sheetId: string;
+    sheetName: string;
+    multiCouncilSheetId?: string;
+    multiCouncilSheetName?: string;
+  }) => void;
 }
 
 export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> = ({
@@ -33,6 +40,12 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
 }) => {
   const [sheetId, setSheetId] = useState(DEFAULT_JOURNAL_SPREADSHEET_ID);
   const [sheetName, setSheetName] = useState(DEFAULT_JOURNAL_SHEET_NAME);
+  const [multiCouncilSheetId, setMultiCouncilSheetId] = useState(
+    DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID
+  );
+  const [multiCouncilSheetName, setMultiCouncilSheetName] = useState(
+    DEFAULT_MULTI_COUNCIL_SHEET_NAME
+  );
   const [lastSettings, setLastSettings] = useState<JournalSyncSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -48,11 +61,19 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
         .then((settings) => {
           if (settings) {
             setLastSettings(settings);
-            if (settings.sheetId) setSheetId(settings.sheetId);
-            if (settings.sheetName) setSheetName(settings.sheetName);
+            setSheetId(settings.sheetId || DEFAULT_JOURNAL_SPREADSHEET_ID);
+            setSheetName(settings.sheetName || DEFAULT_JOURNAL_SHEET_NAME);
+            setMultiCouncilSheetId(
+              settings.multiCouncilSheetId || DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID
+            );
+            setMultiCouncilSheetName(
+              settings.multiCouncilSheetName || DEFAULT_MULTI_COUNCIL_SHEET_NAME
+            );
           } else {
             setSheetId(DEFAULT_JOURNAL_SPREADSHEET_ID);
             setSheetName(DEFAULT_JOURNAL_SHEET_NAME);
+            setMultiCouncilSheetId(DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID);
+            setMultiCouncilSheetName(DEFAULT_MULTI_COUNCIL_SHEET_NAME);
           }
         })
         .catch((err) => {
@@ -67,12 +88,8 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
   if (!isOpen) return null;
 
   const handleSave = async () => {
-    if (!sheetId.trim()) {
-      setErrorMsg("Vui lòng nhập Spreadsheet ID.");
-      return;
-    }
-    if (!sheetName.trim()) {
-      setErrorMsg("Vui lòng nhập Tên tab.");
+    if (!sheetId.trim() || !sheetName.trim()) {
+      setErrorMsg("Vui lòng nhập đầy đủ Spreadsheet ID và Tên tab cho Danh mục chuẩn.");
       return;
     }
 
@@ -81,13 +98,18 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
     setSaveSuccess(false);
 
     try {
-      await saveJournalSyncSettings({
+      const nextPayload = {
         sheetId: sheetId.trim(),
         sheetName: sheetName.trim(),
-      });
+        multiCouncilSheetId:
+          multiCouncilSheetId.trim() || DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID,
+        multiCouncilSheetName:
+          multiCouncilSheetName.trim() || DEFAULT_MULTI_COUNCIL_SHEET_NAME,
+      };
+      await saveJournalSyncSettings(nextPayload);
       setSaveSuccess(true);
       if (onSaved) {
-        onSaved({ sheetId: sheetId.trim(), sheetName: sheetName.trim() });
+        onSaved(nextPayload);
       }
       setTimeout(() => {
         onClose();
@@ -123,8 +145,11 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
         style={{
           backgroundColor: "#ffffff",
           borderRadius: "12px",
-          maxWidth: "600px",
+          maxWidth: "660px",
           width: "100%",
+          maxHeight: "92vh",
+          display: "flex",
+          flexDirection: "column",
           boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
           overflow: "hidden",
         }}
@@ -158,10 +183,10 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
             </div>
             <div>
               <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "#0f172a" }}>
-                Cấu hình nguồn Google Sheets
+                Cấu hình 2 nguồn Google Sheets
               </h3>
               <p style={{ margin: "2px 0 0 0", fontSize: "0.8rem", color: "#64748b" }}>
-                Chỉ dành cho Admin / Quản trị viên khi cần đổi nguồn dữ liệu
+                Quản lý nguồn Danh mục Tạp chí chuẩn và nguồn Điểm HĐGSNN nhiều Hội đồng
               </p>
             </div>
           </div>
@@ -174,7 +199,7 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
         </div>
 
         {/* Body */}
-        <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
+        <div style={{ padding: "20px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "16px" }}>
           {/* Drive Folder Notice */}
           <div
             style={{
@@ -190,8 +215,11 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
             <FolderOpen size={18} color="#16a34a" style={{ flexShrink: 0, marginTop: "2px" }} />
             <div style={{ flex: 1, fontSize: "0.82rem", color: "#166534" }}>
               <div style={{ fontWeight: 600 }}>Thư mục Google Drive của Khoa:</div>
-              <div style={{ color: "#334155", margin: "2px 0 6px 0" }}>
-                File mẫu chuẩn: <strong>{EXPECTED_FILE_NAME}</strong>
+              <div style={{ color: "#334155", margin: "2px 0 4px 0" }}>
+                • File 1 (Danh mục chuẩn): <strong>{EXPECTED_FILE_NAME}</strong>
+              </div>
+              <div style={{ color: "#334155", margin: "0 0 6px 0" }}>
+                • File 2 (Điểm HĐGSNN 53 cột): <strong>{EXPECTED_MULTI_COUNCIL_FILE_NAME}</strong>
               </div>
               <a
                 href={DEFAULT_JOURNAL_DRIVE_FOLDER_URL}
@@ -217,85 +245,140 @@ export const JournalSourceConfigModal: React.FC<JournalSourceConfigModalProps> =
               Đang tải cấu hình nguồn...
             </div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-              <div>
-                <label
-                  style={{
-                    display: "block",
-                    fontSize: "0.84rem",
-                    fontWeight: 600,
-                    color: "#334155",
-                    marginBottom: "5px",
-                  }}
-                >
-                  Spreadsheet ID
-                </label>
-                <input
-                  type="text"
-                  value={sheetId}
-                  onChange={(e) => setSheetId(e.target.value)}
-                  placeholder={DEFAULT_JOURNAL_SPREADSHEET_ID}
-                  style={{
-                    width: "100%",
-                    padding: "8px 12px",
-                    borderRadius: "6px",
-                    border: "1px solid #cbd5e1",
-                    fontSize: "0.85rem",
-                    fontFamily: "monospace",
-                    boxSizing: "border-box",
-                  }}
-                />
-                <span style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "4px", display: "block" }}>
-                  Mã định danh nằm giữa <code>/d/</code> và <code>/edit</code> trên URL Google Sheets.
-                </span>
-              </div>
-
-              <div>
-                <label
-                  style={{
-                    display: "block",
-                    fontSize: "0.84rem",
-                    fontWeight: 600,
-                    color: "#334155",
-                    marginBottom: "5px",
-                  }}
-                >
-                  Tên tab (Trang tính)
-                </label>
-                <input
-                  type="text"
-                  value={sheetName}
-                  onChange={(e) => setSheetName(e.target.value)}
-                  placeholder={DEFAULT_JOURNAL_SHEET_NAME}
-                  style={{
-                    width: "100%",
-                    padding: "8px 12px",
-                    borderRadius: "6px",
-                    border: "1px solid #cbd5e1",
-                    fontSize: "0.85rem",
-                    boxSizing: "border-box",
-                  }}
-                />
-                <span style={{ fontSize: "0.75rem", color: "#64748b", marginTop: "4px", display: "block" }}>
-                  Tab duy nhất chứa danh mục tạp chí (mặc định: <code>Trang tính1</code> hoặc <code>TAP_CHI</code>).
-                </span>
-              </div>
-
-              {lastSettings?.lastSyncedAt && (
-                <div
-                  style={{
-                    padding: "8px 12px",
-                    backgroundColor: "#f8fafc",
-                    borderRadius: "6px",
-                    fontSize: "0.78rem",
-                    color: "#64748b",
-                    border: "1px solid #e2e8f0",
-                  }}
-                >
-                  Lần đồng bộ gần nhất: <strong>{new Date(lastSettings.lastSyncedAt).toLocaleString("vi-VN")}</strong>
-                  {lastSettings.lastSyncedBy && <span> bởi {lastSettings.lastSyncedBy}</span>}
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              {/* Sheet 1: Official Catalog */}
+              <div
+                style={{
+                  padding: "14px",
+                  borderRadius: "8px",
+                  backgroundColor: "#f8fafc",
+                  border: "1px solid #e2e8f0",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "10px",
+                }}
+              >
+                <div style={{ fontSize: "0.86rem", fontWeight: 700, color: "#1e3a8a" }}>
+                  1. Nguồn &ldquo;Đồng bộ Google Sheets&rdquo; (Danh mục tạp chí chuẩn)
                 </div>
-              )}
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "10px" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#334155", marginBottom: "4px" }}>
+                      Spreadsheet ID
+                    </label>
+                    <input
+                      type="text"
+                      value={sheetId}
+                      onChange={(e) => setSheetId(e.target.value)}
+                      placeholder={DEFAULT_JOURNAL_SPREADSHEET_ID}
+                      style={{
+                        width: "100%",
+                        padding: "7px 10px",
+                        borderRadius: "6px",
+                        border: "1px solid #cbd5e1",
+                        fontSize: "0.82rem",
+                        fontFamily: "monospace",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#334155", marginBottom: "4px" }}>
+                      Tên tab
+                    </label>
+                    <input
+                      type="text"
+                      value={sheetName}
+                      onChange={(e) => setSheetName(e.target.value)}
+                      placeholder={DEFAULT_JOURNAL_SHEET_NAME}
+                      style={{
+                        width: "100%",
+                        padding: "7px 10px",
+                        borderRadius: "6px",
+                        border: "1px solid #cbd5e1",
+                        fontSize: "0.82rem",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  </div>
+                </div>
+                {lastSettings?.lastSyncedAt && (
+                  <div style={{ fontSize: "0.75rem", color: "#64748b" }}>
+                    Đồng bộ danh mục gần nhất:{" "}
+                    <strong>{new Date(lastSettings.lastSyncedAt).toLocaleString("vi-VN")}</strong>
+                    {lastSettings.lastSyncedBy && <span> bởi {lastSettings.lastSyncedBy}</span>}
+                  </div>
+                )}
+              </div>
+
+              {/* Sheet 2: Spark Multi-Council HDGSNN Scores */}
+              <div
+                style={{
+                  padding: "14px",
+                  borderRadius: "8px",
+                  backgroundColor: "#eff6ff",
+                  border: "1px solid #bfdbfe",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "10px",
+                }}
+              >
+                <div style={{ fontSize: "0.86rem", fontWeight: 700, color: "#1e3a8a" }}>
+                  2. Nguồn &ldquo;Cập nhật điểm HĐGSNN&rdquo; (Bảng điểm nhiều Hội đồng 53 cột)
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "10px" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#334155", marginBottom: "4px" }}>
+                      Spreadsheet ID (Điểm HĐGSNN)
+                    </label>
+                    <input
+                      type="text"
+                      value={multiCouncilSheetId}
+                      onChange={(e) => setMultiCouncilSheetId(e.target.value)}
+                      placeholder={DEFAULT_MULTI_COUNCIL_SPREADSHEET_ID}
+                      style={{
+                        width: "100%",
+                        padding: "7px 10px",
+                        borderRadius: "6px",
+                        border: "1px solid #93c5fd",
+                        fontSize: "0.82rem",
+                        fontFamily: "monospace",
+                        boxSizing: "border-box",
+                        backgroundColor: "#ffffff",
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#334155", marginBottom: "4px" }}>
+                      Tên tab
+                    </label>
+                    <input
+                      type="text"
+                      value={multiCouncilSheetName}
+                      onChange={(e) => setMultiCouncilSheetName(e.target.value)}
+                      placeholder={DEFAULT_MULTI_COUNCIL_SHEET_NAME}
+                      style={{
+                        width: "100%",
+                        padding: "7px 10px",
+                        borderRadius: "6px",
+                        border: "1px solid #93c5fd",
+                        fontSize: "0.82rem",
+                        boxSizing: "border-box",
+                        backgroundColor: "#ffffff",
+                      }}
+                    />
+                  </div>
+                </div>
+                {lastSettings?.lastMultiCouncilSyncedAt && (
+                  <div style={{ fontSize: "0.75rem", color: "#1e40af" }}>
+                    Cập nhật điểm HĐGSNN gần nhất:{" "}
+                    <strong>{new Date(lastSettings.lastMultiCouncilSyncedAt).toLocaleString("vi-VN")}</strong>
+                    {lastSettings.lastMultiCouncilSyncedBy && (
+                      <span> bởi {lastSettings.lastMultiCouncilSyncedBy}</span>
+                    )}
+                  </div>
+                )}
+              </div>
 
               {errorMsg && (
                 <div
