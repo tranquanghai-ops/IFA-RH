@@ -482,16 +482,17 @@ export async function executeResearchSync({
                 targetId: existingProposal.id,
               });
             } else {
-              // Create new update candidate in opportunityCandidates
+              // Create new update candidate in opportunityCandidates with deterministic idempotent ID
               const { id: _ignoreSlugId, ...candidateFields } = mapRowToCandidate(row, i);
-              let newCandId = "";
+              const candId = `cand_upd_${target.id}`;
               if (!isDryRun) {
-                const colRef = sdk.collection(db, "opportunityCandidates");
+                const docRef = sdk.doc(db, "opportunityCandidates", candId);
                 try {
-                  const addedDoc = await sdk.addDoc(
-                    colRef,
+                  await sdk.setDoc(
+                    docRef,
                     cleanUndefined({
                       ...candidateFields,
+                      id: candId,
                       status: "pending",
                       changeType: "update",
                       publishedOpportunityId: target.id,
@@ -501,13 +502,12 @@ export async function executeResearchSync({
                       updatedAt: new Date().toISOString(),
                     })
                   );
-                  newCandId = addedDoc?.id || "";
                   stats.successWrites++;
                 } catch (createProposalErr: any) {
                   throw new ResearchSyncStageError({
                     stage: "WRITE_UPDATE_CANDIDATE",
                     collectionName: "opportunityCandidates",
-                    documentId: target.id,
+                    documentId: candId,
                     operationType: "create",
                     originalError: createProposalErr,
                     userSummary: `Không đủ quyền tạo đề xuất cập nhật cho hội thảo đã công bố "${row.title}" (Opportunity ID: ${target.id})`,
@@ -525,7 +525,7 @@ export async function executeResearchSync({
                 status: "update_proposal",
                 action: "Đề xuất cập nhật",
                 reason: `Phát hiện dữ liệu mới trên Google Sheet (${diff.changedKeys.join(", ")}). Đã tạo đề xuất chờ Admin duyệt`,
-                targetId: newCandId || target.id,
+                targetId: candId,
               });
             }
           }

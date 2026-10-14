@@ -7,6 +7,7 @@ import {
   rejectCandidate,
   deleteCandidate,
   markCandidateNeedsReview,
+  recallOpportunityCandidate,
 } from "../firebase/firestore";
 import type { OpportunityCandidate, Opportunity } from "../types";
 import { CandidateReviewModal } from "../components/CandidateReviewModal";
@@ -25,6 +26,7 @@ import {
   Search,
   Calendar,
   Clock,
+  RotateCcw,
 } from "lucide-react";
 
 export type CandidateFilterTab =
@@ -92,6 +94,7 @@ export const AdminCandidatesPage: React.FC = () => {
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
   const [bulkApproving, setBulkApproving] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [recallingId, setRecallingId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [actionMessage, setActionMessage] = useState<{
     type: "success" | "error";
@@ -234,6 +237,37 @@ export const AdminCandidatesPage: React.FC = () => {
       });
     } finally {
       setApprovingId(null);
+    }
+  };
+
+  const handleRecallCandidate = async (cand: OpportunityCandidate) => {
+    if (!profile) return;
+    const confirmRecall = window.confirm(
+      `Bạn có chắc chắn muốn thu hồi hội thảo "${cand.title}" về hàng chờ duyệt?\nHội thảo này sẽ được gỡ khỏi Cổng thông tin công khai và chuyển về trạng thái 'Chờ duyệt'.`
+    );
+    if (!confirmRecall) return;
+
+    setRecallingId(cand.id);
+    setActionMessage(null);
+    try {
+      await recallOpportunityCandidate(cand, {
+        uid: profile.uid,
+        email: profile.email,
+        role: profile.role,
+      });
+      setActionMessage({
+        type: "success",
+        text: `Đã thu hồi thành công "${cand.title}" về hàng chờ duyệt.`,
+      });
+      await loadData();
+    } catch (err: any) {
+      console.error("Failed to recall candidate:", err);
+      setActionMessage({
+        type: "error",
+        text: `Lỗi khi thu hồi "${cand.title}": ${err?.message || String(err)}`,
+      });
+    } finally {
+      setRecallingId(null);
     }
   };
 
@@ -575,6 +609,13 @@ export const AdminCandidatesPage: React.FC = () => {
             </thead>
             <tbody>
               {filteredCandidates.map((cand) => {
+                const isApproved = cand.status === "approved";
+                const isApprovingThis = approvingId === cand.id;
+
+                // Exclude matching candidate's own published opportunity to avoid self-duplication false positives
+                const otherPublishedOpps = publishedOpps.filter(
+                  (opp) => opp.id !== cand.publishedOpportunityId && opp.candidateId !== cand.id
+                );
                 const dedupe = isDuplicateOpportunity(
                   {
                     title: cand.title,
@@ -583,12 +624,10 @@ export const AdminCandidatesPage: React.FC = () => {
                     deadline: cand.deadline,
                     eventDate: cand.eventDate,
                   },
-                  publishedOpps
+                  otherPublishedOpps
                 );
 
                 const primaryCat = getCandidatePrimaryCategory(cand);
-                const isApproved = cand.status === "approved";
-                const isApprovingThis = approvingId === cand.id;
 
                 return (
                   <tr key={cand.id}>
@@ -666,7 +705,36 @@ export const AdminCandidatesPage: React.FC = () => {
                       </div>
                     </td>
                     <td style={{ textAlign: "center" }}>
-                      {dedupe.isDuplicate ? (
+                      {isApproved ? (
+                        <span
+                          className="badge"
+                          style={{
+                            background: "#dcfce7",
+                            color: "#15803d",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                          }}
+                          title="Hồ sơ đã được phê duyệt và đang công bố trên Cổng thông tin"
+                        >
+                          <CheckCircle size={12} />
+                          Đã công bố
+                        </span>
+                      ) : cand.changeType === "update" ? (
+                        <span
+                          className="badge"
+                          style={{
+                            background: "#e0f2fe",
+                            color: "#0369a1",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                          }}
+                          title="Đề xuất cập nhật dữ liệu cho hồ sơ đã công bố"
+                        >
+                          Cập nhật gốc
+                        </span>
+                      ) : dedupe.isDuplicate ? (
                         <span
                           className="badge"
                           style={{
@@ -721,7 +789,7 @@ export const AdminCandidatesPage: React.FC = () => {
                     </td>
                     <td style={{ textAlign: "right" }}>
                       <div style={{ display: "inline-flex", gap: 6, justifyContent: "flex-end" }}>
-                        {!isApproved && (
+                        {!isApproved ? (
                           <button
                             type="button"
                             className="btn btn-sm"
@@ -739,6 +807,26 @@ export const AdminCandidatesPage: React.FC = () => {
                           >
                             <CheckCircle size={13} />
                             {isApprovingThis ? "Đang duyệt..." : "Duyệt"}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn btn-sm"
+                            onClick={() => handleRecallCandidate(cand)}
+                            disabled={recallingId === cand.id}
+                            style={{
+                              background: "#fff1f2",
+                              color: "#be123c",
+                              border: "1px solid #fecdd3",
+                              fontWeight: 600,
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                            }}
+                            title="Thu hồi hội thảo về hàng chờ duyệt"
+                          >
+                            <RotateCcw size={13} />
+                            {recallingId === cand.id ? "Đang thu hồi..." : "Thu hồi"}
                           </button>
                         )}
                         <button
@@ -765,6 +853,14 @@ export const AdminCandidatesPage: React.FC = () => {
           }}
         >
           {filteredCandidates.map((cand) => {
+            const isApproved = cand.status === "approved";
+            const isApprovingThis = approvingId === cand.id;
+            const primaryCat = getCandidatePrimaryCategory(cand);
+
+            // Exclude matching candidate's own published opportunity to avoid self-duplication false positives
+            const otherPublishedOpps = publishedOpps.filter(
+              (opp) => opp.id !== cand.publishedOpportunityId && opp.candidateId !== cand.id
+            );
             const dedupe = isDuplicateOpportunity(
               {
                 title: cand.title,
@@ -773,12 +869,8 @@ export const AdminCandidatesPage: React.FC = () => {
                 deadline: cand.deadline,
                 eventDate: cand.eventDate,
               },
-              publishedOpps
+              otherPublishedOpps
             );
-
-            const primaryCat = getCandidatePrimaryCategory(cand);
-            const isApproved = cand.status === "approved";
-            const isApprovingThis = approvingId === cand.id;
 
             return (
               <div
@@ -873,7 +965,7 @@ export const AdminCandidatesPage: React.FC = () => {
                   </div>
                 )}
 
-                {dedupe.isDuplicate && (
+                {!isApproved && cand.changeType !== "update" && dedupe.isDuplicate && (
                   <div
                     style={{
                       background: "#fee2e2",
@@ -918,7 +1010,7 @@ export const AdminCandidatesPage: React.FC = () => {
                     )}
                   </div>
                   <div style={{ display: "flex", gap: 6 }}>
-                    {!isApproved && (
+                    {!isApproved ? (
                       <button
                         type="button"
                         className="btn btn-sm"
@@ -936,6 +1028,26 @@ export const AdminCandidatesPage: React.FC = () => {
                       >
                         <CheckCircle size={13} />
                         {isApprovingThis ? "Đang duyệt..." : "Duyệt"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => handleRecallCandidate(cand)}
+                        disabled={recallingId === cand.id}
+                        style={{
+                          background: "#fff1f2",
+                          color: "#be123c",
+                          border: "1px solid #fecdd3",
+                          fontWeight: 600,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                        }}
+                        title="Thu hồi hội thảo về hàng chờ duyệt"
+                      >
+                        <RotateCcw size={13} />
+                        {recallingId === cand.id ? "Đang thu hồi..." : "Thu hồi"}
                       </button>
                     )}
                     <button
@@ -957,6 +1069,7 @@ export const AdminCandidatesPage: React.FC = () => {
       <CandidateReviewModal
         candidate={selectedCandidate}
         onClose={() => setSelectedCandidate(null)}
+        onRecall={handleRecallCandidate}
         onApprove={async (cand) => {
           await approveCandidate(cand, {
             uid: profile.uid,

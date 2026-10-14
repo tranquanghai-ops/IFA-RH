@@ -16,6 +16,7 @@ import {
   DollarSign,
   Layers,
   Sparkles,
+  RotateCcw,
 } from "lucide-react";
 
 interface CandidateReviewModalProps {
@@ -25,6 +26,7 @@ interface CandidateReviewModalProps {
   onReject: (candId: string, candTitle: string, reason: string) => Promise<void>;
   onDelete: (candId: string, candTitle: string) => Promise<void>;
   onNeedsReview?: (candId: string, candTitle: string, reason: string) => Promise<void>;
+  onRecall?: (cand: OpportunityCandidate) => Promise<void>;
 }
 
 export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
@@ -34,6 +36,7 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
   onReject,
   onDelete,
   onNeedsReview,
+  onRecall,
 }) => {
   const [rejecting, setRejecting] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
@@ -187,6 +190,42 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
                       : "Duyệt & Công bố Public"}
                   </button>
                 </>
+              )}
+              {candidate.status === "approved" && onRecall && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={async () => {
+                    if (
+                      window.confirm(
+                        `Bạn có chắc chắn muốn thu hồi hội thảo "${candidate.title}" về hàng chờ duyệt?\nHội thảo này sẽ được gỡ khỏi Cổng công khai.`
+                      )
+                    ) {
+                      setLoading(true);
+                      try {
+                        await onRecall(candidate);
+                        onClose();
+                      } catch (err: any) {
+                        setError(`Lỗi khi thu hồi: ${err?.message || String(err)}`);
+                      } finally {
+                        setLoading(false);
+                      }
+                    }
+                  }}
+                  disabled={loading}
+                  style={{
+                    background: "#fff1f2",
+                    color: "#be123c",
+                    border: "1px solid #fecdd3",
+                    fontWeight: 600,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  <RotateCcw size={15} />
+                  Thu hồi về hàng chờ
+                </button>
               )}
               <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
                 Đóng

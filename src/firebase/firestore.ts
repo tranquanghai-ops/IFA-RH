@@ -628,6 +628,65 @@ export async function recallOpportunityToCandidateQueue(
   );
 }
 
+export async function recallOpportunityCandidate(
+  cand: OpportunityCandidate,
+  actor: { uid: string; email: string; role: UserRole }
+) {
+  const now = new Date().toISOString();
+  const batch = writeBatch(firestore);
+
+  // 1. Identify candidate doc ref
+  const candRef = await resolveCandidateDocRef(cand.id);
+  batch.update(candRef, {
+    status: "pending",
+    recalledAt: now,
+    recalledBy: actor.email,
+    updatedAt: now,
+  });
+
+  // 2. Identify and recall the published opportunity if linked or matching
+  let matchedOppId: string | null = cand.publishedOpportunityId || null;
+  if (!matchedOppId) {
+    const oppsSnap = await getDocs(
+      query(collection(firestore, "opportunities"), where("status", "==", "published"))
+    );
+    const norm = cand.normalizedTitle || normalizeText(cand.title);
+    const found = oppsSnap.docs.find((d) => {
+      const data = d.data();
+      return (
+        data.candidateId === cand.id ||
+        (data.title && normalizeText(data.title) === norm) ||
+        (data.sourceUrl && cand.sourceUrl && data.sourceUrl === cand.sourceUrl)
+      );
+    });
+    if (found) {
+      matchedOppId = found.id;
+    }
+  }
+
+  if (matchedOppId) {
+    const oppRef = doc(firestore, "opportunities", matchedOppId);
+    batch.update(oppRef, {
+      status: "recalled",
+      recalledAt: now,
+      recalledBy: actor.email,
+      updatedAt: now,
+      updatedBy: actor.email,
+      candidateId: cand.id,
+    });
+  }
+
+  await batch.commit();
+
+  await logAudit(
+    actor,
+    "RECALL_OPPORTUNITY",
+    "opportunity",
+    matchedOppId || cand.id,
+    `Thu hồi hội thảo đã duyệt "${cand.title}" về hàng chờ AI duyệt (Candidate ID: ${cand.id})`
+  );
+}
+
 // ======================== OPPORTUNITY CANDIDATES (SPARK) ========================
 export async function fetchOpportunityCandidates(): Promise<OpportunityCandidate[]> {
   const snap = await getDocs(collection(firestore, "opportunityCandidates"));

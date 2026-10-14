@@ -468,64 +468,18 @@ service cloud.firestore {
           'Hội thảo khoa học quốc tế', 'Hội thảo quốc tế', 'Hội thảo quốc gia'
         ] &&
         data.level in ['Quốc tế', 'Quốc gia', 'Cấp Trường', 'Cấp Khoa', 'Khác'] &&
-        (!('topic' in data) || validString(data.topic, 0, 300)) &&
-        (!('field' in data) || validString(data.field, 0, 200)) &&
-        (!('tags' in data) || validList(data.tags, 30)) &&
-        (!('deadline' in data) || validString(data.deadline, 0, 200)) &&
-        (!('content' in data) || validString(data.content, 0, 50000)) &&
         data.sourceType == 'SPARK' &&
         data.status in [
           'pending', 'approved', 'rejected', 'needs_review',
           'MỚI', 'moi', 'new'
         ] &&
-        (!('normalizedTitle' in data) || validString(data.normalizedTitle, 0, 500)) &&
         (validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
         (validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
-        (!('abstractDeadline' in data) || validString(data.abstractDeadline, 0, 50)) &&
-        (!('fullPaperDeadline' in data) || validString(data.fullPaperDeadline, 0, 50)) &&
-        (!('registrationDeadline' in data) || validString(data.registrationDeadline, 0, 50)) &&
-        (!('eventDate' in data) || validString(data.eventDate, 0, 50)) &&
-        (!('location' in data) || validString(data.location, 0, 200)) &&
-        (!('fee' in data) || validString(data.fee, 0, 100)) &&
-        (!('publicationFee' in data) || validString(data.publicationFee, 0, 500)) &&
-        (!('registrationFee' in data) || validString(data.registrationFee, 0, 500)) &&
-        (!('feeStatus' in data) || data.feeStatus in ['SPECIFIED', 'UNKNOWN', 'FREE']) &&
-        (!('feeSourceUrl' in data) || validString(data.feeSourceUrl, 0, 1000)) &&
-        (!('detailedContent' in data) || validString(data.detailedContent, 0, 50000)) &&
-        (!('topicsDetailed' in data) || validList(data.topicsDetailed, 50)) &&
-        (!('publicationFormat' in data) || validString(data.publicationFormat, 0, 100)) &&
-        (!('indexing' in data) || validString(data.indexing, 0, 100)) &&
-        (!('submissionUrl' in data) || validString(data.submissionUrl, 0, 500)) &&
-        (!('sourceUrl' in data) || validString(data.sourceUrl, 0, 500)) &&
-        (!('directions' in data) || validString(data.directions, 0, 2000)) &&
-        (!('suitability' in data) || validString(data.suitability, 0, 100)) &&
-        (!('notes' in data) || validString(data.notes, 0, 2000)) &&
-        (!('runId' in data) || validString(data.runId, 0, 100)) &&
-        (!('discoveredAt' in data) || validString(data.discoveredAt, 0, 50)) &&
-        (!('sheetStatus' in data) || validString(data.sheetStatus, 0, 100)) &&
-        (!('rejectionReason' in data) || validString(data.rejectionReason, 0, 1000)) &&
-        (!('reviewedBy' in data) || validString(data.reviewedBy, 0, 100)) &&
-        (!('reviewedAt' in data) || validString(data.reviewedAt, 0, 50)) &&
-        (!('publishedOpportunityId' in data) || validString(data.publishedOpportunityId, 0, 100)) &&
-        (!('recalledAt' in data) || validString(data.recalledAt, 0, 50) || data.recalledAt is timestamp) &&
-        (!('recalledBy' in data) || validString(data.recalledBy, 0, 100)) &&
-        (!('updatedBy' in data) || validString(data.updatedBy, 0, 100)) &&
-        (!('createdBy' in data) || validString(data.createdBy, 0, 100)) &&
-        (!('editedByAdmin' in data) || data.editedByAdmin is bool) &&
-        (!('manualOverrides' in data) || (data.manualOverrides is list && data.manualOverrides.size() <= 50)) &&
-        (!('stt' in data) || (data.stt is number || data.stt is string)) &&
-        (!('candidateId' in data) || validString(data.candidateId, 0, 100)) &&
-        (!('hiddenAt' in data) || validString(data.hiddenAt, 0, 50) || data.hiddenAt is timestamp) &&
-        (!('hiddenBy' in data) || validString(data.hiddenBy, 0, 100)) &&
-        (!('sheetRowIndex' in data) || data.sheetRowIndex is int) &&
-        (!('unverifiedFields' in data) || (data.unverifiedFields is list && data.unverifiedFields.size() <= 30)) &&
-        (!('manualReviewNeeded' in data) || data.manualReviewNeeded is bool) &&
-        (!('manualReviewReason' in data) || validString(data.manualReviewReason, 0, 1000)) &&
-        (!('confidenceLevel' in data) || validString(data.confidenceLevel, 0, 50)) &&
+        (!('tags' in data) || validList(data.tags, 50)) &&
         (!('diffSummary' in data) || (data.diffSummary is list && data.diffSummary.size() <= 50)) &&
         (!('changeType' in data) || data.changeType in ['create', 'update']) &&
         (!('isOutOfScope' in data) || data.isOutOfScope is bool) &&
-        (!('outOfScopeReason' in data) || validString(data.outOfScopeReason, 0, 500)) &&
+        (!('publishedOpportunityId' in data) || validString(data.publishedOpportunityId, 0, 100)) &&
         (!('id' in data) || validString(data.id, 0, 100));
     }
 
