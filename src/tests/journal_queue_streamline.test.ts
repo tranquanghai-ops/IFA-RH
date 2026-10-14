@@ -128,4 +128,38 @@ describe("Danh mục Tạp chí Khoa học — Tinh gọn Hàng chờ & Phân lo
     expect(counts.all).toBe(5);
     expect(counts.pending + counts.needs_review + counts.rejected).toBe(counts.all);
   });
+
+  it("chuyển đúng trạng thái từ pending sang rejected và vào tab 'Từ chối duyệt' khi Admin bấm Từ chối", () => {
+    let candidate: JournalCandidate = {
+      ...baseCandidate,
+      status: "pending",
+    };
+    expect(getJournalCandidateCategory(candidate)).toBe("pending");
+
+    // Giả lập Admin bấm Từ chối
+    const reason = "Không đúng chuyên ngành MTCN";
+    const now = new Date().toISOString();
+    candidate = {
+      ...candidate,
+      status: "rejected",
+      rejectionReason: reason,
+      reviewedAt: now,
+      reviewedBy: "admin@tdtu.edu.vn",
+      updatedAt: now,
+    };
+
+    expect(candidate.status).toBe("rejected");
+    expect(candidate.rejectionReason).toBe(reason);
+    expect(getJournalCandidateCategory(candidate)).toBe("rejected");
+
+    // Giả lập Admin bấm Khôi phục
+    candidate = {
+      ...candidate,
+      status: "pending",
+      rejectionReason: undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    expect(candidate.status).toBe("pending");
+    expect(getJournalCandidateCategory(candidate)).toBe("pending");
+  });
 });

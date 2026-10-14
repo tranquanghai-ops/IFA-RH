@@ -19,6 +19,8 @@ import {
   approveJournalCandidate,
   bulkApproveJournalCandidates,
   rejectJournalCandidate,
+  restoreJournalCandidate,
+  bulkRejectJournalCandidates,
   markJournalCandidateNeedsReview,
   saveJournalCandidateDraft,
   getJournalSyncSettings,
@@ -54,6 +56,8 @@ import {
   RefreshCw,
   X,
   CheckCircle2,
+  XCircle,
+  RotateCcw,
   Clock,
   AlertCircle,
   Settings,
@@ -127,6 +131,7 @@ export const JournalDirectoryPage: React.FC = () => {
   const [candidateSearch, setCandidateSearch] = useState<string>("");
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
   const [isBulkApproving, setIsBulkApproving] = useState<boolean>(false);
+  const [isBulkRejecting, setIsBulkRejecting] = useState<boolean>(false);
 
   // Modals state
   const [selectedJournalForDetail, setSelectedJournalForDetail] = useState<Journal | null>(null);
@@ -361,6 +366,70 @@ export const JournalDirectoryPage: React.FC = () => {
       alert("Lỗi duyệt hàng loạt: " + err.message);
     } finally {
       setIsBulkApproving(false);
+    }
+  };
+
+  const handleRejectCandidate = async (candidate: JournalCandidate) => {
+    if (!user) return;
+    const reason = window.prompt(
+      `Xác nhận từ chối duyệt tạp chí:\n"${candidate.name}"\n\nNhập lý do từ chối (tùy chọn):`,
+      "Chưa phù hợp tiêu chí"
+    );
+    if (reason === null) return;
+    try {
+      await rejectJournalCandidate(
+        candidate.id,
+        reason.trim() || "Chưa phù hợp tiêu chí",
+        { uid: user.uid, email: user.email || "" }
+      );
+      setSelectedCandidateIds((prev) => prev.filter((id) => id !== candidate.id));
+    } catch (err: any) {
+      alert("Lỗi từ chối tạp chí: " + (err?.message || err));
+    }
+  };
+
+  const handleRestoreCandidate = async (candidate: JournalCandidate) => {
+    if (!user) return;
+    if (
+      !confirm(
+        `Khôi phục tạp chí "${candidate.name}" về hàng chờ duyệt?`
+      )
+    ) {
+      return;
+    }
+    try {
+      await restoreJournalCandidate(candidate.id, {
+        uid: user.uid,
+        email: user.email || "",
+      });
+      setSelectedCandidateIds((prev) => prev.filter((id) => id !== candidate.id));
+    } catch (err: any) {
+      alert("Lỗi khôi phục tạp chí: " + (err?.message || err));
+    }
+  };
+
+  const handleBulkReject = async () => {
+    if (!user || selectedCandidateIds.length === 0) return;
+    const count = selectedCandidateIds.length;
+    const reason = window.prompt(
+      `Xác nhận từ chối duyệt ${count} tạp chí đã chọn?\n\nNhập lý do từ chối (tùy chọn):`,
+      "Chưa phù hợp tiêu chí"
+    );
+    if (reason === null) return;
+
+    setIsBulkRejecting(true);
+    try {
+      const res = await bulkRejectJournalCandidates(
+        selectedCandidateIds,
+        { uid: user.uid, email: user.email || "" },
+        reason.trim() || "Chưa phù hợp tiêu chí"
+      );
+      alert(`Đã chuyển ${res.successCount} tạp chí vào mục Từ chối duyệt.`);
+      setSelectedCandidateIds([]);
+    } catch (err: any) {
+      alert("Lỗi từ chối hàng loạt: " + err.message);
+    } finally {
+      setIsBulkRejecting(false);
     }
   };
 
@@ -815,7 +884,7 @@ export const JournalDirectoryPage: React.FC = () => {
                 { id: "pending", label: "Chờ duyệt", count: candidateTabCounts.pending },
                 { id: "needs_review", label: "Cần hiệu chỉnh", count: candidateTabCounts.needs_review },
                 { id: "approved", label: "Đã công bố", count: candidateTabCounts.approved },
-                { id: "rejected", label: "Từ chối", count: candidateTabCounts.rejected },
+                { id: "rejected", label: "Từ chối duyệt", count: candidateTabCounts.rejected },
                 { id: "all", label: "Tất cả chờ xử lý", count: candidateTabCounts.all },
               ] as const
             ).map((t) => {
@@ -898,30 +967,55 @@ export const JournalDirectoryPage: React.FC = () => {
             </div>
 
             {/* Bulk actions */}
-            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-              {candidateFilterTab === "pending" && selectedCandidateIds.length > 0 && (
-                <button
-                  onClick={handleBulkApprove}
-                  disabled={isBulkApproving}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    padding: "7px 14px",
-                    backgroundColor: "#166534",
-                    color: "#ffffff",
-                    border: "none",
-                    borderRadius: "6px",
-                    fontSize: "0.85rem",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                  }}
-                >
-                  <CheckCircle2 size={15} />
-                  {isBulkApproving
-                    ? "Đang duyệt..."
-                    : `Duyệt & Công bố (${selectedCandidateIds.length} mục)`}
-                </button>
+            <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+              {selectedCandidateIds.length > 0 && candidateFilterTab !== "approved" && candidateFilterTab !== "rejected" && (
+                <>
+                  <button
+                    onClick={handleBulkApprove}
+                    disabled={isBulkApproving || isBulkRejecting}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      padding: "7px 14px",
+                      backgroundColor: "#166534",
+                      color: "#ffffff",
+                      border: "none",
+                      borderRadius: "6px",
+                      fontSize: "0.85rem",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <CheckCircle2 size={15} />
+                    {isBulkApproving
+                      ? "Đang duyệt..."
+                      : `Duyệt & Công bố (${selectedCandidateIds.length} mục)`}
+                  </button>
+
+                  <button
+                    onClick={handleBulkReject}
+                    disabled={isBulkApproving || isBulkRejecting}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      padding: "7px 14px",
+                      backgroundColor: "#fef2f2",
+                      color: "#991b1b",
+                      border: "1px solid #fecaca",
+                      borderRadius: "6px",
+                      fontSize: "0.85rem",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <XCircle size={15} />
+                    {isBulkRejecting
+                      ? "Đang từ chối..."
+                      : `Từ chối (${selectedCandidateIds.length} mục)`}
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -986,7 +1080,7 @@ export const JournalDirectoryPage: React.FC = () => {
                     <th style={{ padding: "12px 10px", width: "150px" }}>Điểm mới / Thay đổi</th>
                     <th style={{ padding: "12px 10px", width: "135px" }}>Đối soát Spark</th>
                     <th style={{ padding: "12px 10px", width: "125px" }}>Kiểm duyệt Admin</th>
-                    <th style={{ padding: "12px 12px", width: "175px", textAlign: "right" }}>Thao tác</th>
+                    <th style={{ padding: "12px 12px", width: "245px", minWidth: "235px", textAlign: "right" }}>Thao tác</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1248,7 +1342,14 @@ export const JournalDirectoryPage: React.FC = () => {
                           {adminCat === "approved" ? (
                             <span style={{ color: "#166534", fontWeight: 700 }}>Đã công bố</span>
                           ) : adminCat === "rejected" ? (
-                            <span style={{ color: "#991b1b", fontWeight: 700 }}>Từ chối</span>
+                            <div>
+                              <span style={{ color: "#991b1b", fontWeight: 700 }}>Từ chối duyệt</span>
+                              {c.rejectionReason && (
+                                <div style={{ fontSize: "0.72rem", color: "#64748b", marginTop: 2, maxWidth: 140 }}>
+                                  Lý do: {c.rejectionReason}
+                                </div>
+                              )}
+                            </div>
                           ) : adminCat === "needs_review" ? (
                             <span style={{ color: "#b45309", fontWeight: 700 }}>Cần hiệu chỉnh</span>
                           ) : (
@@ -1256,53 +1357,127 @@ export const JournalDirectoryPage: React.FC = () => {
                           )}
                         </td>
 
-                        {/* Col 7: Thao tác (Xem & Duyệt / Chỉnh sửa) */}
+                        {/* Col 7: Thao tác (Xem & Duyệt / Chỉnh sửa / Từ chối) */}
                         <td style={{ padding: "12px 12px", textAlign: "right", verticalAlign: "top" }}>
                           <div style={{ display: "inline-flex", gap: "6px", flexWrap: "wrap", justifyContent: "flex-end" }}>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setReviewInitialEditMode(true);
-                                setCandidateForReview(c);
-                              }}
-                              style={{
-                                display: "inline-flex",
-                                alignItems: "center",
-                                gap: "4px",
-                                padding: "6px 10px",
-                                borderRadius: "6px",
-                                backgroundColor: "#ffffff",
-                                color: "#334155",
-                                border: "1px solid #cbd5e1",
-                                fontSize: "0.78rem",
-                                fontWeight: 600,
-                                cursor: "pointer",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              <Edit size={13} />
-                              Chỉnh sửa
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setReviewInitialEditMode(false);
-                                setCandidateForReview(c);
-                              }}
-                              style={{
-                                padding: "6px 11px",
-                                borderRadius: "6px",
-                                backgroundColor: "#1e3a8a",
-                                color: "#ffffff",
-                                border: "none",
-                                fontSize: "0.78rem",
-                                fontWeight: 600,
-                                cursor: "pointer",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              Xem &amp; Duyệt
-                            </button>
+                            {adminCat !== "rejected" ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setReviewInitialEditMode(true);
+                                    setCandidateForReview(c);
+                                  }}
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "4px",
+                                    padding: "6px 10px",
+                                    borderRadius: "6px",
+                                    backgroundColor: "#ffffff",
+                                    color: "#334155",
+                                    border: "1px solid #cbd5e1",
+                                    fontSize: "0.78rem",
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                  title="Chỉnh sửa thông tin và điểm số trước khi duyệt"
+                                >
+                                  <Edit size={13} />
+                                  Chỉnh sửa
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setReviewInitialEditMode(false);
+                                    setCandidateForReview(c);
+                                  }}
+                                  style={{
+                                    padding: "6px 11px",
+                                    borderRadius: "6px",
+                                    backgroundColor: "#1e3a8a",
+                                    color: "#ffffff",
+                                    border: "none",
+                                    fontSize: "0.78rem",
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                  title="Xem chi tiết đầy đủ và duyệt công bố"
+                                >
+                                  Xem &amp; Duyệt
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRejectCandidate(c)}
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "4px",
+                                    padding: "6px 10px",
+                                    borderRadius: "6px",
+                                    backgroundColor: "#fef2f2",
+                                    color: "#991b1b",
+                                    border: "1px solid #fecaca",
+                                    fontSize: "0.78rem",
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                  title="Từ chối duyệt và đưa tạp chí này vào mục 'Từ chối duyệt'"
+                                >
+                                  <XCircle size={13} />
+                                  Từ chối
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setReviewInitialEditMode(false);
+                                    setCandidateForReview(c);
+                                  }}
+                                  style={{
+                                    padding: "6px 10px",
+                                    borderRadius: "6px",
+                                    backgroundColor: "#f8fafc",
+                                    color: "#334155",
+                                    border: "1px solid #cbd5e1",
+                                    fontSize: "0.78rem",
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                  title="Xem lại hồ sơ chi tiết tạp chí"
+                                >
+                                  Xem chi tiết
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRestoreCandidate(c)}
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "4px",
+                                    padding: "6px 10px",
+                                    borderRadius: "6px",
+                                    backgroundColor: "#eff6ff",
+                                    color: "#1e40af",
+                                    border: "1px solid #bfdbfe",
+                                    fontSize: "0.78rem",
+                                    fontWeight: 600,
+                                    cursor: "pointer",
+                                    whiteSpace: "nowrap",
+                                  }}
+                                  title="Khôi phục tạp chí này về hàng chờ duyệt"
+                                >
+                                  <RotateCcw size={13} />
+                                  Khôi phục
+                                </button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>

@@ -6,6 +6,7 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
+  deleteField,
   query,
   orderBy,
   onSnapshot,
@@ -1092,6 +1093,49 @@ export async function rejectJournalCandidate(
     reviewedBy: user.email || user.uid,
     updatedAt: now,
   });
+}
+
+/**
+ * Restore rejected candidate back to pending queue.
+ */
+export async function restoreJournalCandidate(
+  candidateId: string,
+  user: { uid: string; email?: string }
+): Promise<void> {
+  const candRef = doc(firestore, "journalCandidates", candidateId);
+  const now = new Date().toISOString();
+
+  await updateDoc(candRef, {
+    status: "pending",
+    rejectionReason: deleteField(),
+    reviewedAt: deleteField(),
+    reviewedBy: deleteField(),
+    updatedAt: now,
+  });
+}
+
+/**
+ * Bulk reject candidates.
+ */
+export async function bulkRejectJournalCandidates(
+  candidateIds: string[],
+  user: { uid: string; email?: string },
+  rejectionReason: string = "Chưa phù hợp tiêu chí"
+): Promise<{ successCount: number; errorCount: number }> {
+  let successCount = 0;
+  let errorCount = 0;
+
+  for (const id of candidateIds) {
+    try {
+      await rejectJournalCandidate(id, rejectionReason, user);
+      successCount++;
+    } catch (err) {
+      console.error(`Error rejecting candidate ${id}:`, err);
+      errorCount++;
+    }
+  }
+
+  return { successCount, errorCount };
 }
 
 /**
