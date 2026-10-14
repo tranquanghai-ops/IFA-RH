@@ -78,6 +78,40 @@ describe("Dữ liệu AI tìm - Bộ lọc và phân loại trạng thái không
     expect(cat).toBe("rejected");
   });
 
+  it("phân loại 'updates' khi candidate có changeType là 'update' hoặc có publishedOpportunityId, tuyệt đối không vào 'today'", () => {
+    const todayStr = new Date().toISOString();
+    // Tạo hôm nay và có changeType = 'update'
+    const cat1 = getCandidatePrimaryCategory({
+      ...baseCandidate,
+      status: "pending",
+      changeType: "update",
+      publishedOpportunityId: "opp-published-1",
+      createdAt: todayStr,
+      discoveredAt: todayStr,
+    });
+    expect(cat1).toBe("updates");
+
+    // Chỉ có publishedOpportunityId
+    const cat2 = getCandidatePrimaryCategory({
+      ...baseCandidate,
+      status: "pending",
+      publishedOpportunityId: "opp-published-1",
+      createdAt: todayStr,
+    });
+    expect(cat2).toBe("updates");
+  });
+
+  it("phân loại 'pending' khi candidate được đồng bộ hôm nay nhưng ngày phát hiện gốc (discoveredAt) là ngày cũ", () => {
+    const todayStr = new Date().toISOString();
+    const cat = getCandidatePrimaryCategory({
+      ...baseCandidate,
+      status: "pending",
+      createdAt: todayStr, // Đồng bộ hôm nay
+      discoveredAt: "2026-10-06T00:00:00.000Z", // Ngày phát hiện gốc từ Spark
+    });
+    expect(cat).toBe("pending");
+  });
+
   it("đảm bảo số lượng các tab độc lập và tổng bằng đúng 'Tất cả'", () => {
     const mockList: OpportunityCandidate[] = [
       { ...baseCandidate, id: "c1", status: "pending", deadline: "2026-12-31" },
@@ -87,10 +121,19 @@ describe("Dữ liệu AI tìm - Bộ lọc và phân loại trạng thái không
       { ...baseCandidate, id: "c5", status: "rejected" },
       { ...baseCandidate, id: "c6", status: "needs_review" },
       { ...baseCandidate, id: "c7", status: "pending", deadline: "2026-11-20" },
+      {
+        ...baseCandidate,
+        id: "c8",
+        status: "pending",
+        changeType: "update",
+        publishedOpportunityId: "opp-123",
+        createdAt: new Date().toISOString(),
+      },
     ];
 
     const counts = {
       today: 0,
+      updates: 0,
       pending: 0,
       needs_review: 0,
       approved: 0,
@@ -105,6 +148,7 @@ describe("Dữ liệu AI tìm - Bộ lọc và phân loại trạng thái không
 
     expect(counts.pending).toBe(2); // c1, c7
     expect(counts.today).toBe(1);   // c2
+    expect(counts.updates).toBe(1); // c8
     expect(counts.expired).toBe(1); // c3
     expect(counts.approved).toBe(1);// c4
     expect(counts.rejected).toBe(1);// c5

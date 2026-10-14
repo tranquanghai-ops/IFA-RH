@@ -563,4 +563,98 @@ describe("IFA-RH — Opportunity Sync Architecture & Governance Suite (13 Points
     expect(candidate0.title).toBeDefined();
     expect(candidate0.sourceType).toBe("SPARK");
   });
+
+  // Point 14: Chuẩn hóa so sánh dữ liệu (Date, URL, Empty, Notes) không tạo đề xuất giả
+  it("Point 14: Normalized diff comparison avoids spurious update proposals for date formats, URLs, and countdown notes", () => {
+    const existingTarget: ResearchMatchTarget = {
+      id: "opp_icisn_2027",
+      title: "Hội thảo ICISN 2027",
+      sourceUrl: "https://icisn.com/",
+      submissionUrl: "https://icisn.com/submit",
+      deadline: "2026-11-20T00:00:00.000Z",
+      fullPaperDeadline: "2026-11-20T00:00:00.000Z",
+      eventDate: "20/03/2027 - 21/03/2027",
+      location: "Hải Phòng",
+      fee: "250 USD",
+      publicationFee: "250 USD",
+      registrationFee: "Không rõ chi phí",
+      feeStatus: "SPECIFIED",
+      notes: "Hạn nộp còn 24 ngày; Kỷ yếu Springer LNNS.",
+    };
+
+    const incomingRow = {
+      stt: 1,
+      title: "Hội thảo ICISN 2027",
+      sourceUrl: "https://icisn.com", // No trailing slash
+      submissionUrl: "http://icisn.com/submit/", // http vs https, trailing slash
+      deadline: "20/11/2026", // VN format vs ISO
+      fullPaperDeadline: "20/11/2026",
+      eventDate: "20/03/2027 - 21/03/2027",
+      location: "Hải Phòng",
+      fee: "250 USD",
+      publicationFee: "250 USD",
+      registrationFee: "Chưa có", // Equivalent empty string
+      feeStatus: "SPECIFIED" as const,
+      notes: "Hạn nộp còn 18 ngày; Kỷ yếu Springer LNNS.", // Countdown days changed
+      statusText: "MỚI", // Should NOT trigger diff
+    };
+
+    const diff = computeOpportunityDiff(existingTarget, incomingRow as any);
+    expect(diff.hasChanges).toBe(false);
+    expect(diff.changedKeys).toEqual([]);
+    expect(diff.diffSummary).toEqual([]);
+  });
+
+  // Point 15: Thay đổi hạn nộp thực tế PHẢI phát hiện và tạo đề xuất cập nhật
+  it("Point 15: Substantive deadline change is accurately detected and generates diffSummary", () => {
+    const existingTarget: ResearchMatchTarget = {
+      id: "opp_letj_2027",
+      title: "Hội thảo LETJ 2027",
+      deadline: "2026-11-15T00:00:00.000Z",
+      fullPaperDeadline: "2026-11-15T00:00:00.000Z",
+      location: "Đại học Kinh tế Quốc dân, Hà Nội",
+    };
+
+    const incomingRow = {
+      stt: 2,
+      title: "Hội thảo LETJ 2027",
+      deadline: "2026-12-20", // New extended deadline
+      fullPaperDeadline: "2026-12-20",
+      location: "Đại học Kinh tế Quốc dân, Hà Nội",
+    };
+
+    const diff = computeOpportunityDiff(existingTarget, incomingRow as any);
+    expect(diff.hasChanges).toBe(true);
+    expect(diff.changedKeys).toContain("fullPaperDeadline");
+    expect(diff.diffSummary.length).toBeGreaterThan(0);
+  });
+
+  // Point 16: Phân loại danh mục tab: Đề xuất cập nhật vào "updates", không vào "today"
+  it("Point 16: Update proposals are routed to 'updates' tab and never pollute 'today'", () => {
+    const updateCandidate: OpportunityCandidate = {
+      id: "cand_upd_opp_letj_2027",
+      title: "Hội thảo LETJ 2027",
+      organizer: "NEU",
+      country: "Việt Nam",
+      type: "Hội thảo",
+      level: "Quốc tế",
+      topic: "Luật & Kinh tế",
+      field: "Chung MTCN",
+      tags: [],
+      deadline: "2026-12-20",
+      content: "Nội dung...",
+      sourceType: "SPARK",
+      status: "pending",
+      changeType: "update",
+      publishedOpportunityId: "opp_letj_2027",
+      normalizedTitle: "hoi thao letj 2027",
+      createdAt: new Date().toISOString(), // Created today during sync
+      discoveredAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const cat = getCandidatePrimaryCategory(updateCandidate);
+    expect(cat).toBe("updates");
+    expect(cat).not.toBe("today");
+  });
 });

@@ -423,6 +423,31 @@ export async function executeResearchSync({
           // Core architectural rule: DO NOT automatically overwrite published opportunities in Firestore!
           if (!diff.hasChanges) {
             // Case B: Published & Unchanged -> DO NOT write to Firestore
+            // If there is an existing pending update proposal created previously that now has NO differences,
+            // auto-resolve it cleanly by setting status to rejected with a clear audit reason.
+            const staleProposal = candidates.find(
+              (c) =>
+                c.publishedOpportunityId === target.id &&
+                ["pending", "needs_review"].includes(c.status)
+            );
+            if (staleProposal && !isDryRun) {
+              try {
+                const docRef = sdk.doc(db, "opportunityCandidates", staleProposal.id);
+                await sdk.updateDoc(
+                  docRef,
+                  cleanUndefined({
+                    status: "rejected",
+                    rejectReason: "Đồng bộ chuẩn hóa: Dữ liệu Google Sheets và hội thảo đã công bố đã hoàn toàn trùng khớp, không có thay đổi thực tế.",
+                    updatedAt: new Date().toISOString(),
+                    updatedBy: "SPARK_SYNC",
+                  })
+                );
+                stats.successWrites++;
+              } catch (cleanErr) {
+                console.warn("Lỗi cập nhật staleProposal:", cleanErr);
+              }
+            }
+
             stats.matched++;
             stats.unchanged++;
             diagnostics.push({
@@ -452,6 +477,7 @@ export async function executeResearchSync({
                     diffSummary: diff.diffSummary,
                     changeType: "update",
                     publishedOpportunityId: target.id,
+                    discoveredAt: target.discoveredAt || existingProposal.discoveredAt || row.discoveredAt,
                     updatedAt: new Date().toISOString(),
                     updatedBy: "SPARK_SYNC",
                   };
@@ -487,6 +513,7 @@ export async function executeResearchSync({
               const candId = `cand_upd_${target.id}`;
               const existingCand = candidates.find((c) => c.id === candId);
               const createdAt = existingCand?.createdAt || new Date().toISOString();
+              const discoveredAt = target.discoveredAt || row.discoveredAt || candidateFields.discoveredAt;
               if (!isDryRun) {
                 const docRef = sdk.doc(db, "opportunityCandidates", candId);
                 try {
@@ -501,6 +528,7 @@ export async function executeResearchSync({
                       diffSummary: diff.diffSummary,
                       sourceType: "SPARK",
                       createdAt: createdAt,
+                      discoveredAt: discoveredAt,
                       updatedAt: new Date().toISOString(),
                     })
                   );
@@ -619,6 +647,7 @@ export async function executeResearchSync({
           status: "pending",
           changeType: "create",
           sourceType: "SPARK",
+          discoveredAt: row.discoveredAt || candidateFields.discoveredAt || new Date().toISOString(),
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };

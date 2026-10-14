@@ -31,6 +31,7 @@ import {
 
 export type CandidateFilterTab =
   | "today"
+  | "updates"
   | "pending"
   | "needs_review"
   | "approved"
@@ -53,7 +54,7 @@ const isTodayDate = (dateStr?: string | null): boolean => {
 
 export const getCandidatePrimaryCategory = (
   c: OpportunityCandidate
-): "today" | "pending" | "needs_review" | "approved" | "expired" | "rejected" | "out_of_scope" => {
+): "today" | "updates" | "pending" | "needs_review" | "approved" | "expired" | "rejected" | "out_of_scope" => {
   if (c.isOutOfScope === true || classifyOutOfScopeRecord(c).isOutOfScope) {
     return "out_of_scope";
   }
@@ -62,8 +63,14 @@ export const getCandidatePrimaryCategory = (
   if (c.sheetStatus === "HẾT HẠN" || getOpportunityDeadlineInfo(c).isExpired) {
     return "expired";
   }
+  // Dedicated category for update proposals for published opportunities
+  if (c.changeType === "update" || Boolean(c.publishedOpportunityId)) {
+    return "updates";
+  }
   if (c.status === "needs_review") return "needs_review";
-  if (isTodayDate(c.createdAt) || isTodayDate(c.discoveredAt)) {
+  // Only truly new opportunities discovered today (prefer discoveredAt over createdAt)
+  const discoveryDate = c.discoveredAt || c.createdAt;
+  if (isTodayDate(discoveryDate)) {
     return "today";
   }
   return "pending";
@@ -71,6 +78,7 @@ export const getCandidatePrimaryCategory = (
 
 export const FILTER_TABS: Array<{ id: CandidateFilterTab; label: string }> = [
   { id: "today", label: "Mới hôm nay" },
+  { id: "updates", label: "Cập nhật chờ duyệt" },
   { id: "pending", label: "Chờ duyệt" },
   { id: "needs_review", label: "Cần hiệu chỉnh" },
   { id: "approved", label: "Đã duyệt" },
@@ -113,9 +121,12 @@ export const AdminCandidatesPage: React.FC = () => {
       setPublishedOpps(opps);
       if (!hasInitializedTab) {
         const pendingCount = cands.filter((c) => getCandidatePrimaryCategory(c) === "pending").length;
+        const updatesCount = cands.filter((c) => getCandidatePrimaryCategory(c) === "updates").length;
         const todayCount = cands.filter((c) => getCandidatePrimaryCategory(c) === "today").length;
         const needsReviewCount = cands.filter((c) => getCandidatePrimaryCategory(c) === "needs_review").length;
-        if (pendingCount === 0 && todayCount > 0) {
+        if (pendingCount === 0 && updatesCount > 0) {
+          setActiveTab("updates");
+        } else if (pendingCount === 0 && todayCount > 0) {
           setActiveTab("today");
         } else if (pendingCount === 0 && todayCount === 0 && needsReviewCount > 0) {
           setActiveTab("needs_review");
@@ -141,6 +152,7 @@ export const AdminCandidatesPage: React.FC = () => {
   const tabCounts = useMemo(() => {
     const counts: Record<CandidateFilterTab, number> = {
       today: 0,
+      updates: 0,
       pending: 0,
       needs_review: 0,
       approved: 0,
@@ -665,6 +677,35 @@ export const AdminCandidatesPage: React.FC = () => {
                           {cand.field}
                         </div>
                       )}
+                      {cand.publishedOpportunityId && (
+                        <div
+                          style={{
+                            fontSize: "0.74rem",
+                            color: "#0369a1",
+                            marginTop: 4,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <span>
+                            Hồ sơ gốc: <strong>{cand.publishedOpportunityId}</strong>
+                          </span>
+                          {cand.diffSummary && cand.diffSummary.length > 0 && (
+                            <span
+                              style={{
+                                color: "#475569",
+                                background: "#f1f5f9",
+                                padding: "1px 6px",
+                                borderRadius: 4,
+                              }}
+                            >
+                              Thay đổi: {cand.diffSummary.map((d) => d.label || d.field).join(", ")}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td>
                       <div>{cand.organizer}</div>
@@ -757,11 +798,6 @@ export const AdminCandidatesPage: React.FC = () => {
                     </td>
                     <td style={{ textAlign: "center" }}>
                       <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "center" }}>
-                        {cand.changeType === "update" && (
-                          <span className="badge" style={{ background: "#e0f2fe", color: "#0369a1", fontSize: "0.7rem", fontWeight: 700 }}>
-                            ĐỀ XUẤT CẬP NHẬT
-                          </span>
-                        )}
                         {primaryCat === "out_of_scope" ? (
                           <span className="badge" style={{ background: "#f3e8ff", color: "#7e22ce" }}>
                             NGOÀI PHẠM VI
@@ -774,6 +810,19 @@ export const AdminCandidatesPage: React.FC = () => {
                           <span className="badge badge-success">ĐÃ DUYỆT</span>
                         ) : primaryCat === "rejected" ? (
                           <span className="badge badge-warning">TỪ CHỐI</span>
+                        ) : primaryCat === "updates" || cand.changeType === "update" ? (
+                          <span
+                            className="badge"
+                            style={{
+                              background: "#e0f2fe",
+                              color: "#0369a1",
+                              border: "1px solid #bae6fd",
+                              fontWeight: 700,
+                              fontSize: "0.72rem",
+                            }}
+                          >
+                            ĐỀ XUẤT CẬP NHẬT
+                          </span>
                         ) : primaryCat === "needs_review" ? (
                           <span className="badge" style={{ background: "#fef3c7", color: "#b45309" }}>
                             CẦN HIỆU CHỈNH
@@ -912,11 +961,6 @@ export const AdminCandidatesPage: React.FC = () => {
                     )}
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
-                    {cand.changeType === "update" && (
-                      <span className="badge" style={{ background: "#e0f2fe", color: "#0369a1", fontSize: "0.7rem", fontWeight: 700 }}>
-                        ĐỀ XUẤT CẬP NHẬT
-                      </span>
-                    )}
                     {primaryCat === "out_of_scope" ? (
                       <span className="badge" style={{ background: "#f3e8ff", color: "#7e22ce" }}>
                         NGOÀI PHẠM VI
@@ -929,6 +973,19 @@ export const AdminCandidatesPage: React.FC = () => {
                       <span className="badge badge-success">ĐÃ DUYỆT</span>
                     ) : primaryCat === "rejected" ? (
                       <span className="badge badge-warning">TỪ CHỐI</span>
+                    ) : primaryCat === "updates" || cand.changeType === "update" ? (
+                      <span
+                        className="badge"
+                        style={{
+                          background: "#e0f2fe",
+                          color: "#0369a1",
+                          border: "1px solid #bae6fd",
+                          fontWeight: 700,
+                          fontSize: "0.72rem",
+                        }}
+                      >
+                        ĐỀ XUẤT CẬP NHẬT
+                      </span>
                     ) : primaryCat === "needs_review" ? (
                       <span className="badge" style={{ background: "#fef3c7", color: "#b45309" }}>
                         CẦN HIỆU CHỈNH
@@ -962,6 +1019,32 @@ export const AdminCandidatesPage: React.FC = () => {
                 {cand.field && (
                   <div style={{ fontSize: "0.78rem", color: "var(--teal)", marginBottom: 8 }}>
                     Chuyên ngành: {cand.field}
+                  </div>
+                )}
+
+                {cand.publishedOpportunityId && (
+                  <div
+                    style={{
+                      background: "#eff6ff",
+                      color: "#1d4ed8",
+                      border: "1px solid #bfdbfe",
+                      padding: "6px 10px",
+                      borderRadius: 6,
+                      fontSize: "0.75rem",
+                      marginBottom: 12,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 2,
+                    }}
+                  >
+                    <div>
+                      Hồ sơ gốc: <strong>{cand.publishedOpportunityId}</strong>
+                    </div>
+                    {cand.diffSummary && cand.diffSummary.length > 0 && (
+                      <div style={{ color: "#475569", fontSize: "0.72rem" }}>
+                        Thay đổi: {cand.diffSummary.map((d) => d.label || d.field).join(", ")}
+                      </div>
+                    )}
                   </div>
                 )}
 
