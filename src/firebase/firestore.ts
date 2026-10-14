@@ -637,12 +637,6 @@ export async function recallOpportunityCandidate(
 
   // 1. Identify candidate doc ref
   const candRef = await resolveCandidateDocRef(cand.id);
-  batch.update(candRef, {
-    status: "pending",
-    recalledAt: now,
-    recalledBy: actor.email,
-    updatedAt: now,
-  });
 
   // 2. Identify and recall the published opportunity if linked or matching
   let matchedOppId: string | null = cand.publishedOpportunityId || null;
@@ -664,7 +658,15 @@ export async function recallOpportunityCandidate(
     }
   }
 
+  const candUpdate: any = {
+    status: "pending",
+    recalledAt: now,
+    recalledBy: actor.email,
+    updatedAt: now,
+  };
+
   if (matchedOppId) {
+    candUpdate.publishedOpportunityId = matchedOppId;
     const oppRef = doc(firestore, "opportunities", matchedOppId);
     batch.update(oppRef, {
       status: "recalled",
@@ -676,6 +678,7 @@ export async function recallOpportunityCandidate(
     });
   }
 
+  batch.update(candRef, candUpdate);
   await batch.commit();
 
   await logAudit(
@@ -784,7 +787,7 @@ export async function approveCandidate(
   const candRef = await resolveCandidateDocRef(candidate.id);
   const resolvedCandId = candRef.id;
 
-  // 1. Create published opportunity
+  // 1. Prepare published opportunity data
   const oppData: any = {
     title: resolvedTitle,
     organizer: resolvedOrganizer,
@@ -825,71 +828,76 @@ export async function approveCandidate(
   if (candidate.discoveredAt) oppData.discoveredAt = candidate.discoveredAt;
   if (candidate.sheetStatus) oppData.sheetStatus = candidate.sheetStatus;
 
-  // 2. Check if candidate is an update proposal for an already published opportunity
-  if (candidate.publishedOpportunityId) {
-    const oppRef = doc(firestore, "opportunities", candidate.publishedOpportunityId);
-    const oppSnap = await getDoc(oppRef);
-    if (!oppSnap.exists()) {
-      throw new Error(`Không tìm thấy hồ sơ hội thảo đã công bố tương ứng (${candidate.publishedOpportunityId}).`);
-    }
-    const currentOpp = oppSnap.data();
-
-    // Preserve immutable fields and existing admin state
-    const updateOppData: any = {
-      ...oppData,
-      createdAt: currentOpp.createdAt,
-      createdBy: currentOpp.createdBy,
-      status: currentOpp.status || "published",
-      updatedAt: now,
-      updatedBy: actor.email,
-    };
-    if (currentOpp.manualOverrides) {
-      updateOppData.manualOverrides = currentOpp.manualOverrides;
-    }
-    if (currentOpp.editedByAdmin !== undefined) {
-      updateOppData.editedByAdmin = currentOpp.editedByAdmin;
-    }
-
-    // Clean undefined fields
-    const cleanUpdate: any = {};
-    for (const [k, v] of Object.entries(updateOppData)) {
-      if (v !== undefined) cleanUpdate[k] = v;
-    }
-
-    const batch = writeBatch(firestore);
-    batch.update(oppRef, cleanUpdate);
-    batch.update(candRef, {
-      id: resolvedCandId,
-      status: "approved",
-      reviewedBy: actor.email,
-      reviewedAt: now,
-      publishedOpportunityId: candidate.publishedOpportunityId,
-      updatedAt: now,
-    });
-    await batch.commit();
-
-    await logAudit(
-      actor,
-      "APPROVE_UPDATE_CANDIDATE",
-      "opportunity",
-      candidate.publishedOpportunityId,
-      `Duyệt cập nhật hội thảo Spark: "${resolvedTitle}" -> cập nhật Opportunities (${candidate.publishedOpportunityId})`
+  // 2. Check if candidate is linked to an existing opportunity
+  let targetOppId = candidate.publishedOpportunityId || null;
+  if (!targetOppId) {
+    const previous = await getDocs(
+      query(
+        collection(firestore, "opportunities"),
+        where("candidateId", "==", resolvedCandId),
+        limit(1)
+      )
     );
-    return;
+    if (!previous.empty) {
+      targetOppId = previous.docs[0].id;
+    }
   }
 
-  // 3. New candidate approval -> Create new published opportunity
-  const previous = await getDocs(query(
-    collection(firestore, "opportunities"),
-    where("candidateId", "==", resolvedCandId),
-    limit(1)
-  ));
-  if (!previous.empty && previous.docs[0].data().status !== "published") {
-    throw new Error("Cơ hội này đã có bản công bố được lưu trữ. Vui lòng kiểm tra trước khi duyệt lại.");
+  if (targetOppId) {
+    const oppRef = doc(firestore, "opportunities", targetOppId);
+    const oppSnap = await getDoc(oppRef);
+    if (oppSnap.exists()) {
+      const currentOpp = oppSnap.data();
+
+      // Preserve immutable fields and existing admin state
+      const updateOppData: any = {
+        ...oppData,
+        createdAt: currentOpp.createdAt || now,
+        createdBy: currentOpp.createdBy || actor.email,
+        status: "published",
+        updatedAt: now,
+        updatedBy: actor.email,
+      };
+      if (currentOpp.manualOverrides) {
+        updateOppData.manualOverrides = currentOpp.manualOverrides;
+      }
+      if (currentOpp.editedByAdmin !== undefined) {
+        updateOppData.editedByAdmin = currentOpp.editedByAdmin;
+      }
+
+      // Clean undefined fields
+      const cleanUpdate: any = {};
+      for (const [k, v] of Object.entries(updateOppData)) {
+        if (v !== undefined) cleanUpdate[k] = v;
+      }
+
+      const batch = writeBatch(firestore);
+      batch.update(oppRef, cleanUpdate);
+      batch.update(candRef, {
+        id: resolvedCandId,
+        status: "approved",
+        reviewedBy: actor.email,
+        reviewedAt: now,
+        publishedOpportunityId: targetOppId,
+        updatedAt: now,
+      });
+      await batch.commit();
+
+      await logAudit(
+        actor,
+        "APPROVE_CANDIDATE",
+        "opportunity",
+        targetOppId,
+        `Duyệt cơ hội Spark: "${resolvedTitle}" -> cập nhật Opportunities (${targetOppId})`
+      );
+      return;
+    }
   }
-  const oppRef = previous.empty ? doc(collection(firestore, "opportunities")) : previous.docs[0].ref;
+
+  // 3. Brand new candidate approval -> Create new published opportunity
+  const oppRef = doc(collection(firestore, "opportunities"));
   const batch = writeBatch(firestore);
-  if (previous.empty) batch.set(oppRef, { ...oppData, createdAt: now, updatedAt: now });
+  batch.set(oppRef, { ...oppData, createdAt: now, updatedAt: now });
   batch.update(candRef, {
     id: resolvedCandId,
     status: "approved",

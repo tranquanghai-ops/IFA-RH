@@ -297,4 +297,77 @@ describe("Opportunity Management: Hide, AI Recall, and Pending Queue Count", () 
     expect(newButtonName).toBe("Đăng tin mới");
     expect(candidateSubtitle).toContain("tự động phát hiện, đang chờ duyệt");
   });
+
+  // 5. RECALL AND RE-APPROVAL LIFECYCLE
+  it("should recall approved candidate to pending and then re-approve back to published without error", () => {
+    const opp: Opportunity = {
+      id: "opp_ietbhec_2027",
+      title: "Hội thảo Quốc tế IETBHEC 2027",
+      organizer: "Đại học Kinh tế Quốc dân",
+      country: "Việt Nam",
+      type: "Hội thảo",
+      level: "Quốc tế",
+      topic: "Kinh tế và Quản trị",
+      field: "Chung Khoa MTCN",
+      tags: ["AI", "Kinh tế"],
+      deadline: "2027-01-15",
+      content: "Nội dung chi tiết",
+      sourceType: "SPARK",
+      status: "published",
+      candidateId: "cand_ietbhec",
+      createdAt: "2026-09-01T00:00:00Z",
+      updatedAt: "2026-09-01T00:00:00Z",
+      createdBy: "admin@tdtu.edu.vn",
+    };
+
+    const cand: OpportunityCandidate = {
+      id: "cand_ietbhec",
+      title: "Hội thảo Quốc tế IETBHEC 2027",
+      organizer: "Đại học Kinh tế Quốc dân",
+      country: "Việt Nam",
+      type: "Hội thảo",
+      level: "Quốc tế",
+      topic: "Kinh tế và Quản trị",
+      field: "Chung Khoa MTCN",
+      tags: ["AI", "Kinh tế"],
+      deadline: "2027-01-15",
+      content: "Nội dung chi tiết",
+      sourceType: "SPARK",
+      status: "approved",
+      publishedOpportunityId: "opp_ietbhec_2027",
+      normalizedTitle: normalizeText("Hội thảo Quốc tế IETBHEC 2027"),
+      createdAt: "2026-09-01T00:00:00Z",
+      updatedAt: "2026-09-01T00:00:00Z",
+    };
+
+    // Step 1: Admin recalls the candidate
+    const recallResult = simulateRecallOpportunity(opp, cand, "admin@tdtu.edu.vn");
+    expect(recallResult.recalledOpp.status).toBe("recalled");
+    expect(recallResult.recalledOpp.recalledBy).toBe("admin@tdtu.edu.vn");
+    expect(recallResult.pendingCandidate.status).toBe("pending");
+    expect(recallResult.pendingCandidate.publishedOpportunityId).toBe("opp_ietbhec_2027");
+
+    // Recalled opportunity is NOT publicly visible
+    expect(isPubliclyVisible(recallResult.recalledOpp.status)).toBe(false);
+
+    // Step 2: Admin re-approves the recalled candidate
+    const reapprovedOpp: Opportunity = {
+      ...recallResult.recalledOpp,
+      status: "published",
+      updatedAt: new Date().toISOString(),
+      updatedBy: "admin@tdtu.edu.vn",
+    };
+    const reapprovedCand: OpportunityCandidate = {
+      ...recallResult.pendingCandidate,
+      status: "approved",
+      reviewedBy: "admin@tdtu.edu.vn",
+      reviewedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    expect(reapprovedOpp.status).toBe("published");
+    expect(isPubliclyVisible(reapprovedOpp.status)).toBe(true);
+    expect(reapprovedCand.status).toBe("approved");
+    expect(reapprovedCand.publishedOpportunityId).toBe(opp.id);
+  });
 });

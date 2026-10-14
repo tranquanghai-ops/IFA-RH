@@ -485,6 +485,8 @@ export async function executeResearchSync({
               // Create new update candidate in opportunityCandidates with deterministic idempotent ID
               const { id: _ignoreSlugId, ...candidateFields } = mapRowToCandidate(row, i);
               const candId = `cand_upd_${target.id}`;
+              const existingCand = candidates.find((c) => c.id === candId);
+              const createdAt = existingCand?.createdAt || new Date().toISOString();
               if (!isDryRun) {
                 const docRef = sdk.doc(db, "opportunityCandidates", candId);
                 try {
@@ -498,7 +500,7 @@ export async function executeResearchSync({
                       publishedOpportunityId: target.id,
                       diffSummary: diff.diffSummary,
                       sourceType: "SPARK",
-                      createdAt: new Date().toISOString(),
+                      createdAt: createdAt,
                       updatedAt: new Date().toISOString(),
                     })
                   );
