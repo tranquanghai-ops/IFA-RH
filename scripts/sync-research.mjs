@@ -24,6 +24,7 @@ import {
   DEFAULT_DRIVE_FOLDER_ID,
   DEFAULT_DRIVE_FILE_NAME,
 } from '../src/services/researchDriveJsonService.ts';
+import { GoogleAuth } from 'google-auth-library';
 
 // Patch global fetch for Google Drive API key origin/referer verification in Node.js
 const originalFetch = globalThis.fetch;
@@ -83,61 +84,284 @@ function initializeFirebaseAdmin() {
   return getFirestore(app);
 }
 
+async function getDriveAccessToken() {
+  if (process.env.GOOGLE_DRIVE_ACCESS_TOKEN) {
+    return process.env.GOOGLE_DRIVE_ACCESS_TOKEN;
+  }
+  const saKeyJson = process.env.IFA_RH_SA_KEY || process.env.FIREBASE_SERVICE_ACCOUNT_IFA_RH || process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (saKeyJson) {
+    try {
+      const sa = JSON.parse(saKeyJson);
+      const auth = new GoogleAuth({
+        credentials: sa,
+        scopes: ['https://www.googleapis.com/auth/drive.readonly'],
+      });
+      const client = await auth.getClient();
+      const tokenRes = await client.getAccessToken();
+      if (tokenRes && tokenRes.token) {
+        return tokenRes.token;
+      }
+    } catch (tokenErr) {
+      console.warn('[DriveAuth] Không thể cấp Access Token từ Service Account (sẽ dùng Public API Key):', tokenErr.message);
+    }
+  }
+  return undefined;
+}
+
+function decodeValue(v) {
+  if (!v) return null;
+  if ('stringValue' in v) return v.stringValue;
+  if ('integerValue' in v) return Number(v.integerValue);
+  if ('doubleValue' in v) return v.doubleValue;
+  if ('booleanValue' in v) return v.booleanValue;
+  if ('timestampValue' in v) return v.timestampValue;
+  if ('nullValue' in v) return null;
+  if ('arrayValue' in v) return (v.arrayValue?.values || []).map(decodeValue);
+  if ('mapValue' in v) return decodeFields(v.mapValue?.fields || {});
+  return null;
+}
+
+function decodeFields(fields) {
+  const result = {};
+  for (const [k, v] of Object.entries(fields || {})) {
+    result[k] = decodeValue(v);
+  }
+  return result;
+}
+
+function encodeValue(v) {
+  if (v === null || v === undefined) return { nullValue: null };
+  if (typeof v === 'string') return { stringValue: v };
+  if (typeof v === 'boolean') return { booleanValue: v };
+  if (typeof v === 'number') {
+    return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  }
+  if (Array.isArray(v)) {
+    return { arrayValue: { values: v.map(encodeValue) } };
+  }
+  if (typeof v === 'object') {
+    return { mapValue: { fields: encodeFields(v) } };
+  }
+  return { stringValue: String(v) };
+}
+
+function encodeFields(obj) {
+  const fields = {};
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (v !== undefined) {
+      fields[k] = encodeValue(v);
+    }
+  }
+  return fields;
+}
+
+function createRestSdk(accessToken) {
+  const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'ifa-rh';
+  const BASE_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
+  const headers = {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json',
+  };
+
+  return {
+    doc: (_db, col, id) => ({ col, id, path: `${col}/${id}` }),
+    getDoc: async (ref) => {
+      const url = `${BASE_URL}/${ref.path}`;
+      const res = await originalFetch(url, { headers });
+      if (res.status === 404) {
+        return { exists: () => false, data: () => undefined };
+      }
+      if (!res.ok) {
+        throw new Error(`getDoc failed [${res.status}]: ${await res.text()}`);
+      }
+      const data = await res.json();
+      return {
+        exists: () => true,
+        data: () => ({ id: ref.id, ...decodeFields(data.fields) }),
+      };
+    },
+    setDoc: async (ref, data, opts) => {
+      const url = `${BASE_URL}/${ref.path}`;
+      const fields = encodeFields(data);
+      let fullUrl = url;
+      if (opts?.merge) {
+        const mask = Object.keys(data).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+        fullUrl = `${url}?${mask}`;
+      }
+      const res = await originalFetch(fullUrl, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ fields }),
+      });
+      if (!res.ok) {
+        throw new Error(`setDoc failed [${res.status}]: ${await res.text()}`);
+      }
+      return await res.json();
+    },
+    updateDoc: async (ref, data) => {
+      const fields = encodeFields(data);
+      const mask = Object.keys(data).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+      const url = `${BASE_URL}/${ref.path}?${mask}`;
+      const res = await originalFetch(url, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ fields }),
+      });
+      if (!res.ok) {
+        throw new Error(`updateDoc failed [${res.status}]: ${await res.text()}`);
+      }
+      return await res.json();
+    },
+    collection: (_db, path) => ({ path }),
+    getDocs: async (colRef) => {
+      let docs = [];
+      let pageToken = '';
+      do {
+        const pageParam = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '';
+        const url = `${BASE_URL}/${colRef.path}?pageSize=300${pageParam}`;
+        const res = await originalFetch(url, { headers });
+        if (!res.ok) {
+          throw new Error(`getDocs failed [${res.status}]: ${await res.text()}`);
+        }
+        const body = await res.json();
+        if (Array.isArray(body.documents)) {
+          for (const d of body.documents) {
+            const id = d.name.split('/').pop();
+            docs.push({
+              id,
+              data: () => ({ id, ...decodeFields(d.fields) }),
+            });
+          }
+        }
+        pageToken = body.nextPageToken || '';
+      } while (pageToken);
+
+      return { docs, size: docs.length };
+    },
+    addDoc: async (colRef, data) => {
+      const autoId = `cand_auto_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const url = `${BASE_URL}/${colRef.path}/${autoId}`;
+      const fields = encodeFields({ ...data, id: autoId });
+      const res = await originalFetch(url, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ fields }),
+      });
+      if (!res.ok) {
+        throw new Error(`addDoc failed [${res.status}]: ${await res.text()}`);
+      }
+      return { id: autoId };
+    },
+    runTransaction: async (_db, fn) => {
+      const tx = {
+        get: async (ref) => {
+          const url = `${BASE_URL}/${ref.path}`;
+          const res = await originalFetch(url, { headers });
+          if (res.status === 404) return { exists: () => false, data: () => undefined };
+          const data = await res.json();
+          return { exists: () => true, data: () => ({ id: ref.id, ...decodeFields(data.fields) }) };
+        },
+        set: async (ref, data, opts) => {
+          const url = `${BASE_URL}/${ref.path}`;
+          const fields = encodeFields(data);
+          let fullUrl = url;
+          if (opts?.merge) {
+            const mask = Object.keys(data).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
+            fullUrl = `${url}?${mask}`;
+          }
+          await originalFetch(fullUrl, { method: 'PATCH', headers, body: JSON.stringify({ fields }) });
+        },
+      };
+      return await fn(tx);
+    },
+    serverTimestamp: () => new Date().toISOString(),
+  };
+}
+
+function getFirestoreSdkAndDb() {
+  const saKeyJson = process.env.IFA_RH_SA_KEY || process.env.FIREBASE_SERVICE_ACCOUNT_IFA_RH || process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (saKeyJson) {
+    const db = initializeFirebaseAdmin();
+    const adminSdk = {
+      doc: (_db, col, id) => db.collection(col).doc(id),
+      getDoc: async (ref) => {
+        const snap = await ref.get();
+        return {
+          exists: () => snap.exists,
+          data: () => snap.data(),
+        };
+      },
+      setDoc: async (ref, data, opts) => ref.set(data, opts || {}),
+      updateDoc: async (ref, data) => ref.update(data),
+      collection: (_db, path) => db.collection(path),
+      getDocs: async (colRef) => {
+        const snap = await colRef.get();
+        return {
+          docs: snap.docs.map(d => ({
+            id: d.id,
+            data: () => d.data(),
+          })),
+          size: snap.size,
+        };
+      },
+      addDoc: async (colRef, data) => {
+        const docRef = await colRef.add(data);
+        return { id: docRef.id };
+      },
+      runTransaction: (targetDb, updateFn) => db.runTransaction(async (transaction) => {
+        const txAdapter = {
+          get: async (ref) => {
+            const snap = await transaction.get(ref);
+            return {
+              exists: () => snap.exists,
+              data: () => snap.data(),
+            };
+          },
+          set: (ref, data, opts) => transaction.set(ref, data, opts || {}),
+          update: (ref, data) => transaction.update(ref, data),
+          delete: (ref) => transaction.delete(ref),
+        };
+        return await updateFn(txAdapter);
+      }),
+      serverTimestamp: () => FieldValue.serverTimestamp(),
+    };
+    return { db, sdk: adminSdk, authMode: 'Firebase Service Account (Admin SDK)' };
+  }
+
+  // Workstation fallback: check if Firebase CLI login token exists
+  const cfgPath = path.join(os.homedir(), '.config', 'configstore', 'firebase-tools.json');
+  if (fs.existsSync(cfgPath)) {
+    try {
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+      if (cfg.tokens?.access_token) {
+        return {
+          db: {},
+          sdk: createRestSdk(cfg.tokens.access_token),
+          authMode: `Firebase CLI Login (${cfg.user?.email || 'admin'}) via Firestore REST API`,
+        };
+      }
+    } catch (e) {
+      console.warn('Không đọc được token từ firebase-tools.json:', e.message);
+    }
+  }
+
+  const db = initializeFirebaseAdmin();
+  return { db, sdk: null, authMode: 'Application Default Credentials' };
+}
+
 async function main() {
+  const driveAccessToken = await getDriveAccessToken();
+  const { db, sdk: adminSdk, authMode } = getFirestoreSdkAndDb();
+
   console.log('=================================================================');
   console.log('IFA-RH — ĐỒNG BỘ CƠ HỘI NCKH TỪ GOOGLE DRIVE JSON (SPARK)');
   console.log(`Nguồn kích hoạt: ${runSource}`);
   console.log(`Chế độ Dry-Run : ${isDryRun ? 'BẬT (Chỉ phân tích, không ghi Firestore)' : 'TẮT (Ghi dữ liệu thật)'}`);
   console.log(`Drive Folder ID: ${customFolderId}`);
   console.log(`Drive File Name: ${customFileName}`);
+  console.log(`Drive Auth Mode: ${driveAccessToken ? 'OAuth2 Bearer Token (Service Account)' : 'Google Drive API Key (Public Viewer)'}`);
+  console.log(`Firestore Auth : ${authMode}`);
   console.log('=================================================================\n');
-
-  const db = initializeFirebaseAdmin();
-
-  // Create SDK adapter bridging Firebase Admin SDK to executeResearchSync interface
-  const adminSdk = {
-    doc: (_db, col, id) => db.collection(col).doc(id),
-    getDoc: async (ref) => {
-      const snap = await ref.get();
-      return {
-        exists: () => snap.exists,
-        data: () => snap.data(),
-      };
-    },
-    setDoc: async (ref, data, opts) => ref.set(data, opts || {}),
-    updateDoc: async (ref, data) => ref.update(data),
-    collection: (_db, path) => db.collection(path),
-    getDocs: async (colRef) => {
-      const snap = await colRef.get();
-      return {
-        docs: snap.docs.map(d => ({
-          id: d.id,
-          data: () => d.data(),
-        })),
-        size: snap.size,
-      };
-    },
-    addDoc: async (colRef, data) => {
-      const docRef = await colRef.add(data);
-      return { id: docRef.id };
-    },
-    runTransaction: (targetDb, updateFn) => db.runTransaction(async (transaction) => {
-      const txAdapter = {
-        get: async (ref) => {
-          const snap = await transaction.get(ref);
-          return {
-            exists: () => snap.exists,
-            data: () => snap.data(),
-          };
-        },
-        set: (ref, data, opts) => transaction.set(ref, data, opts || {}),
-        update: (ref, data) => transaction.update(ref, data),
-        delete: (ref) => transaction.delete(ref),
-      };
-      return await updateFn(txAdapter);
-    }),
-    serverTimestamp: () => FieldValue.serverTimestamp(),
-  };
 
   const user = {
     uid: 'system_cli_sync',
@@ -157,6 +381,7 @@ async function main() {
         driveConfig: {
           folderId: customFolderId,
           fileName: customFileName,
+          accessToken: driveAccessToken,
         },
       },
     });

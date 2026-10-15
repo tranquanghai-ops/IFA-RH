@@ -2,8 +2,9 @@ name: Weekly Research Data Sync (Google Drive JSON Spark -> IFA-RH)
 
 on:
   schedule:
-    # 03:00 AM VN Time (UTC+7) every Monday = 20:00 UTC Sunday
-    - cron: '0 20 * * 0'
+    # 04:00 AM VN Time (UTC+7) every Monday & Thursday = 21:00 UTC Sunday & Wednesday
+    # Spark updates at 03:00 AM VN; IFA-RH syncs at 04:00 AM VN to pick up new revisions cleanly
+    - cron: '0 21 * * 0,3'
   workflow_dispatch:
     inputs:
       dry_run:

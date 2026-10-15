@@ -192,7 +192,7 @@ export async function executeResearchSync({
     runSource?: "github_schedule" | "github_dispatch" | "manual_admin" | "manual_cli";
     sheetConfig?: { sheetId?: string; sheetName?: string };
     dataSource?: "drive_json" | "sheets";
-    driveConfig?: { folderId?: string; fileName?: string };
+    driveConfig?: { folderId?: string; fileName?: string; accessToken?: string };
   };
 }): Promise<ResearchSyncOutcome> {
   const startTime = Date.now();
@@ -294,6 +294,7 @@ export async function executeResearchSync({
         const driveResult = await fetchLatestConferencesFromDrive({
           folderId: options.driveConfig?.folderId,
           fileName: options.driveConfig?.fileName,
+          accessToken: options.driveConfig?.accessToken,
         });
 
         // Untrusted source guard: cached data can only be previewed, NEVER written to Firestore
@@ -438,36 +439,9 @@ export async function executeResearchSync({
       });
     };
 
-    // Reconcile existing out-of-scope candidates in opportunityCandidates
-    for (const cand of candidates) {
-      if (cand.isOutOfScope !== true) {
-        const cls = classifyOutOfScopeRecord(cand);
-        if (cls.isOutOfScope) {
-          stats.outOfScope++;
-          if (!isDryRun) {
-            try {
-              const candRef = sdk.doc(db, "opportunityCandidates", cand.id);
-              const updates: any = {
-                isOutOfScope: true,
-                outOfScopeReason: cls.reason,
-                updatedAt: new Date().toISOString(),
-                updatedBy: "SPARK_SYNC",
-              };
-              if (cls.classifiedType && cand.type !== cls.classifiedType) {
-                updates.type = cls.classifiedType;
-              }
-              await sdk.updateDoc(candRef, cleanUndefined(updates));
-              stats.successWrites++;
-            } catch (reconcileErr) {
-              console.warn("Lỗi cập nhật out-of-scope cho ứng viên:", cand.id, reconcileErr);
-            }
-          }
-        }
-      }
-    }
-
-    // 4. Pre-write safety verification: verify lock TTL and ownership before committing any writes
-    if (!isDryRun && acquiredLockId) {
+    // 4. Pre-write safety verification: verify lock TTL and ownership before committing ANY writes
+    const verifyLockAndTtl = async () => {
+      if (isDryRun || !acquiredLockId) return;
       const elapsed = Date.now() - startTime;
       if (elapsed >= RESEARCH_SYNC_LOCK_TTL_MS) {
         throw new ResearchSyncStageError({
@@ -502,6 +476,38 @@ export async function executeResearchSync({
         } catch (checkErr: any) {
           if (checkErr instanceof ResearchSyncStageError) throw checkErr;
           console.warn("[ResearchSync] Cảnh báo kiểm tra khóa trước khi ghi:", checkErr);
+        }
+      }
+    };
+
+    // Run initial pre-write check
+    await verifyLockAndTtl();
+
+    // Reconcile existing out-of-scope candidates in opportunityCandidates
+    for (const cand of candidates) {
+      if (cand.isOutOfScope !== true) {
+        const cls = classifyOutOfScopeRecord(cand);
+        if (cls.isOutOfScope) {
+          stats.outOfScope++;
+          if (!isDryRun) {
+            await verifyLockAndTtl();
+            try {
+              const candRef = sdk.doc(db, "opportunityCandidates", cand.id);
+              const updates: any = {
+                isOutOfScope: true,
+                outOfScopeReason: cls.reason,
+                updatedAt: new Date().toISOString(),
+                updatedBy: "SPARK_SYNC",
+              };
+              if (cls.classifiedType && cand.type !== cls.classifiedType) {
+                updates.type = cls.classifiedType;
+              }
+              await sdk.updateDoc(candRef, cleanUndefined(updates));
+              stats.successWrites++;
+            } catch (reconcileErr) {
+              console.warn("Lỗi cập nhật out-of-scope cho ứng viên:", cand.id, reconcileErr);
+            }
+          }
         }
       }
     }
@@ -597,6 +603,7 @@ export async function executeResearchSync({
                 ["pending", "needs_review"].includes(c.status)
             );
             if (staleProposal && !isDryRun) {
+              await verifyLockAndTtl();
               const docRef = sdk.doc(db, "opportunityCandidates", staleProposal.id);
               try {
                 await sdk.updateDoc(
@@ -686,6 +693,7 @@ export async function executeResearchSync({
               } else {
                 // Sheet row has genuinely new changes beyond what is pending in existingProposal -> Update proposal
                 if (!isDryRun) {
+                  await verifyLockAndTtl();
                   const docRef = sdk.doc(db, "opportunityCandidates", existingProposal.id);
                   try {
                     const safeUpdates: Record<string, any> = {
@@ -793,6 +801,7 @@ export async function executeResearchSync({
               const createdAt = existingCand?.createdAt || new Date().toISOString();
               const discoveredAt = target.discoveredAt || row.discoveredAt || candidateFields.discoveredAt;
               if (!isDryRun) {
+                await verifyLockAndTtl();
                 const docRef = sdk.doc(db, "opportunityCandidates", candId);
                 try {
                   await sdk.setDoc(
@@ -851,6 +860,7 @@ export async function executeResearchSync({
           // TARGET IS AN EXISTING CANDIDATE IN 'opportunityCandidates'
           if (diff.hasChanges) {
             if (!isDryRun) {
+              await verifyLockAndTtl();
               const docRef = sdk.doc(db, "opportunityCandidates", target.id);
               try {
                 const safeUpdates: Record<string, any> = {
@@ -964,6 +974,7 @@ export async function executeResearchSync({
         }
 
         if (!isDryRun) {
+          await verifyLockAndTtl();
           const colRef = sdk.collection(db, "opportunityCandidates");
           try {
             const addedDoc = await sdk.addDoc(
@@ -1007,6 +1018,7 @@ export async function executeResearchSync({
 
     // 5. Finalize state
     if (!isDryRun) {
+      await verifyLockAndTtl();
       try {
         const statePayload: any = {
           lastSyncAt: new Date().toISOString(),
@@ -1077,8 +1089,8 @@ export async function executeResearchSync({
     };
   } catch (error: any) {
     console.error(`[ResearchSync] Lỗi trong phiên đồng bộ:`, error);
-    // Mark failed status in facultyResearchSync
-    if (!isDryRun) {
+    // Mark failed status in facultyResearchSync, but never overwrite if lock was reclaimed by another session
+    if (!isDryRun && error?.stage !== "LOCK_LOST") {
       try {
         await sdk.setDoc(
           stateRef,

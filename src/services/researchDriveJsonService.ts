@@ -73,6 +73,7 @@ export interface DriveJsonFetchOptions {
   folderId?: string;
   fileName?: string;
   apiKey?: string;
+  accessToken?: string;
   signal?: AbortSignal;
   allowFallback?: boolean;
 }
@@ -522,12 +523,20 @@ export async function fetchLatestConferencesFromDrive(
     let allFiles: Array<{ id: string; name: string; modifiedTime?: string }> = [];
     let pageToken: string | undefined = undefined;
 
+    const requestHeaders: Record<string, string> = {};
+    let authParam = "";
+    if (options.accessToken) {
+      requestHeaders["Authorization"] = `Bearer ${options.accessToken}`;
+    } else {
+      authParam = `&key=${apiKey}`;
+    }
+
     do {
       const pageParam: string = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "";
       const q: string = encodeURIComponent(`'${folderId}' in parents and trashed=false and mimeType != 'application/vnd.google-apps.folder'`);
-      const listUrl: string = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=nextPageToken,files(id,name,mimeType,size,version,modifiedTime)&pageSize=100&key=${apiKey}${pageParam}`;
+      const listUrl: string = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=nextPageToken,files(id,name,mimeType,size,version,modifiedTime)&pageSize=100${authParam}${pageParam}`;
 
-      const listRes: Response = await fetch(listUrl, { signal: options.signal });
+      const listRes: Response = await fetch(listUrl, { headers: requestHeaders, signal: options.signal });
       if (!listRes.ok) {
         throw new ResearchDriveJsonError(
           `Không thể liệt kê file trong thư mục Google Drive (${folderId}). Trạng thái: ${listRes.status} ${listRes.statusText}`,
@@ -565,8 +574,8 @@ export async function fetchLatestConferencesFromDrive(
 
     for (const cand of candidateFiles) {
       try {
-        const getUrl = `https://www.googleapis.com/drive/v3/files/${cand.id}?alt=media&key=${apiKey}`;
-        const getRes = await fetch(getUrl, { signal: options.signal });
+        const getUrl = `https://www.googleapis.com/drive/v3/files/${cand.id}?alt=media${authParam}`;
+        const getRes = await fetch(getUrl, { headers: requestHeaders, signal: options.signal });
         if (!getRes.ok) {
           console.warn(`[DriveJson] Không thể tải file ID ${cand.id} (${cand.name}): status ${getRes.status}`);
           continue;
