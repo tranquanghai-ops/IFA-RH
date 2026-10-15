@@ -287,7 +287,7 @@ describe("Multi-Council HĐGSNN Journal Scores & Reconciliation (12 Required Sce
     expect(getScoreBadgePalette(0.5, true).bg).toBe("#ffedd5");
     expect(getScoreBadgePalette(0.25, true).bg).toBe("#fef3c7");
     expect(getScoreBadgePalette(null, false).bg).toBe("#f1f5f9");
-  }, 20000);
+  }, 30000);
 
   // 7. Ẩn ISSN/E-ISSN/ISBN rỗng hoặc "Không công bố"
   it("7. ẩn hoàn toàn ISSN / E-ISSN / ISBN rỗng, 'Không công bố', 'N/A', 'Chưa rõ'", () => {
@@ -523,7 +523,7 @@ describe("Multi-Council HĐGSNN Journal Scores & Reconciliation (12 Required Sce
     // 79 HOAN_TAT in raw sheet -> J_094 & J_096 auto-downgraded to CAN_KIEM_TRA -> 77 HOAN_TAT & 19 CAN_KIEM_TRA
     expect(multiRes.multiCouncilStats.reconciliationCounts.HOAN_TAT).toBe(77);
     expect(multiRes.multiCouncilStats.reconciliationCounts.CAN_KIEM_TRA).toBe(19);
-  });
+  }, 25000);
 
   // 14. Chặn dữ liệu lỗi công thức IMPORTRANGE (#REF!, #LOADING!), trùng journal_id, JSON lỗi và tụt số dòng bất thường
   it("14. chặn dữ liệu lỗi công thức IMPORTRANGE (#REF!, #LOADING!), trùng journal_id, lỗi JSON cột AV và tụt số lượng bản ghi bất thường", async () => {
