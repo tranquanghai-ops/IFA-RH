@@ -14,6 +14,7 @@ import {
   limit,
   writeBatch,
   onSnapshot,
+  runTransaction,
   type DocumentReference,
 } from "firebase/firestore";
 import { firestore } from "./config";
@@ -1862,6 +1863,7 @@ export async function runFacultyResearchSyncClient(
   options?: {
     force?: boolean;
     dryRun?: boolean;
+    expectedRevision?: number;
     sheetConfig?: { sheetId?: string; sheetName?: string };
     dataSource?: "drive_json" | "sheets";
     driveConfig?: { folderId?: string; fileName?: string };
@@ -1877,6 +1879,7 @@ export async function runFacultyResearchSyncClient(
     getDocs,
     addDoc,
     serverTimestamp,
+    runTransaction,
   };
   return executeResearchSync({
     db: firestore,
@@ -1887,6 +1890,7 @@ export async function runFacultyResearchSyncClient(
       runSource: "manual_admin",
       force: options?.force,
       dryRun: options?.dryRun,
+      expectedRevision: options?.expectedRevision,
       sheetConfig: options?.sheetConfig,
       dataSource: options?.dataSource || "drive_json",
       driveConfig: options?.driveConfig,

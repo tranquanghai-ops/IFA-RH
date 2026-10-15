@@ -164,6 +164,7 @@ export interface OpportunityCandidate {
   updatedBy?: string;
   conferenceCode?: string; // Mã hội thảo cố định (TN0001, QT0001)
   category?: "TN" | "QT"; // Phân loại: TN (Trong nước) hoặc QT (Quốc tế)
+  lastUpdated?: string; // Thời gian cập nhật gần nhất từ Spark JSON
   normalizedTitle: string;
   createdAt: string;
   updatedAt: string;

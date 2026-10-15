@@ -174,6 +174,13 @@ export function normalizeConferenceDate(rawDate?: string | null): string {
   return str;
 }
 
+export interface FirestoreLockSdk {
+  doc: (db: any, col: string, id: string) => any;
+  runTransaction?: <T>(db: any, updateFunction: (transaction: any) => Promise<T>) => Promise<T>;
+  getDoc?: (ref: any) => Promise<any>;
+  setDoc?: (ref: any, data: any, options?: any) => Promise<any>;
+}
+
 export interface FirestoreLockResult {
   acquired: boolean;
   lockId?: string;
@@ -183,34 +190,95 @@ export interface FirestoreLockResult {
   remainingSeconds?: number;
 }
 
+export interface FirestoreUnlockResult {
+  released: boolean;
+  reason?: string;
+}
+
 export const RESEARCH_SYNC_LOCK_DOC_ID = "research_sync_lock";
 export const RESEARCH_SYNC_LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Acquires a distributed session lock in Firestore systemConfig collection
- * with a 5-minute TTL to prevent concurrent sync executions across admins/browsers.
+ * with a 5-minute TTL via Firestore Transaction to prevent concurrent sync executions
+ * across admins/browsers atomically without race conditions.
  */
 export async function acquireFirestoreSyncLock(
   db: any,
-  sdk: {
-    doc: (db: any, col: string, id: string) => any;
-    getDoc: (ref: any) => Promise<any>;
-    setDoc: (ref: any, data: any, options?: any) => Promise<any>;
-  },
-  actor: { email?: string; uid?: string },
-  force = false
+  sdk: FirestoreLockSdk,
+  actor: { email?: string; uid?: string }
 ): Promise<FirestoreLockResult> {
   const lockRef = sdk.doc(db, "systemConfig", RESEARCH_SYNC_LOCK_DOC_ID);
   const now = Date.now();
+  const actorName = actor.email || actor.uid || "unknown";
 
+  if (typeof sdk.runTransaction === "function") {
+    try {
+      return await sdk.runTransaction(db, async (transaction: any) => {
+        const snap = await transaction.get(lockRef);
+        let data: any = null;
+        if (snap?.exists && (typeof snap.exists === "function" ? snap.exists() : true)) {
+          data = typeof snap.data === "function" ? snap.data() : snap;
+        }
+
+        if (data && data.isLocked) {
+          const lockTime = Number(data.lockTimestampMs) || (data.lockedAt ? new Date(data.lockedAt).getTime() : 0);
+          const elapsed = now - lockTime;
+          // Within 5-minute TTL: strictly deny acquisition, no force bypass
+          if (elapsed < RESEARCH_SYNC_LOCK_TTL_MS) {
+            const remainingSeconds = Math.max(1, Math.ceil((RESEARCH_SYNC_LOCK_TTL_MS - elapsed) / 1000));
+            return {
+              acquired: false,
+              message: `Một phiên đồng bộ khác đang chạy bởi ${data.lockedBy || "quản trị viên khác"}. Khóa sẽ tự hết hạn sau ${remainingSeconds} giây.`,
+              lockedBy: data.lockedBy,
+              lockedAt: data.lockedAt,
+              remainingSeconds,
+            };
+          }
+          // If elapsed >= TTL, the lock is expired and will be atomically reclaimed below
+        }
+
+        const lockId = `lock_${now}_${Math.random().toString(36).substring(2, 9)}`;
+        const lockPayload = {
+          isLocked: true,
+          lockId,
+          lockedBy: actorName,
+          lockedAt: new Date(now).toISOString(),
+          lockTimestampMs: now,
+          ttlMs: RESEARCH_SYNC_LOCK_TTL_MS,
+          updatedAt: new Date(now).toISOString(),
+        };
+
+        transaction.set(lockRef, lockPayload, { merge: true });
+
+        return {
+          acquired: true,
+          lockId,
+          lockedBy: lockPayload.lockedBy,
+          lockedAt: lockPayload.lockedAt,
+        };
+      });
+    } catch (err: any) {
+      console.warn("[FirestoreLock] Lỗi khi tạo khóa đồng bộ qua transaction:", err);
+      return {
+        acquired: false,
+        message: `Không thể thiết lập khóa đồng bộ trên Firestore: ${err.message || String(err)}`,
+      };
+    }
+  }
+
+  // Fallback for mocks without runTransaction
   try {
+    if (!sdk.getDoc || !sdk.setDoc) {
+      throw new Error("SDK lacks both runTransaction and getDoc/setDoc");
+    }
     const snap = await sdk.getDoc(lockRef);
     if (snap?.exists && (typeof snap.exists === "function" ? snap.exists() : true)) {
       const data = typeof snap.data === "function" ? snap.data() : snap;
       if (data && data.isLocked) {
         const lockTime = Number(data.lockTimestampMs) || (data.lockedAt ? new Date(data.lockedAt).getTime() : 0);
         const elapsed = now - lockTime;
-        if (elapsed < RESEARCH_SYNC_LOCK_TTL_MS && !force) {
+        if (elapsed < RESEARCH_SYNC_LOCK_TTL_MS) {
           const remainingSeconds = Math.max(1, Math.ceil((RESEARCH_SYNC_LOCK_TTL_MS - elapsed) / 1000));
           return {
             acquired: false,
@@ -229,11 +297,11 @@ export async function acquireFirestoreSyncLock(
       {
         isLocked: true,
         lockId,
-        lockedBy: actor.email || actor.uid || "unknown",
-        lockedAt: new Date().toISOString(),
+        lockedBy: actorName,
+        lockedAt: new Date(now).toISOString(),
         lockTimestampMs: now,
         ttlMs: RESEARCH_SYNC_LOCK_TTL_MS,
-        updatedAt: new Date().toISOString(),
+        updatedAt: new Date(now).toISOString(),
       },
       { merge: true }
     );
@@ -241,6 +309,8 @@ export async function acquireFirestoreSyncLock(
     return {
       acquired: true,
       lockId,
+      lockedBy: actorName,
+      lockedAt: new Date(now).toISOString(),
     };
   } catch (err: any) {
     console.warn("[FirestoreLock] Lỗi khi tạo khóa đồng bộ:", err);
@@ -253,30 +323,91 @@ export async function acquireFirestoreSyncLock(
 
 /**
  * Releases the distributed session lock in Firestore systemConfig collection.
+ * Strictly verifies ownership via lockId using Firestore Transaction so a stale session
+ * cannot inadvertently clear another session's valid lock.
  */
 export async function releaseFirestoreSyncLock(
   db: any,
-  sdk: {
-    doc: (db: any, col: string, id: string) => any;
-    setDoc: (ref: any, data: any, options?: any) => Promise<any>;
-  },
+  sdk: FirestoreLockSdk,
   lockId?: string
-): Promise<void> {
+): Promise<FirestoreUnlockResult> {
+  if (!lockId) {
+    return { released: false, reason: "Thiếu lockId để giải phóng khóa." };
+  }
+
+  const lockRef = sdk.doc(db, "systemConfig", RESEARCH_SYNC_LOCK_DOC_ID);
+
+  if (typeof sdk.runTransaction === "function") {
+    try {
+      return await sdk.runTransaction(db, async (transaction: any) => {
+        const snap = await transaction.get(lockRef);
+        let data: any = null;
+        if (snap?.exists && (typeof snap.exists === "function" ? snap.exists() : true)) {
+          data = typeof snap.data === "function" ? snap.data() : snap;
+        }
+
+        if (data && data.isLocked) {
+          if (data.lockId !== lockId) {
+            console.warn(
+              `[FirestoreLock] Không thể giải phóng khóa: lockId không khớp (Hiện tại: "${data.lockId}", Yêu cầu: "${lockId}").`
+            );
+            return {
+              released: false,
+              reason: "lock_id_mismatch",
+            };
+          }
+
+          transaction.set(
+            lockRef,
+            {
+              isLocked: false,
+              lockId: "",
+              lastReleasedLockId: lockId,
+              releasedAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+          return { released: true };
+        }
+
+        // If not locked, nothing to release
+        return { released: true };
+      });
+    } catch (err: any) {
+      console.warn("[FirestoreLock] Lỗi khi giải phóng khóa qua transaction:", err);
+      return { released: false, reason: err.message || String(err) };
+    }
+  }
+
+  // Fallback for mocks
   try {
-    const lockRef = sdk.doc(db, "systemConfig", RESEARCH_SYNC_LOCK_DOC_ID);
+    if (!sdk.getDoc || !sdk.setDoc) {
+      return { released: false, reason: "No getDoc/setDoc available" };
+    }
+    const snap = await sdk.getDoc(lockRef);
+    if (snap?.exists && (typeof snap.exists === "function" ? snap.exists() : true)) {
+      const data = typeof snap.data === "function" ? snap.data() : snap;
+      if (data && data.isLocked && data.lockId !== lockId) {
+        return { released: false, reason: "lock_id_mismatch" };
+      }
+    }
+
     await sdk.setDoc(
       lockRef,
       {
         isLocked: false,
         lockId: "",
-        lastReleasedLockId: lockId || "",
+        lastReleasedLockId: lockId,
         releasedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
       { merge: true }
     );
-  } catch (err) {
-    console.warn("[FirestoreLock] Lỗi khi giải phóng khóa đồng bộ:", err);
+    return { released: true };
+  } catch (err: any) {
+    console.warn("[FirestoreLock] Lỗi khi giải phóng khóa:", err);
+    return { released: false, reason: err.message || String(err) };
   }
 }
 
@@ -617,6 +748,8 @@ export function mapJsonConferenceToRawRow(
     tags: tagsStr,
     statusText: conf.status || "CÒN HẠN",
     discoveredAt: conf.detectedAt || conf.discoveredAt || new Date().toISOString(),
+    lastUpdated: conf.lastUpdated || conf.updatedAt || "",
+    updatedAt: conf.updatedAt || conf.lastUpdated || "",
     notes: conf.notes || "",
     runId: runId || conf.runId || "",
     // Extra fields attached for seamless TN/QT governance

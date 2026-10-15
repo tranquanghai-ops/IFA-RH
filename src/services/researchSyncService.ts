@@ -8,6 +8,8 @@ import {
   mapJsonConferenceToRawRow,
   acquireFirestoreSyncLock,
   releaseFirestoreSyncLock,
+  ResearchDriveJsonError,
+  RESEARCH_SYNC_LOCK_TTL_MS,
 } from "./researchDriveJsonService";
 import {
   findMatchingResearchOpportunity,
@@ -121,6 +123,20 @@ export interface ResearchSyncOutcome {
     runId?: string;
     isCached?: boolean;
   };
+  items?: Array<{
+    code: string;
+    category: "TN" | "QT";
+    title: string;
+    organizer: string;
+    status: ResearchSyncDiagnosticItem["status"];
+    action: string;
+    reason: string;
+    targetId?: string;
+    changedKeys?: string[];
+    diffSummary?: any[];
+    row: RawFacultyResearchRow;
+    candidate: OpportunityCandidate;
+  }>;
 }
 
 export interface ResearchSyncSdk {
@@ -132,6 +148,7 @@ export interface ResearchSyncSdk {
   getDocs: (query: any) => Promise<any>;
   addDoc: (col: any, data: any) => Promise<any>;
   serverTimestamp: () => any;
+  runTransaction?: <T>(db: any, updateFunction: (transaction: any) => Promise<T>) => Promise<T>;
 }
 
 /**
@@ -168,6 +185,7 @@ export async function executeResearchSync({
     manual?: boolean;
     force?: boolean;
     dryRun?: boolean;
+    expectedRevision?: number;
     runSource?: "github_schedule" | "github_dispatch" | "manual_admin" | "manual_cli";
     sheetConfig?: { sheetId?: string; sheetName?: string };
     dataSource?: "drive_json" | "sheets";
@@ -185,8 +203,8 @@ export async function executeResearchSync({
   // 1. Concurrency guard & Lock Check
   if (!isDryRun) {
     try {
-      // 1a. Distributed lock check with 5-minute TTL
-      const lockResult = await acquireFirestoreSyncLock(db, sdk, user, options.force);
+      // 1a. Distributed lock check with 5-minute TTL via Firestore Transaction
+      const lockResult = await acquireFirestoreSyncLock(db, sdk, user);
       if (!lockResult.acquired) {
         return {
           skipped: true,
@@ -195,6 +213,7 @@ export async function executeResearchSync({
       }
       acquiredLockId = lockResult.lockId;
 
+      // 1b. Check existing facultyResearchSync state to support running sessions
       let stateSnap: any = null;
       try {
         stateSnap = await sdk.getDoc(stateRef);
@@ -216,9 +235,12 @@ export async function executeResearchSync({
         if (state) {
           const inProgress = Boolean(state.syncInProgress);
           const startedAtTime = state.syncStartedAtMs || (state.syncStartedAt ? new Date(state.syncStartedAt).getTime() : 0);
-          const isFreshLock = inProgress && Date.now() - startedAtTime < 15 * 60 * 1000; // 15 mins lock timeout
+          const isFreshLock = inProgress && Date.now() - startedAtTime < RESEARCH_SYNC_LOCK_TTL_MS;
 
-          if (isFreshLock && !options.force) {
+          if (isFreshLock) {
+            if (acquiredLockId) {
+              await releaseFirestoreSyncLock(db, sdk, acquiredLockId);
+            }
             return {
               skipped: true,
               reason: "Một phiên đồng bộ khác đang chạy. Vui lòng thử lại sau.",
@@ -227,7 +249,7 @@ export async function executeResearchSync({
         }
       }
 
-      // Claim lock
+      // Claim lock state in systemConfig/facultyResearchSync
       try {
         await sdk.setDoc(
           stateRef,
@@ -244,7 +266,6 @@ export async function executeResearchSync({
           { merge: true }
         );
       } catch (lockWriteErr: any) {
-        // If claiming lock fails with permission-denied, raise diagnostic error
         console.warn("Cảnh báo: Không thể ghi lock đồng bộ vào systemConfig:", lockWriteErr);
         if (lockWriteErr?.code === "permission-denied" || String(lockWriteErr?.message || "").includes("permission")) {
           throw new ResearchSyncStageError({
@@ -272,6 +293,7 @@ export async function executeResearchSync({
     let rows: any[] = [];
     let driveMeta: any = null;
     const isDriveSource = options.dataSource === "drive_json" || Boolean(options.driveConfig);
+    const sourceLabel = isDriveSource ? "Google Drive JSON" : "Google Sheets";
 
     if (isDriveSource) {
       try {
@@ -279,6 +301,25 @@ export async function executeResearchSync({
           folderId: options.driveConfig?.folderId,
           fileName: options.driveConfig?.fileName,
         });
+
+        // Untrusted source guard: cached data can only be previewed, NEVER written to Firestore
+        if (driveResult.isCached && !isDryRun) {
+          throw new ResearchDriveJsonError(
+            "Không thể thực hiện ghi đồng bộ Firestore khi dữ liệu hội thảo đang ở trạng thái cached fallback. Cần kết nối trực tiếp với file chính thức trên Google Drive.",
+            "CACHED_SOURCE_WRITE_FORBIDDEN",
+            403
+          );
+        }
+
+        // Revision freshness guard: prevent executing against a stale preview
+        if (options.expectedRevision !== undefined && driveResult.revision !== options.expectedRevision) {
+          throw new ResearchDriveJsonError(
+            `Revision của file JSON trên Google Drive (${driveResult.revision}) không khớp với phiên bản đã xem trước (${options.expectedRevision}). Vui lòng tải lại xem trước trước khi đồng bộ.`,
+            "REVISION_MISMATCH",
+            409
+          );
+        }
+
         driveMeta = {
           fileId: driveResult.fileId,
           fileName: driveResult.fileName,
@@ -375,7 +416,33 @@ export async function executeResearchSync({
     };
 
     const diagnostics: ResearchSyncDiagnosticItem[] = [];
+    const syncItems: NonNullable<ResearchSyncOutcome["items"]> = [];
     const seenMatchedIds = new Set<string>();
+
+    const recordSyncItem = (
+      row: RawFacultyResearchRow,
+      index: number,
+      diagItem: ResearchSyncDiagnosticItem,
+      diff?: { changedKeys?: string[]; diffSummary?: any[] }
+    ) => {
+      diagnostics.push(diagItem);
+      const code = (row as any).conferenceCode || (diagItem.stt ? `ROW_${diagItem.stt}` : "");
+      const category = (row as any).category || (code.startsWith("QT") ? "QT" : "TN");
+      syncItems.push({
+        code,
+        category,
+        title: row.title || diagItem.title,
+        organizer: row.organizer || "",
+        status: diagItem.status,
+        action: diagItem.action,
+        reason: diagItem.reason,
+        targetId: diagItem.targetId,
+        changedKeys: diff?.changedKeys,
+        diffSummary: diff?.diffSummary,
+        row,
+        candidate: mapRowToCandidate(row, index),
+      });
+    };
 
     // Reconcile existing out-of-scope candidates in opportunityCandidates
     for (const cand of candidates) {
@@ -416,7 +483,7 @@ export async function executeResearchSync({
         String(row.statusText || "").toUpperCase() === "TEST" ||
         row.title.toLowerCase().startsWith("test")
       ) {
-        diagnostics.push({
+        recordSyncItem(row, i, {
           row: rowNum,
           stt: sttVal,
           title: row.title,
@@ -429,7 +496,7 @@ export async function executeResearchSync({
 
       if (!row.title.trim()) {
         stats.errorCount++;
-        diagnostics.push({
+        recordSyncItem(row, i, {
           row: rowNum,
           stt: sttVal,
           title: "Chưa có tiêu đề",
@@ -450,13 +517,13 @@ export async function executeResearchSync({
 
         if (seenMatchedIds.has(target.id)) {
           stats.duplicates++;
-          diagnostics.push({
+          recordSyncItem(row, i, {
             row: rowNum,
             stt: sttVal,
             title: row.title,
             status: "skipped",
-            action: "Trùng Sheet",
-            reason: "Trùng với dòng khác trong Google Sheet",
+            action: isDriveSource ? "Trùng JSON" : "Trùng Sheet",
+            reason: `Trùng với bản ghi khác trong ${sourceLabel}`,
             targetId: target.id,
           });
           continue;
@@ -467,7 +534,7 @@ export async function executeResearchSync({
         if (isEditedByAdmin(target)) {
           stats.preservedAdmin++;
           stats.matched++;
-          diagnostics.push({
+          recordSyncItem(row, i, {
             row: rowNum,
             stt: sttVal,
             title: row.title,
@@ -527,15 +594,20 @@ export async function executeResearchSync({
 
             stats.matched++;
             stats.unchanged++;
-            diagnostics.push({
-              row: rowNum,
-              stt: sttVal,
-              title: row.title,
-              status: "matched",
-              action: "Khớp (Không đổi)",
-              reason: "Hội thảo đã công bố, dữ liệu Google Sheets trùng khớp, không ghi Firestore",
-              targetId: target.id,
-            });
+            recordSyncItem(
+              row,
+              i,
+              {
+                row: rowNum,
+                stt: sttVal,
+                title: row.title,
+                status: "matched",
+                action: "Khớp (Không đổi)",
+                reason: `Hội thảo đã công bố, dữ liệu ${sourceLabel} trùng khớp, không ghi Firestore`,
+                targetId: target.id,
+              },
+              diff
+            );
           } else {
             // Case C: Published & Changed in Sheet -> Create or update proposal candidate in 'opportunityCandidates'
             const existingProposal = candidates.find(
@@ -563,15 +635,20 @@ export async function executeResearchSync({
                 // Proposal already reflects the incoming changes from Google Sheet: 0 Firestore writes, do not bump stats.updated!
                 stats.matched++;
                 stats.unchanged++;
-                diagnostics.push({
-                  row: rowNum,
-                  stt: sttVal,
-                  title: row.title,
-                  status: "proposal_unchanged",
-                  action: "Khớp đề xuất (Không đổi)",
-                  reason: `Dữ liệu Google Sheets hoàn toàn trùng khớp với đề xuất cập nhật đang chờ duyệt (${diff.changedKeys.join(", ")}), giữ nguyên không ghi đè Firestore`,
-                  targetId: existingProposal.id,
-                });
+                recordSyncItem(
+                  row,
+                  i,
+                  {
+                    row: rowNum,
+                    stt: sttVal,
+                    title: row.title,
+                    status: "proposal_unchanged",
+                    action: "Khớp đề xuất (Không đổi)",
+                    reason: `Dữ liệu ${sourceLabel} hoàn toàn trùng khớp với đề xuất cập nhật đang chờ duyệt (${diff.changedKeys.join(", ")}), giữ nguyên không ghi đè Firestore`,
+                    targetId: existingProposal.id,
+                  },
+                  diff
+                );
               } else {
                 // Sheet row has genuinely new changes beyond what is pending in existingProposal -> Update proposal
                 if (!isDryRun) {
@@ -604,15 +681,20 @@ export async function executeResearchSync({
                 }
                 stats.matched++;
                 stats.updated++;
-                diagnostics.push({
-                  row: rowNum,
-                  stt: sttVal,
-                  title: row.title,
-                  status: "update_proposal",
-                  action: "Cập nhật đề xuất",
-                  reason: `Phát hiện thay đổi mới so với đề xuất trước đó (${proposalDiff.changedKeys.join(", ")})`,
-                  targetId: existingProposal.id,
-                });
+                recordSyncItem(
+                  row,
+                  i,
+                  {
+                    row: rowNum,
+                    stt: sttVal,
+                    title: row.title,
+                    status: "update_proposal",
+                    action: "Cập nhật đề xuất",
+                    reason: `Phát hiện thay đổi mới so với đề xuất trước đó (${proposalDiff.changedKeys.join(", ")})`,
+                    targetId: existingProposal.id,
+                  },
+                  diff
+                );
               }
             } else {
               // Check if there is an existing proposal for this opportunity that was already REJECTED by Admin
@@ -650,15 +732,20 @@ export async function executeResearchSync({
                 // Strictly preserve Admin's rejection! Do not overwrite, do not re-open!
                 stats.matched++;
                 stats.preservedAdmin++;
-                diagnostics.push({
-                  row: rowNum,
-                  stt: sttVal,
-                  title: row.title,
-                  status: "preserved_rejection",
-                  action: "Giữ quyết định từ chối",
-                  reason: `Admin (${rejectedProposal.reviewedBy}) đã từ chối đề xuất này trước đó. Bảo toàn lịch sử kiểm duyệt, không tự ý mở lại`,
-                  targetId: rejectedProposal.id,
-                });
+                recordSyncItem(
+                  row,
+                  i,
+                  {
+                    row: rowNum,
+                    stt: sttVal,
+                    title: row.title,
+                    status: "preserved_rejection",
+                    action: "Giữ quyết định từ chối",
+                    reason: `Admin (${rejectedProposal.reviewedBy}) đã từ chối đề xuất này trước đó. Bảo toàn lịch sử kiểm duyệt, không tự ý mở lại`,
+                    targetId: rejectedProposal.id,
+                  },
+                  diff
+                );
                 continue;
               }
 
@@ -679,6 +766,9 @@ export async function executeResearchSync({
                     cleanUndefined({
                       ...candidateFields,
                       id: candId,
+                      conferenceCode: (row as any).conferenceCode,
+                      category: (row as any).category,
+                      lastUpdated: (row as any).lastUpdated || (row as any).updatedAt,
                       status: "pending",
                       changeType: "update",
                       resolutionType: "PENDING_UPDATE",
@@ -707,15 +797,20 @@ export async function executeResearchSync({
               }
               stats.matched++;
               stats.updateProposals++;
-              diagnostics.push({
-                row: rowNum,
-                stt: sttVal,
-                title: row.title,
-                status: "update_proposal",
-                action: "Đề xuất cập nhật",
-                reason: `Phát hiện dữ liệu mới trên Google Sheet (${diff.changedKeys.join(", ")}). Đã tạo đề xuất chờ Admin duyệt`,
-                targetId: candId,
-              });
+              recordSyncItem(
+                row,
+                i,
+                {
+                  row: rowNum,
+                  stt: sttVal,
+                  title: row.title,
+                  status: "update_proposal",
+                  action: "Đề xuất cập nhật",
+                  reason: `Phát hiện dữ liệu mới trên ${sourceLabel} (${diff.changedKeys.join(", ")}). Đã tạo đề xuất chờ Admin duyệt`,
+                  targetId: candId,
+                },
+                diff
+              );
             }
           }
         } else {
@@ -773,26 +868,36 @@ export async function executeResearchSync({
             }
             stats.updated++;
             stats.matched++;
-            diagnostics.push({
-              row: rowNum,
-              stt: sttVal,
-              title: row.title,
-              status: "updated",
-              action: "Cập nhật ứng viên",
-              reason: `Cập nhật thông tin mới từ nguồn (${diff.changedKeys.join(", ")})`,
-              targetId: target.id,
-            });
+            recordSyncItem(
+              row,
+              i,
+              {
+                row: rowNum,
+                stt: sttVal,
+                title: row.title,
+                status: "updated",
+                action: "Cập nhật ứng viên",
+                reason: `Cập nhật thông tin mới từ nguồn (${diff.changedKeys.join(", ")})`,
+                targetId: target.id,
+              },
+              diff
+            );
           } else {
             stats.matched++;
-            diagnostics.push({
-              row: rowNum,
-              stt: sttVal,
-              title: row.title,
-              status: "matched",
-              action: "Khớp ứng viên",
-              reason: "Khớp ứng viên trong hệ thống, dữ liệu không đổi",
-              targetId: target.id,
-            });
+            recordSyncItem(
+              row,
+              i,
+              {
+                row: rowNum,
+                stt: sttVal,
+                title: row.title,
+                status: "matched",
+                action: "Khớp ứng viên",
+                reason: "Khớp ứng viên trong hệ thống, dữ liệu không đổi",
+                targetId: target.id,
+              },
+              diff
+            );
           }
         }
       } else {
@@ -803,6 +908,9 @@ export async function executeResearchSync({
 
         const newCandData: any = {
           ...candidateFields,
+          conferenceCode: (row as any).conferenceCode,
+          category: (row as any).category,
+          lastUpdated: (row as any).lastUpdated || (row as any).updatedAt,
           status: "pending",
           changeType: "create",
           sourceType: "SPARK",
@@ -843,15 +951,19 @@ export async function executeResearchSync({
         }
 
         stats.created++;
-        diagnostics.push({
-          row: rowNum,
-          stt: sttVal,
-          title: row.title,
-          status: outOfScope.isOutOfScope ? "out_of_scope" : "created",
-          action: outOfScope.isOutOfScope ? "Ngoài phạm vi" : "Tạo mới",
-          reason: outOfScope.isOutOfScope ? outOfScope.reason! : "Cơ hội NCKH mới, đã đưa vào hàng chờ duyệt AI",
-          targetId: newCandidateId,
-        });
+        recordSyncItem(
+          row,
+          i,
+          {
+            row: rowNum,
+            stt: sttVal,
+            title: row.title,
+            status: outOfScope.isOutOfScope ? "out_of_scope" : "created",
+            action: outOfScope.isOutOfScope ? "Ngoài phạm vi" : "Tạo mới",
+            reason: outOfScope.isOutOfScope ? outOfScope.reason! : "Cơ hội NCKH mới, đã đưa vào hàng chờ duyệt AI",
+            targetId: newCandidateId,
+          }
+        );
       }
     }
 
@@ -928,6 +1040,7 @@ export async function executeResearchSync({
       status: finalStatus,
       stats,
       diagnostics,
+      items: syncItems,
       durationMs,
       driveMeta: driveMeta || undefined,
     };

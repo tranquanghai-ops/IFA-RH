@@ -1,24 +1,8 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import { Modal } from "./Modal";
 import type { OpportunityCandidate, Opportunity } from "../types";
-import {
-  OFFICIAL_FACULTY_RESEARCH_RECORDS,
-  mapRowToCandidate,
-  RawFacultyResearchRow,
-} from "../services/facultyResearchData";
-import {
-  fetchLatestConferencesFromDrive,
-  mapJsonConferenceToRawRow,
-  DEFAULT_DRIVE_FOLDER_ID,
-  DEFAULT_DRIVE_FILE_NAME,
-} from "../services/researchDriveJsonService";
-import {
-  findMatchingResearchOpportunity,
-  isEditedByAdmin,
-  computeOpportunityDiff,
-  classifyOutOfScopeRecord,
-  type ResearchMatchTarget,
-} from "../utils/researchDedupe";
+import { DEFAULT_DRIVE_FOLDER_ID } from "../services/researchDriveJsonService";
+import type { ResearchSyncOutcome } from "../services/researchSyncService";
 import { formatDateVN } from "../utils/date";
 import { runFacultyResearchSyncClient } from "../firebase/firestore";
 import { useAuth } from "../firebase/auth";
@@ -45,24 +29,12 @@ interface FacultyResearchSyncModalProps {
 export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> = ({
   isOpen,
   onClose,
-  existingCandidates,
-  publishedOpportunities,
   onSuccess,
 }) => {
   const { profile } = useAuth();
-  const [sourceData, setSourceData] = useState<RawFacultyResearchRow[]>([]);
   const [sourceName, setSourceName] = useState("Đang tải dữ liệu từ Google Drive JSON...");
-  const [driveMeta, setDriveMeta] = useState<{
-    folderId: string;
-    fileId: string;
-    fileName: string;
-    revision: number;
-    runId?: string;
-    generatedAt?: string;
-    isCached?: boolean;
-  } | null>(null);
-  const [loadingSheet, setLoadingSheet] = useState(false);
-  const [isLiveSheet, setIsLiveSheet] = useState(true);
+  const [dryRunOutcome, setDryRunOutcome] = useState<ResearchSyncOutcome | null>(null);
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{
     added: number;
@@ -74,181 +46,105 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
   } | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
 
-  // Load latest conferences from Google Drive JSON
-  const loadDriveData = async () => {
-    setLoadingSheet(true);
+  // Load preview data directly from the unified executeResearchSync engine (dryRun: true)
+  const loadDrivePreview = async () => {
+    if (!profile) return;
+    setLoading(true);
     setErrorMsg("");
     setSaveResult(null);
+
     try {
-      const res = await fetchLatestConferencesFromDrive({
-        folderId: DEFAULT_DRIVE_FOLDER_ID,
-        fileName: DEFAULT_DRIVE_FILE_NAME,
+      const outcome = await runFacultyResearchSyncClient(profile, {
+        dryRun: true,
+        dataSource: "drive_json",
       });
 
-      const rows = res.payload.conferences.map((c, i) =>
-        mapJsonConferenceToRawRow(c, i, res.payload.runId)
-      );
+      if (outcome.skipped) {
+        setErrorMsg(outcome.reason || "Không thể thực hiện xem trước đồng bộ.");
+        setDryRunOutcome(null);
+        setSourceName("Phiên đồng bộ bị bỏ qua");
+        return;
+      }
 
-      setSourceData(rows);
-      setDriveMeta({
-        folderId: DEFAULT_DRIVE_FOLDER_ID,
-        fileId: res.fileId,
-        fileName: res.fileName,
-        revision: res.revision,
-        runId: res.payload.runId,
-        generatedAt: res.payload.generatedAt,
-        isCached: res.isCached,
-      });
+      setDryRunOutcome(outcome);
 
-      const tnCount = res.payload.conferences.filter((c) => (c.code || "").startsWith("TN")).length;
-      const qtCount = res.payload.conferences.filter((c) => (c.code || "").startsWith("QT")).length;
-      setSourceName(`Google Drive JSON — ${res.fileName} (Rev ${res.revision}: ${tnCount} TN, ${qtCount} QT)`);
-      setIsLiveSheet(true);
+      const meta = outcome.driveMeta;
+      if (meta) {
+        const tnCount = (outcome.items || []).filter((item) => item.category === "TN").length;
+        const qtCount = (outcome.items || []).filter((item) => item.category === "QT").length;
+        setSourceName(
+          `Google Drive JSON — ${meta.fileName} (Rev ${meta.revision}: ${tnCount} TN, ${qtCount} QT)`
+        );
+      }
     } catch (err: any) {
-      console.warn("Không tải được Google Drive JSON:", err);
-      setErrorMsg(`Không tải được Google Drive JSON (${err.message}). Đang chuyển sang dataset dự phòng.`);
-      setSourceData(OFFICIAL_FACULTY_RESEARCH_RECORDS);
-      setSourceName("Dataset dự phòng chính thức (8 bản ghi Spark)");
-      setIsLiveSheet(false);
+      console.error("Lỗi khi tải dữ liệu xem trước Google Drive:", err);
+      // Untrusted source rule: NEVER fall back to old dataset, report error clearly
+      setErrorMsg(
+        `Không thể đọc file JSON chính thức từ Google Drive: ${err.message || String(err)}. Tính năng đồng bộ đã bị khóa để bảo vệ an toàn dữ liệu.`
+      );
+      setDryRunOutcome(null);
+      setSourceName("Không thể kết nối Google Drive");
     } finally {
-      setLoadingSheet(false);
+      setLoading(false);
     }
   };
 
   useEffect(() => {
     if (isOpen) {
-      loadDriveData();
+      loadDrivePreview();
     }
   }, [isOpen]);
 
-  // Combined targets for matching
-  const combinedTargets = useMemo<ResearchMatchTarget[]>(() => {
-    return [
-      ...publishedOpportunities.map((o) => ({ ...o, _targetType: "opportunity" as const })),
-      ...existingCandidates.map((c) => ({ ...c, _targetType: "candidate" as const })),
-    ];
-  }, [publishedOpportunities, existingCandidates]);
+  const stats = dryRunOutcome?.stats;
+  const driveMeta = dryRunOutcome?.driveMeta;
+  const items = dryRunOutcome?.items || [];
 
-  // Analyze rows
-  const analyzedItems = useMemo(() => {
-    const seenTargetIds = new Set<string>();
+  const newCount = stats?.created || 0;
+  const updateProposalCount = stats?.updateProposals || 0;
+  const updateCount = stats?.updated || 0;
+  const preservedCount = stats?.preservedAdmin || 0;
+  const matchedCount = (stats?.matched || 0) + (stats?.unchanged || 0);
 
-    return sourceData.map((row, idx) => {
-      const candidate = mapRowToCandidate(row, idx);
-
-      if (String(row.statusText || "").toUpperCase() === "TEST" || row.title.toLowerCase().startsWith("test")) {
-        return {
-          row,
-          candidate,
-          status: "skipped" as const,
-          action: "Bỏ qua",
-          reason: "Bản ghi thử nghiệm (TEST)",
-        };
-      }
-
-      const match = findMatchingResearchOpportunity(row, combinedTargets);
-
-      if (match.isMatch && match.target) {
-        const target = match.target;
-        if (seenTargetIds.has(target.id)) {
-          return {
-            row,
-            candidate,
-            status: "skipped" as const,
-            action: "Trùng Sheet",
-            reason: "Trùng lặp với dòng khác trong sheet",
-          };
-        }
-        seenTargetIds.add(target.id);
-
-        if (isEditedByAdmin(target)) {
-          return {
-            row,
-            candidate,
-            status: "preserved_admin" as const,
-            action: "Giữ sửa Admin",
-            reason: "Giữ nguyên các chỉnh sửa thủ công của Quản trị viên",
-          };
-        }
-
-        const diff = computeOpportunityDiff(target, row);
-        if (diff.hasChanges) {
-          const isOpp = target._targetType === "opportunity";
-          return {
-            row,
-            candidate,
-            status: isOpp ? ("update_proposal" as const) : ("updated" as const),
-            action: isOpp ? "Đề xuất cập nhật" : "Cập nhật ứng viên",
-            reason: isOpp
-              ? `Đề xuất cập nhật hội thảo đã công bố: ${diff.changedKeys.join(", ")}`
-              : `Cập nhật thông tin ứng viên: ${diff.changedKeys.join(", ")}`,
-          };
-        }
-
-        return {
-          row,
-          candidate,
-          status: "matched" as const,
-          action: "Đã khớp",
-          reason: "Dữ liệu trùng khớp, không thay đổi (Không ghi Firestore)",
-        };
-      }
-
-      const outOfScope = classifyOutOfScopeRecord(row);
-      if (outOfScope.isOutOfScope) {
-        return {
-          row,
-          candidate,
-          status: "out_of_scope" as const,
-          action: "Ngoài phạm vi",
-          reason: outOfScope.reason || "Bản ghi ngoài phạm vi hội thảo trong nước",
-        };
-      }
-
-      return {
-        row,
-        candidate,
-        status: "created" as const,
-        action: "Sẽ thêm mới",
-        reason: "Cơ hội NCKH mới được phát hiện",
-      };
-    });
-  }, [sourceData, combinedTargets]);
-
-  const newCount = analyzedItems.filter((i) => i.status === "created").length;
-  const updateProposalCount = analyzedItems.filter((i) => i.status === "update_proposal").length;
-  const updateCount = analyzedItems.filter((i) => i.status === "updated").length;
-  const preservedCount = analyzedItems.filter((i) => i.status === "preserved_admin").length;
-  const matchedCount = analyzedItems.filter((i) => i.status === "matched").length;
-  const duplicateCount = analyzedItems.filter((i) => i.status === "skipped").length;
+  const isCachedSource = Boolean(driveMeta?.isCached);
+  const canCommit = !loading && !saving && Boolean(dryRunOutcome) && !isCachedSource && items.length > 0;
 
   const handleSyncCommit = async () => {
-    if (!profile) return;
+    if (!profile || !dryRunOutcome) return;
+
+    if (isCachedSource) {
+      setErrorMsg(
+        "Nguồn dữ liệu hiện đang là bản nhớ đệm (cache fallback). Tuyệt đối không cho phép ghi vào Firestore khi nguồn JSON chưa được xác thực trực tiếp từ Google Drive."
+      );
+      return;
+    }
+
     setSaving(true);
     setErrorMsg("");
 
     try {
-      // Run full sync engine directly against Google Drive JSON
+      // Execute live sync using identical engine with expectedRevision verification
       const outcome = await runFacultyResearchSyncClient(profile, {
-        force: true,
+        dryRun: false,
         dataSource: "drive_json",
+        expectedRevision: driveMeta?.revision,
       });
+
       if (outcome.skipped) {
         setErrorMsg(outcome.reason || "Phiên đồng bộ đã bị bỏ qua.");
       } else {
-        const stats = outcome.stats;
+        const outStats = outcome.stats;
         setSaveResult({
-          added: stats?.created || 0,
-          updated: stats?.updated || 0,
-          updateProposals: stats?.updateProposals || 0,
-          preservedAdmin: stats?.preservedAdmin || 0,
-          matched: stats?.matched || 0,
-          skipped: stats?.duplicates || 0,
+          added: outStats?.created || 0,
+          updated: outStats?.updated || 0,
+          updateProposals: outStats?.updateProposals || 0,
+          preservedAdmin: outStats?.preservedAdmin || 0,
+          matched: outStats?.matched || 0,
+          skipped: outStats?.duplicates || 0,
         });
         onSuccess();
       }
     } catch (err: any) {
-      console.error(err);
+      console.error("[FacultyResearchSyncModal] Lỗi khi ghi đồng bộ:", err);
       setErrorMsg("Lỗi khi lưu vào Firestore: " + (err.message || String(err)));
     } finally {
       setSaving(false);
@@ -278,7 +174,8 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
               type="button"
               className="btn btn-primary btn-sm"
               onClick={handleSyncCommit}
-              disabled={saving}
+              disabled={!canCommit}
+              title={isCachedSource ? "Không thể đồng bộ khi dùng bản nhớ đệm" : undefined}
               style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
             >
               {saving ? (
@@ -289,8 +186,8 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
                 <>
                   <Sparkles size={14} />{" "}
                   {newCount + updateCount + updateProposalCount > 0
-                    ? `Đồng bộ ${newCount + updateCount + updateProposalCount} bản ghi vào hệ thống`
-                    : "Đồng bộ (Kiểm tra & Cập nhật)"}
+                    ? `Đồng bộ ${newCount + updateCount + updateProposalCount} thay đổi vào Firestore`
+                    : "Xác nhận đồng bộ (0 thay đổi mới)"}
                 </>
               )}
             </button>
@@ -302,8 +199,8 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
         {/* Source info block */}
         <div
           style={{
-            background: "#f0fdf4",
-            border: "1px solid #bbf7d0",
+            background: isCachedSource ? "#fffbeb" : "#f0fdf4",
+            border: `1px solid ${isCachedSource ? "#fde68a" : "#bbf7d0"}`,
             padding: "12px 16px",
             borderRadius: 8,
             display: "flex",
@@ -314,17 +211,28 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
           }}
         >
           <div style={{ flex: "1 1 280px" }}>
-            <div style={{ fontWeight: 700, color: "#166534", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <div
+              style={{
+                fontWeight: 700,
+                color: isCachedSource ? "#92400e" : "#166534",
+                fontSize: "0.9rem",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                flexWrap: "wrap",
+              }}
+            >
               <span>{sourceName}</span>
-              {driveMeta?.isCached && (
-                <span style={{ fontSize: "0.75rem", background: "#fef3c7", color: "#92400e", padding: "1px 6px", borderRadius: 4 }}>
-                  Bản nhớ đệm
+              {isCachedSource && (
+                <span style={{ fontSize: "0.75rem", background: "#fef3c7", color: "#92400e", padding: "1px 6px", borderRadius: 4, fontWeight: 700 }}>
+                  Bản nhớ đệm (Chỉ xem)
                 </span>
               )}
             </div>
-            <div style={{ color: "#15803d", fontSize: "0.8125rem", marginTop: 4, display: "flex", flexWrap: "wrap", gap: "6px 14px" }}>
-              <span>Thư mục: <code>IFA_RH_DATA</code> (<code>{driveMeta?.folderId || DEFAULT_DRIVE_FOLDER_ID}</code>)</span>
+            <div style={{ color: isCachedSource ? "#b45309" : "#15803d", fontSize: "0.8125rem", marginTop: 4, display: "flex", flexWrap: "wrap", gap: "6px 14px" }}>
+              <span>Thư mục: <code>IFA_RH_DATA</code> (<code>{DEFAULT_DRIVE_FOLDER_ID}</code>)</span>
               {driveMeta?.fileId && <span>File ID: <code>{driveMeta.fileId}</code></span>}
+              {driveMeta?.revision && <span>Revision: <strong>{driveMeta.revision}</strong></span>}
               {driveMeta?.generatedAt && <span>Tạo lúc: {formatDateVN(driveMeta.generatedAt)}</span>}
             </div>
           </div>
@@ -333,17 +241,39 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
             <button
               type="button"
               className="btn btn-secondary btn-sm"
-              onClick={loadDriveData}
-              disabled={loadingSheet}
+              onClick={loadDrivePreview}
+              disabled={loading}
               style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
             >
-              <RotateCw size={14} className={loadingSheet ? "spin" : ""} />
-              {loadingSheet ? "Đang tải..." : "Tải lại Drive"}
+              <RotateCw size={14} className={loading ? "spin" : ""} />
+              {loading ? "Đang tải..." : "Tải lại Drive"}
             </button>
           </div>
         </div>
 
-        {/* Success / Error notification */}
+        {/* Cached Source Warning Banner */}
+        {isCachedSource && (
+          <div
+            style={{
+              background: "#fffbeb",
+              border: "1px solid #fde68a",
+              color: "#92400e",
+              padding: 12,
+              borderRadius: 6,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: "0.875rem",
+            }}
+          >
+            <AlertTriangle size={20} color="#d97706" style={{ flexShrink: 0 }} />
+            <span>
+              <strong>Cảnh báo nguồn dữ liệu:</strong> Dữ liệu hội thảo đang được lấy từ bộ nhớ đệm (cache fallback) do không kết nối trực tiếp được với Google Drive API. Hệ thống chỉ cho phép xem trước đối chiếu (dry-run); tính năng ghi đồng bộ vào Firestore đã bị khóa để bảo đảm an toàn dữ liệu.
+            </span>
+          </div>
+        )}
+
+        {/* Success notification */}
         {saveResult && (
           <div
             style={{
@@ -367,6 +297,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
           </div>
         )}
 
+        {/* Error notification */}
         {errorMsg && (
           <div
             style={{
@@ -384,123 +315,144 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
 
         {/* Diff Preview Table */}
         <div>
-          <div style={{ fontSize: "0.875rem", fontWeight: 700, color: "var(--primary)", marginBottom: 8 }}>
-            Xem trước kết quả đối chiếu ({analyzedItems.length} bản ghi):
+          <div style={{ fontSize: "0.875rem", fontWeight: 700, color: "var(--primary)", marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>Xem trước kết quả đối chiếu ({items.length} hội thảo):</span>
+            <span style={{ fontSize: "0.78rem", color: "var(--muted)", fontWeight: "normal" }}>
+              Được tính toán trực tiếp bởi công cụ đồng bộ chuẩn hóa (Dry-Run)
+            </span>
           </div>
 
           <div className="table-container" style={{ maxHeight: 380, overflowY: "auto" }}>
             <table className="table" style={{ fontSize: "0.82rem" }}>
               <thead>
                 <tr>
-                  <th style={{ width: 80 }}>Trạng thái</th>
+                  <th style={{ width: 85 }}>Mã & Loại</th>
                   <th>Tên hội thảo / cơ hội</th>
                   <th>Đơn vị tổ chức</th>
                   <th>Hạn nộp</th>
                   <th>Mức phù hợp</th>
-                  <th style={{ width: 140 }}>Kết quả kiểm tra</th>
+                  <th style={{ width: 145 }}>Kết quả đối chiếu</th>
                 </tr>
               </thead>
               <tbody>
-                {analyzedItems.map(({ candidate, status, action, reason }, idx) => {
-                  let badgeBg = "#ecfdf5";
-                  let badgeColor = "#059669";
-                  let rowOpacity = 1;
+                {items.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} style={{ textAlign: "center", padding: 24, color: "var(--muted)" }}>
+                      {loading ? "Đang tải dữ liệu hội thảo từ Google Drive..." : "Không có dữ liệu hội thảo nào để hiển thị."}
+                    </td>
+                  </tr>
+                ) : (
+                  items.map((item, idx) => {
+                    const { candidate, status, action, reason, code, category } = item;
+                    let badgeBg = "#ecfdf5";
+                    let badgeColor = "#059669";
+                    let rowOpacity = 1;
 
-                  if (status === "created") {
-                    badgeBg = "#dcfce7";
-                    badgeColor = "#15803d";
-                  } else if (status === "updated") {
-                    badgeBg = "#fef3c7";
-                    badgeColor = "#b45309";
-                  } else if (status === "preserved_admin") {
-                    badgeBg = "#ede9fe";
-                    badgeColor = "#6d28d9";
-                  } else if (status === "matched") {
-                    badgeBg = "#e0f2fe";
-                    badgeColor = "#0369a1";
-                    rowOpacity = 0.7;
-                  } else if (status === "skipped") {
-                    badgeBg = "#f1f5f9";
-                    badgeColor = "#64748b";
-                    rowOpacity = 0.55;
-                  }
+                    if (status === "created") {
+                      badgeBg = "#dcfce7";
+                      badgeColor = "#15803d";
+                    } else if (status === "update_proposal") {
+                      badgeBg = "#e0f2fe";
+                      badgeColor = "#0284c7";
+                    } else if (status === "proposal_unchanged") {
+                      badgeBg = "#f0f9ff";
+                      badgeColor = "#0369a1";
+                      rowOpacity = 0.8;
+                    } else if (status === "updated") {
+                      badgeBg = "#fef3c7";
+                      badgeColor = "#b45309";
+                    } else if (status === "preserved_admin" || status === "preserved_rejection") {
+                      badgeBg = "#ede9fe";
+                      badgeColor = "#6d28d9";
+                    } else if (status === "matched") {
+                      badgeBg = "#f1f5f9";
+                      badgeColor = "#475569";
+                      rowOpacity = 0.75;
+                    } else if (status === "skipped" || status === "out_of_scope") {
+                      badgeBg = "#f1f5f9";
+                      badgeColor = "#64748b";
+                      rowOpacity = 0.55;
+                    }
 
-                  return (
-                    <tr key={idx} style={{ opacity: rowOpacity }}>
-                      <td>
-                        <span
-                          className="badge"
-                          style={{
-                            background:
-                              candidate.sheetStatus === "MỚI"
-                                ? "#e0f2fe"
-                                : candidate.sheetStatus === "SẮP HẾT HẠN"
-                                ? "#fef3c7"
-                                : "#f1f5f9",
-                            color:
-                              candidate.sheetStatus === "MỚI"
-                                ? "#0369a1"
-                                : candidate.sheetStatus === "SẮP HẾT HẠN"
-                                ? "#b45309"
-                                : "#64748b",
-                            fontWeight: 700,
-                            fontSize: "0.7rem",
-                          }}
-                        >
-                          {candidate.sheetStatus || "Đang mở"}
-                        </span>
-                      </td>
-                      <td>
-                        <div style={{ fontWeight: 700, color: "var(--primary)", lineHeight: 1.3 }}>
-                          {candidate.title}
-                        </div>
-                        {candidate.indexing && (
-                          <div style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--teal)", marginTop: 2 }}>
-                            <Award size={12} />
-                            <span>{candidate.indexing}</span>
+                    const isTN = category === "TN" || code.startsWith("TN");
+
+                    return (
+                      <tr key={idx} style={{ opacity: rowOpacity }}>
+                        <td>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span
+                              className="badge"
+                              style={{
+                                background: isTN ? "#dcfce7" : "#dbeafe",
+                                color: isTN ? "#166534" : "#1e40af",
+                                fontWeight: 700,
+                                fontSize: "0.72rem",
+                                padding: "2px 6px",
+                              }}
+                            >
+                              {code || (isTN ? "TN" : "QT")}
+                            </span>
+                            <span style={{ fontSize: "0.68rem", color: "var(--muted)" }}>
+                              {isTN ? "Trong nước" : "Quốc tế"}
+                            </span>
                           </div>
-                        )}
-                      </td>
-                      <td>
-                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          <Building size={12} color="var(--muted)" />
-                          <span>{candidate.organizer}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <div style={{ display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
-                          <Calendar size={12} color="var(--danger)" />
-                          <strong>{formatDateVN(candidate.deadline) || "Chưa công bố"}</strong>
-                        </div>
-                      </td>
-                      <td>
-                        <span
-                          className="badge"
-                          style={{
-                            background: candidate.suitability?.includes("Rất phù hợp") ? "#ecfdf5" : "#eff6ff",
-                            color: candidate.suitability?.includes("Rất phù hợp") ? "#047857" : "#1d4ed8",
-                            fontSize: "0.7rem",
-                          }}
-                        >
-                          {candidate.suitability || "Phù hợp"}
-                        </span>
-                      </td>
-                      <td>
-                        <span
-                          className="badge"
-                          style={{ background: badgeBg, color: badgeColor, fontSize: "0.7rem" }}
-                          title={reason}
-                        >
-                          {status === "created" && <CheckCircle2 size={10} style={{ marginRight: 2 }} />}
-                          {status === "updated" && <RotateCw size={10} style={{ marginRight: 2 }} />}
-                          {status === "preserved_admin" && <ShieldCheck size={10} style={{ marginRight: 2 }} />}
-                          {status === "skipped" && <AlertTriangle size={10} style={{ marginRight: 2 }} />}
-                          {action}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 700, color: "var(--primary)", lineHeight: 1.3 }}>
+                            {candidate.title}
+                          </div>
+                          {candidate.indexing && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--teal)", marginTop: 2 }}>
+                              <Award size={12} />
+                              <span>{candidate.indexing}</span>
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                            <Building size={12} color="var(--muted)" />
+                            <span>{candidate.organizer}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div style={{ display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
+                            <Calendar size={12} color="var(--danger)" />
+                            <strong>{formatDateVN(candidate.deadline) || "Chưa công bố"}</strong>
+                          </div>
+                        </td>
+                        <td>
+                          <span
+                            className="badge"
+                            style={{
+                              background: candidate.suitability?.includes("Rất phù hợp") ? "#ecfdf5" : "#eff6ff",
+                              color: candidate.suitability?.includes("Rất phù hợp") ? "#047857" : "#1d4ed8",
+                              fontSize: "0.7rem",
+                            }}
+                          >
+                            {candidate.suitability || "Phù hợp"}
+                          </span>
+                        </td>
+                        <td>
+                          <span
+                            className="badge"
+                            style={{ background: badgeBg, color: badgeColor, fontSize: "0.7rem" }}
+                            title={reason}
+                          >
+                            {status === "created" && <CheckCircle2 size={10} style={{ marginRight: 2 }} />}
+                            {status === "update_proposal" && <RotateCw size={10} style={{ marginRight: 2 }} />}
+                            {(status === "preserved_admin" || status === "preserved_rejection") && (
+                              <ShieldCheck size={10} style={{ marginRight: 2 }} />
+                            )}
+                            {(status === "skipped" || status === "out_of_scope") && (
+                              <AlertTriangle size={10} style={{ marginRight: 2 }} />
+                            )}
+                            {action}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>

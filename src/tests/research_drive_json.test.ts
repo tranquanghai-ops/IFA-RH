@@ -434,7 +434,7 @@ describe("Google Drive JSON Conferences Sync & Governance", () => {
       expect(lock1.acquired).toBe(true);
       expect(lock1.lockId).toBeDefined();
 
-      // 2. Second concurrent lock attempt without force fails
+      // 2. Second concurrent lock attempt fails (no force bypass allowed)
       const lock2 = await acquireFirestoreSyncLock(
         {},
         mockSdk,
@@ -444,25 +444,24 @@ describe("Google Drive JSON Conferences Sync & Governance", () => {
       expect(lock2.message).toContain("Một phiên đồng bộ khác đang chạy");
       expect(lock2.remainingSeconds).toBeGreaterThan(0);
 
-      // 3. Forcing lock acquisition succeeds
-      const lockForce = await acquireFirestoreSyncLock(
-        {},
-        mockSdk,
-        { email: "other@tdtu.edu.vn", uid: "u_other" },
-        true
-      );
-      expect(lockForce.acquired).toBe(true);
+      // 3. Attempting release with WRONG lockId fails and does not release active lock
+      const wrongRelease = await releaseFirestoreSyncLock({}, mockSdk, "wrong_lock_id");
+      expect(wrongRelease.released).toBe(false);
+      expect(store[`systemConfig/${RESEARCH_SYNC_LOCK_DOC_ID}`]?.isLocked).toBe(true);
 
-      // 4. Releasing lock allows subsequent acquisition
-      await releaseFirestoreSyncLock({}, mockSdk, lockForce.lockId);
+      // 4. Releasing with the CORRECT lockId succeeds
+      const rightRelease = await releaseFirestoreSyncLock({}, mockSdk, lock1.lockId);
+      expect(rightRelease.released).toBe(true);
       expect(store[`systemConfig/${RESEARCH_SYNC_LOCK_DOC_ID}`]?.isLocked).toBe(false);
 
+      // 5. After successful release, another session can acquire lock
       const lock3 = await acquireFirestoreSyncLock(
         {},
         mockSdk,
         { email: "admin@tdtu.edu.vn", uid: "u_admin" }
       );
       expect(lock3.acquired).toBe(true);
+      expect(lock3.lockId).toBeDefined();
     });
   });
 
