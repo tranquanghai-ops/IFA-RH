@@ -87,3 +87,8 @@ npm run build
 ```
 
 Mở trình duyệt tại địa chỉ: `http://127.0.0.1:5173/`
+
+---
+
+## 6. Tài liệu & Quy chuẩn Kỹ thuật
+- [Quy chuẩn Thông báo Người dùng & Hộp thoại Tương tác (UI Notification Guidelines)](docs/UI-NOTIFICATION-GUIDELINES.md)

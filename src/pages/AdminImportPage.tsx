@@ -37,11 +37,13 @@ import {
   Sparkles,
   UserCheck,
 } from "lucide-react";
+import { useToast } from "../context/ToastContext";
 
 type ImportTarget = "publications" | "research_works" | "candidates" | "lecturers";
 
 export const AdminImportPage: React.FC = () => {
   const { profile } = useAuth();
+  const { showError } = useToast();
   const [targetType, setTargetType] = useState<ImportTarget>("publications");
 
   // Step state (1: Upload, 2: Preview & Map, 3: Validate & Match, 4: Confirm/Execute, 5: Report)
@@ -166,7 +168,8 @@ export const AdminImportPage: React.FC = () => {
       setColumnMapping(mapping);
       setStep(2);
     } catch (err: any) {
-      alert("Lỗi đọc file: " + err.message);
+      console.error(err);
+      showError("Lỗi đọc file nhập liệu.", err);
     }
   };
 

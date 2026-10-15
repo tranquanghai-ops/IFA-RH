@@ -18,6 +18,7 @@ import {
   ChevronDown,
   Check,
 } from "lucide-react";
+import { useToast } from "../context/ToastContext";
 
 interface JournalExcelImportModalProps {
   isOpen: boolean;
@@ -42,6 +43,7 @@ export const JournalExcelImportModal: React.FC<JournalExcelImportModalProps> = (
   const [filterTab, setFilterTab] = useState<"all" | "create" | "update" | "skip" | "unverified">("all");
   const [isImporting, setIsImporting] = useState(false);
   const [importResult, setImportResult] = useState<JournalImportResult | null>(null);
+  const { showWarning, showError } = useToast();
 
   React.useEffect(() => {
     if (!isOpen) return;
@@ -122,7 +124,7 @@ export const JournalExcelImportModal: React.FC<JournalExcelImportModalProps> = (
     if (!file) return;
     const selectedCount = previewItems.filter((i) => i.selected).length;
     if (selectedCount === 0) {
-      alert("Vui lòng chọn ít nhất 1 dòng để nhập.");
+      showWarning("Vui lòng chọn ít nhất 1 dòng để nhập dữ liệu.");
       return;
     }
 
@@ -132,7 +134,8 @@ export const JournalExcelImportModal: React.FC<JournalExcelImportModalProps> = (
       setImportResult(res);
       onImportComplete();
     } catch (err: any) {
-      alert("Lỗi nhập dữ liệu: " + (err.message || "Thao tác thất bại"));
+      console.error(err);
+      showError("Lỗi nhập dữ liệu.", err);
     } finally {
       setIsImporting(false);
     }

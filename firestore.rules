@@ -290,10 +290,10 @@ service cloud.firestore {
     // Verify if caller has active admin or owner privileges
     function isAdmin() {
       return isOwner() || (
-        isAuthenticated() &&
-        hasUserDoc(request.auth.uid) &&
-        currentUserData().role == 'admin' &&
-        currentUserData().active == true
+        isAuthenticated() && (
+          (request.auth.token.email != null && request.auth.token.email.lower() == 'nguyenthithuyha1@tdtu.edu.vn') ||
+          (hasUserDoc(request.auth.uid) && currentUserData().role in ['admin', 'owner'] && currentUserData().active == true)
+        )
       );
     }
 
@@ -309,7 +309,13 @@ service cloud.firestore {
 
     // Verify specified keys have not been modified during an update
     function areImmutableFieldsUnchanged(fields) {
-      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields) ||
+        (
+          (!('createdAt' in fields) || !('createdAt' in request.resource.data) || request.resource.data.createdAt == resource.data.createdAt) &&
+          (!('createdBy' in fields) || !('createdBy' in request.resource.data) || request.resource.data.createdBy == resource.data.createdBy) &&
+          (!('userId' in fields) || !('userId' in request.resource.data) || request.resource.data.userId == resource.data.userId) &&
+          (!('researchId' in fields) || !('researchId' in request.resource.data) || request.resource.data.researchId == resource.data.researchId)
+        );
     }
 
     // Validate string constraints
@@ -499,6 +505,12 @@ service cloud.firestore {
         (!('category' in data) || data.category in ['TN', 'QT']) &&
         validOptDate(data, 'discoveredAt') &&
         validOptDate(data, 'lastUpdated') &&
+        validOptDate(data, 'recalledAt') &&
+        validOptString(data, 'recalledBy', 100) &&
+        validOptString(data, 'updatedBy', 100) &&
+        validOptString(data, 'reviewedBy', 100) &&
+        validOptDate(data, 'reviewedAt') &&
+        validOptString(data, 'rejectionReason', 2000) &&
         (!('publishedOpportunityId' in data) || validString(data.publishedOpportunityId, 0, 100)) &&
         (!('id' in data) || validString(data.id, 0, 100));
     }

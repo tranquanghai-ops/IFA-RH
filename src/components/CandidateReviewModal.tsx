@@ -17,6 +17,10 @@ import {
   Layers,
   Sparkles,
   RotateCcw,
+  Trash2,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
 } from "lucide-react";
 
 interface CandidateReviewModalProps {
@@ -42,8 +46,17 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
   const [rejectReason, setRejectReason] = useState("");
   const [needsReviewing, setNeedsReviewing] = useState(false);
   const [needsReviewReason, setNeedsReviewReason] = useState("");
+  const [confirmingRecall, setConfirmingRecall] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Track expanded state for long diff fields
+  const [expandedDiffs, setExpandedDiffs] = useState<Record<number, boolean>>({});
+  // Track expanded state for description & directions
+  const [showFullContent, setShowFullContent] = useState(false);
+  const [showFullDirections, setShowFullDirections] = useState(false);
+  const [showAdditionalInfo, setShowAdditionalInfo] = useState(false);
 
   React.useEffect(() => {
     setError("");
@@ -51,10 +64,29 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
     setRejectReason("");
     setNeedsReviewing(false);
     setNeedsReviewReason("");
+    setConfirmingRecall(false);
+    setConfirmingDelete(false);
     setLoading(false);
+    setExpandedDiffs({});
+    setShowFullContent(false);
+    setShowFullDirections(false);
+    setShowAdditionalInfo(false);
   }, [candidate?.id]);
 
   if (!candidate) return null;
+
+  const isUpdate =
+    candidate.changeType === "update" ||
+    candidate.resolutionType === "PENDING_UPDATE" ||
+    Boolean(candidate.publishedOpportunityId && candidate.diffSummary && candidate.diffSummary.length > 0);
+
+  const modalTitle = isUpdate
+    ? `Đề xuất cập nhật · ${candidate.conferenceCode || "Hội thảo"}`
+    : `Hồ sơ hội thảo · ${candidate.conferenceCode || candidate.title}`;
+
+  const toggleDiffExpand = (idx: number) => {
+    setExpandedDiffs((prev) => ({ ...prev, [idx]: !prev[idx] }));
+  };
 
   const handleApprove = async () => {
     try {
@@ -63,7 +95,8 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
       await onApprove(candidate);
       onClose();
     } catch (err: any) {
-      setError(err.message || "Lỗi duyệt cơ hội.");
+      console.error("[CandidateReviewModal] Approve Error:", err);
+      setError("Không thể duyệt hội thảo. Hệ thống chưa thể lưu thay đổi. Vui lòng thử lại.");
     } finally {
       setLoading(false);
     }
@@ -71,7 +104,7 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
 
   const handleConfirmReject = async () => {
     if (!rejectReason.trim()) {
-      setError("Vui lòng nhập lý do từ chối!");
+      setError("Vui lòng nhập lý do từ chối.");
       return;
     }
     try {
@@ -81,7 +114,8 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
       setRejecting(false);
       onClose();
     } catch (err: any) {
-      setError(err.message || "Lỗi từ chối cơ hội.");
+      console.error("[CandidateReviewModal] Reject Error:", err);
+      setError("Không thể từ chối hội thảo. Vui lòng thử lại.");
     } finally {
       setLoading(false);
     }
@@ -96,160 +130,268 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
       setNeedsReviewing(false);
       onClose();
     } catch (err: any) {
-      setError(err.message || "Lỗi cập nhật trạng thái cần hiệu chỉnh.");
+      console.error("[CandidateReviewModal] NeedsReview Error:", err);
+      setError("Không thể cập nhật trạng thái cần hiệu chỉnh. Vui lòng thử lại.");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleDelete = async () => {
-    if (!window.confirm(`Bạn có chắc chắn muốn xóa vĩnh viễn ứng viên "${candidate.title}"?`)) {
-      return;
-    }
+  const handleConfirmRecall = async () => {
+    if (!onRecall) return;
     try {
       setLoading(true);
       setError("");
-      await onDelete(candidate.id, candidate.title);
+      await onRecall(candidate);
+      setConfirmingRecall(false);
       onClose();
     } catch (err: any) {
-      setError(err.message || "Lỗi xóa ứng viên.");
+      console.error("[CandidateReviewModal] Recall Error:", err);
+      setError("Không thể thu hồi hội thảo. Hệ thống chưa thể lưu thay đổi. Vui lòng thử lại.");
     } finally {
       setLoading(false);
     }
   };
+
+  const handleConfirmDelete = async () => {
+    try {
+      setLoading(true);
+      setError("");
+      await onDelete(candidate.id, candidate.title);
+      setConfirmingDelete(false);
+      onClose();
+    } catch (err: any) {
+      console.error("[CandidateReviewModal] Delete Error:", err);
+      setError("Không thể xóa hồ sơ. Vui lòng thử lại.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const hasSubstantiveDiffs = Boolean(candidate.diffSummary && candidate.diffSummary.length > 0);
 
   return (
     <Modal
       isOpen={!!candidate}
       onClose={onClose}
-      title="Kiểm duyệt Cơ hội AI / Spark tìm được"
+      title={modalTitle}
       maxWidth="large"
       footer={
         <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%" }}>
           {error && (
             <div
               style={{
-                background: "#fee2e2",
-                color: "#991b1b",
-                border: "1px solid #fca5a5",
+                background: "#fff1f2",
+                color: "#9f1239",
+                border: "1px solid #fecdd3",
                 padding: "8px 12px",
                 borderRadius: 6,
                 fontSize: "0.85rem",
                 fontWeight: 600,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
               }}
             >
-              {error}
-            </div>
-          )}
-          <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-            <div>
+              <span>{error}</span>
               <button
                 type="button"
-                className="btn btn-outline-danger btn-sm"
-                onClick={handleDelete}
-                disabled={loading}
+                onClick={() => setError("")}
+                style={{ background: "transparent", border: "none", cursor: "pointer", color: "#9f1239", fontWeight: "bold" }}
               >
-                Xóa bỏ
+                ✕
               </button>
             </div>
+          )}
 
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              {candidate.status !== "approved" && !rejecting && !needsReviewing && (
-                <>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => setRejecting(true)}
-                    disabled={loading}
-                  >
-                    <XCircle size={16} />
-                    Từ chối
-                  </button>
-                  {onNeedsReview && (
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => setNeedsReviewing(true)}
-                      disabled={loading}
-                      style={{ color: "#d97706" }}
-                    >
-                      Cần hiệu chỉnh
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="btn btn-success btn-sm"
-                    onClick={handleApprove}
-                    disabled={loading}
-                  >
-                    <CheckCircle size={16} />
-                    {loading
-                      ? "Đang lưu thay đổi..."
-                      : candidate.publishedOpportunityId
-                      ? "Duyệt & Cập nhật Hồ sơ"
-                      : "Duyệt & Công bố Public"}
-                  </button>
-                </>
-              )}
-              {candidate.status === "approved" && onRecall && (
+          {/* Inline Action Confirmations */}
+          {confirmingRecall && (
+            <div
+              style={{
+                background: "#fff1f2",
+                border: "1px solid #fecdd3",
+                borderRadius: 8,
+                padding: "12px 14px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: 10,
+              }}
+            >
+              <div style={{ fontSize: "0.85rem", color: "#9f1239" }}>
+                <strong>Thu hồi hội thảo?</strong> Hội thảo sẽ được gỡ khỏi trang công khai và chuyển về danh sách chờ duyệt.
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setConfirmingRecall(false)}
+                  disabled={loading}
+                >
+                  Hủy
+                </button>
                 <button
                   type="button"
                   className="btn btn-sm"
-                  onClick={async () => {
-                    if (
-                      window.confirm(
-                        `Bạn có chắc chắn muốn thu hồi hội thảo "${candidate.title}" về hàng chờ duyệt?\nHội thảo này sẽ được gỡ khỏi Cổng công khai.`
-                      )
-                    ) {
-                      setLoading(true);
-                      try {
-                        await onRecall(candidate);
-                        onClose();
-                      } catch (err: any) {
-                        setError(`Lỗi khi thu hồi: ${err?.message || String(err)}`);
-                      } finally {
-                        setLoading(false);
-                      }
-                    }
-                  }}
+                  onClick={handleConfirmRecall}
                   disabled={loading}
-                  style={{
-                    background: "#fff1f2",
-                    color: "#be123c",
-                    border: "1px solid #fecdd3",
-                    fontWeight: 600,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                  }}
+                  style={{ background: "#e11d48", color: "#fff", border: "none", fontWeight: 600 }}
                 >
-                  <RotateCcw size={15} />
-                  Thu hồi về hàng chờ
+                  {loading ? "Đang thu hồi..." : "Thu hồi"}
                 </button>
-              )}
-              <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
-                Đóng
-              </button>
+              </div>
             </div>
-          </div>
+          )}
+
+          {confirmingDelete && (
+            <div
+              style={{
+                background: "#fff1f2",
+                border: "1px solid #fecdd3",
+                borderRadius: 8,
+                padding: "12px 14px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: 10,
+              }}
+            >
+              <div style={{ fontSize: "0.85rem", color: "#9f1239" }}>
+                <strong>Xóa hồ sơ?</strong> Thao tác này sẽ xóa ứng viên khỏi hệ thống và không thể hoàn tác.
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setConfirmingDelete(false)}
+                  disabled={loading}
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={handleConfirmDelete}
+                  disabled={loading}
+                  style={{ background: "#e11d48", color: "#fff", border: "none", fontWeight: 600 }}
+                >
+                  {loading ? "Đang xóa..." : "Xóa vĩnh viễn"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Action Buttons Row */}
+          {!confirmingRecall && !confirmingDelete && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                width: "100%",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: 8,
+              }}
+            >
+              <div>
+                {candidate.status !== "approved" && (
+                  <button
+                    type="button"
+                    className="btn btn-outline-danger btn-sm"
+                    onClick={() => setConfirmingDelete(true)}
+                    disabled={loading}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+                  >
+                    <Trash2 size={14} />
+                    Xóa
+                  </button>
+                )}
+              </div>
+
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {candidate.status !== "approved" && !rejecting && !needsReviewing && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setRejecting(true)}
+                      disabled={loading}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+                    >
+                      <XCircle size={15} />
+                      Từ chối
+                    </button>
+
+                    {onNeedsReview && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setNeedsReviewing(true)}
+                        disabled={loading}
+                        style={{ color: "#d97706" }}
+                      >
+                        Cần hiệu chỉnh
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      className="btn btn-success btn-sm"
+                      onClick={handleApprove}
+                      disabled={loading}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 600 }}
+                    >
+                      <CheckCircle size={16} />
+                      {loading
+                        ? "Đang lưu thay đổi..."
+                        : isUpdate
+                        ? "Duyệt cập nhật"
+                        : "Duyệt công bố"}
+                    </button>
+                  </>
+                )}
+
+                {candidate.status === "approved" && onRecall && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={() => setConfirmingRecall(true)}
+                    disabled={loading}
+                    style={{
+                      background: "#fff1f2",
+                      color: "#be123c",
+                      border: "1px solid #fecdd3",
+                      fontWeight: 600,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <RotateCcw size={15} />
+                    Thu hồi về hàng chờ
+                  </button>
+                )}
+
+                <button type="button" className="btn btn-secondary btn-sm" onClick={onClose}>
+                  Đóng
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       }
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        {error && (
-          <div style={{ background: "#fee2e2", color: "#991b1b", padding: 12, borderRadius: 6 }}>
-            {error}
-          </div>
-        )}
-
-        {/* Update Proposal Alert & Diff Table */}
-        {candidate.publishedOpportunityId && (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* Update Proposal Comparison Table */}
+        {isUpdate && hasSubstantiveDiffs && (
           <div
             style={{
-              background: "#eff6ff",
-              border: "1px solid #bfdbfe",
+              background: "#f0fdf4",
+              border: "1px solid #bbf7d0",
               borderRadius: 8,
-              padding: "14px 16px",
+              padding: "12px 14px",
             }}
           >
             <div
@@ -257,130 +399,121 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
-                color: "#1d4ed8",
+                color: "#166534",
                 fontWeight: 700,
                 fontSize: "0.95rem",
-                marginBottom: 6,
+                marginBottom: 8,
               }}
             >
-              <Sparkles size={18} />
-              Đề xuất cập nhật từ Google Sheets cho Hội thảo đã công bố
+              <Sparkles size={17} />
+              Bảng so sánh đề xuất cập nhật ({candidate.diffSummary!.length} trường thay đổi)
             </div>
+
             <div
               style={{
-                fontSize: "0.85rem",
-                color: "#1e40af",
-                marginBottom: candidate.diffSummary && candidate.diffSummary.length > 0 ? 12 : 0,
+                overflowX: "auto",
+                background: "#ffffff",
+                borderRadius: 6,
+                border: "1px solid #cbd5e1",
               }}
             >
-              <div>
-                Mã hồ sơ gốc: <code>{candidate.publishedOpportunityId}</code>. Khi duyệt, các thông tin thay đổi bên dưới sẽ được áp dụng vào hồ sơ đang công bố, bảo toàn ngày tạo và quyền hạn gốc.
-              </div>
-              <div style={{ fontSize: "0.78rem", color: "#2563eb", marginTop: 4 }}>
-                Phát hiện gốc: <strong>{formatDateVN(candidate.discoveredAt || candidate.createdAt)}</strong>
-                {candidate.updatedAt && (
-                  <span> • Cập nhật gần nhất: <strong>{formatDateVN(candidate.updatedAt)}</strong></span>
-                )}
-                {candidate.resolutionType && (
-                  <span> • Trạng thái: <strong>{candidate.resolutionType}</strong></span>
-                )}
-              </div>
-            </div>
-            {candidate.diffSummary && candidate.diffSummary.length > 0 && (
-              <div
-                style={{
-                  overflowX: "auto",
-                  background: "#ffffff",
-                  borderRadius: 6,
-                  border: "1px solid #cbd5e1",
-                }}
-              >
-                <table style={{ width: "100%", fontSize: "0.82rem", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ background: "#f8fafc", borderBottom: "1px solid #cbd5e1" }}>
-                      <th style={{ padding: "8px 12px", textAlign: "left", width: "25%" }}>Trường thông tin</th>
-                      <th style={{ padding: "8px 12px", textAlign: "left", width: "37%", color: "#64748b" }}>
-                        Giá trị hiện tại
-                      </th>
-                      <th style={{ padding: "8px 12px", textAlign: "left", width: "38%", color: "#166534" }}>
-                        Giá trị mới từ Google Sheet
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {candidate.diffSummary.map((d, idx) => (
+              <table style={{ width: "100%", fontSize: "0.82rem", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: "#f8fafc", borderBottom: "1px solid #cbd5e1" }}>
+                    <th style={{ padding: "8px 12px", textAlign: "left", width: "24%", fontWeight: 650 }}>
+                      Thông tin
+                    </th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", width: "38%", color: "#64748b" }}>
+                      Hiện tại
+                    </th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", width: "38%", color: "#166534" }}>
+                      Đề xuất
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {candidate.diffSummary!.map((d, idx) => {
+                    const isLongText =
+                      (d.oldValue && String(d.oldValue).length > 90) ||
+                      (d.newValue && String(d.newValue).length > 90);
+                    const isExpanded = expandedDiffs[idx];
+
+                    return (
                       <tr
                         key={idx}
                         style={{
                           borderBottom:
-                            idx < candidate.diffSummary!.length - 1 ? "1px solid #e2e8f0" : "none",
+                            idx < candidate.diffSummary!.length - 1 ? "1px solid #f1f5f9" : "none",
                         }}
                       >
-                        <td style={{ padding: "8px 12px", fontWeight: 600 }}>{d.label || d.field}</td>
-                        <td style={{ padding: "8px 12px", color: "#64748b" }}>
-                          {String(d.oldValue || "(Chưa có)")}
+                        <td style={{ padding: "8px 12px", fontWeight: 600, verticalAlign: "top" }}>
+                          {d.label || d.field}
                         </td>
-                        <td style={{ padding: "8px 12px", fontWeight: 600, color: "#15803d" }}>
-                          {String(d.newValue || "")}
+                        <td style={{ padding: "8px 12px", color: "#64748b", verticalAlign: "top" }}>
+                          <div
+                            style={
+                              isLongText && !isExpanded
+                                ? {
+                                    display: "-webkit-box",
+                                    WebkitLineClamp: 3,
+                                    WebkitBoxOrient: "vertical",
+                                    overflow: "hidden",
+                                  }
+                                : {}
+                            }
+                          >
+                            {String(d.oldValue || "(Chưa có)")}
+                          </div>
+                        </td>
+                        <td style={{ padding: "8px 12px", fontWeight: 600, color: "#15803d", verticalAlign: "top" }}>
+                          <div
+                            style={
+                              isLongText && !isExpanded
+                                ? {
+                                    display: "-webkit-box",
+                                    WebkitLineClamp: 3,
+                                    WebkitBoxOrient: "vertical",
+                                    overflow: "hidden",
+                                  }
+                                : {}
+                            }
+                          >
+                            {String(d.newValue || "")}
+                          </div>
+                          {isLongText && (
+                            <button
+                              type="button"
+                              onClick={() => toggleDiffExpand(idx)}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                color: "#2563eb",
+                                fontSize: "0.75rem",
+                                padding: 0,
+                                marginTop: 4,
+                                cursor: "pointer",
+                                fontWeight: 500,
+                              }}
+                            >
+                              {isExpanded ? "Thu gọn" : "Xem đầy đủ"}
+                            </button>
+                          )}
                         </td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {candidate.status === "rejected" && (
-          <div
-            style={{
-              background: candidate.resolutionType === "AUTO_CLOSED" ? "#f8fafc" : "#fef2f2",
-              border: candidate.resolutionType === "AUTO_CLOSED" ? "1px solid #cbd5e1" : "1px solid #fecaca",
-              borderRadius: 8,
-              padding: "12px 16px",
-              fontSize: "0.85rem",
-              color: candidate.resolutionType === "AUTO_CLOSED" ? "#475569" : "#991b1b",
-            }}
-          >
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>
-              {candidate.resolutionType === "AUTO_CLOSED"
-                ? "Hệ thống tự động đóng (Dữ liệu trùng khớp)"
-                : `Bị từ chối bởi: ${candidate.reviewedBy || "Admin"}`}
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-            <div>
-              <strong>Lý do:</strong> {candidate.rejectionReason || "Không có lý do chi tiết"}
-            </div>
-            {(candidate.reviewedAt || candidate.updatedAt) && (
-              <div style={{ fontSize: "0.75rem", marginTop: 4, opacity: 0.85 }}>
-                Thời gian: {formatDateVN(candidate.reviewedAt || candidate.updatedAt)}
-              </div>
-            )}
-          </div>
-        )}
-
-        {candidate.isOutOfScope && (
-          <div
-            style={{
-              background: "#faf5ff",
-              border: "1px solid #e9d5ff",
-              borderRadius: 8,
-              padding: "12px 16px",
-              fontSize: "0.85rem",
-              color: "#6b21a8",
-            }}
-          >
-            <strong>Lưu ý phạm vi:</strong>{" "}
-            {candidate.outOfScopeReason || "Hồ sơ nằm ngoài phạm vi danh mục hội thảo trong nước."}
           </div>
         )}
 
         {/* Reject reason input prompt */}
         {rejecting && (
-          <div style={{ background: "#fffbeb", border: "1px solid #fde68a", padding: 16, borderRadius: 8 }}>
-            <h4 style={{ color: "#92400e", marginBottom: 8 }}>Xác nhận từ chối cơ hội</h4>
-            <div className="form-group">
-              <label className="form-label">Lý do từ chối:</label>
+          <div style={{ background: "#fffbeb", border: "1px solid #fde68a", padding: 14, borderRadius: 8 }}>
+            <h4 style={{ color: "#92400e", marginBottom: 6, fontSize: "0.95rem" }}>Xác nhận từ chối cơ hội</h4>
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label className="form-label" style={{ fontSize: "0.85rem", fontWeight: 600 }}>Lý do từ chối:</label>
               <input
                 type="text"
                 className="form-control"
@@ -390,7 +523,7 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
                 autoFocus
               />
             </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <div style={{ display: "flex", gap: 8 }}>
               <button
                 type="button"
                 className="btn btn-danger btn-sm"
@@ -412,20 +545,20 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
 
         {/* Needs review input prompt */}
         {needsReviewing && (
-          <div style={{ background: "#fffbeb", border: "1px solid #fde68a", padding: 16, borderRadius: 8 }}>
-            <h4 style={{ color: "#92400e", marginBottom: 8 }}>Yêu cầu hiệu chỉnh thông tin</h4>
-            <div className="form-group">
-              <label className="form-label">Ghi chú hiệu chỉnh:</label>
+          <div style={{ background: "#fffbeb", border: "1px solid #fde68a", padding: 14, borderRadius: 8 }}>
+            <h4 style={{ color: "#92400e", marginBottom: 6, fontSize: "0.95rem" }}>Yêu cầu hiệu chỉnh thông tin</h4>
+            <div className="form-group" style={{ marginBottom: 10 }}>
+              <label className="form-label" style={{ fontSize: "0.85rem", fontWeight: 600 }}>Ghi chú hiệu chỉnh:</label>
               <input
                 type="text"
                 className="form-control"
                 value={needsReviewReason}
                 onChange={(e) => setNeedsReviewReason(e.target.value)}
-                placeholder="Ví dụ: Cần bổ sung mức phí chính thức / Cần cập nhật đúng deadline toàn văn..."
+                placeholder="Ví dụ: Cần bổ sung mức phí chính thức / Cần cập nhật đúng deadline..."
                 autoFocus
               />
             </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <div style={{ display: "flex", gap: 8 }}>
               <button
                 type="button"
                 className="btn btn-warning btn-sm"
@@ -445,8 +578,9 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
           </div>
         )}
 
+        {/* Header & Badges */}
         <div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
             {candidate.conferenceCode && (
               <span
                 className="badge"
@@ -476,74 +610,74 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
                   : "badge-new"
               }`}
             >
-              Trạng thái: {candidate.status.toUpperCase()}
+              {candidate.status === "approved"
+                ? "Đã duyệt"
+                : candidate.status === "rejected"
+                ? "Đã từ chối"
+                : isUpdate
+                ? "Cập nhật chờ duyệt"
+                : "Chờ duyệt"}
             </span>
           </div>
 
-          <h2 style={{ fontSize: "1.35rem", color: "var(--primary)", lineHeight: 1.35, marginBottom: 10 }}>
+          <h2 style={{ fontSize: "1.25rem", color: "var(--primary)", lineHeight: 1.35, margin: "6px 0 8px 0" }}>
             {candidate.title}
           </h2>
 
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", color: "var(--text-sub)", fontSize: "0.875rem" }}>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", color: "var(--text-sub)", fontSize: "0.85rem" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <Building size={16} />
+              <Building size={15} />
               <span>Đơn vị tổ chức: <strong>{candidate.organizer}</strong></span>
             </div>
             {candidate.country && (
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <Globe size={16} />
+                <Globe size={15} />
                 <span>Quốc gia: <strong>{candidate.country}</strong></span>
               </div>
             )}
             {candidate.location && (
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <MapPin size={16} />
+                <MapPin size={15} />
                 <span>Địa điểm: <strong>{candidate.location}</strong></span>
               </div>
             )}
           </div>
         </div>
 
-        {/* Timelines and Metadata */}
+        {/* Timelines and Deadlines */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-            gap: 12,
+            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+            gap: 10,
             background: "#f8fafc",
-            padding: 16,
+            padding: 14,
             borderRadius: 8,
             border: "1px solid var(--line)",
           }}
         >
           <div>
-            <div style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700 }}>HẠN NỘP TOÀN VĂN</div>
-            <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--danger)" }}>
+            <div style={{ fontSize: "0.72rem", color: "var(--muted)", fontWeight: 700 }}>HẠN NỘP TOÀN VĂN</div>
+            <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--danger)" }}>
               {formatDateVN(candidate.fullPaperDeadline || candidate.deadline) || "Chưa có thông tin"}
             </div>
           </div>
           {candidate.abstractDeadline && (
             <div>
-              <div style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700 }}>HẠN ABSTRACT</div>
-              <div style={{ fontSize: "0.9rem", fontWeight: 600 }}>{formatDateVN(candidate.abstractDeadline)}</div>
-            </div>
-          )}
-          {candidate.registrationDeadline && (
-            <div>
-              <div style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700 }}>HẠN ĐĂNG KÝ</div>
-              <div style={{ fontSize: "0.9rem", fontWeight: 600 }}>{formatDateVN(candidate.registrationDeadline)}</div>
+              <div style={{ fontSize: "0.72rem", color: "var(--muted)", fontWeight: 700 }}>HẠN ABSTRACT</div>
+              <div style={{ fontSize: "0.85rem", fontWeight: 600 }}>{formatDateVN(candidate.abstractDeadline)}</div>
             </div>
           )}
           {candidate.eventDate && (
             <div>
-              <div style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700 }}>NGÀY TỔ CHỨC</div>
-              <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "var(--teal)" }}>{formatDateVN(candidate.eventDate)}</div>
+              <div style={{ fontSize: "0.72rem", color: "var(--muted)", fontWeight: 700 }}>NGÀY TỔ CHỨC</div>
+              <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--teal)" }}>{formatDateVN(candidate.eventDate)}</div>
             </div>
           )}
           {candidate.publicationFormat && (
             <div>
-              <div style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700 }}>HÌNH THỨC XUẤT BẢN</div>
-              <div style={{ fontSize: "0.9rem", fontWeight: 600, color: "var(--teal)" }}>{candidate.publicationFormat}</div>
+              <div style={{ fontSize: "0.72rem", color: "var(--muted)", fontWeight: 700 }}>HÌNH THỨC XUẤT BẢN</div>
+              <div style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--teal)" }}>{candidate.publicationFormat}</div>
             </div>
           )}
         </div>
@@ -554,63 +688,133 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
             background: "#f8fafc",
             border: "1px solid #e2e8f0",
             borderRadius: 8,
-            padding: "12px 16px",
+            padding: "10px 14px",
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-            gap: 12,
+            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+            gap: 10,
           }}
         >
           <div>
-            <div style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700 }}>PHÍ ĐĂNG BÀI / XUẤT BẢN</div>
-            <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>
+            <div style={{ fontSize: "0.72rem", color: "var(--muted)", fontWeight: 700 }}>PHÍ ĐĂNG BÀI / XUẤT BẢN</div>
+            <div style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>
               {getPublicationFeeDisplay(candidate)}
             </div>
           </div>
           <div>
-            <div style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700 }}>PHÍ THAM DỰ / ĐẠI BIỂU</div>
-            <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>
+            <div style={{ fontSize: "0.72rem", color: "var(--muted)", fontWeight: 700 }}>PHÍ THAM DỰ / ĐẠI BIỂU</div>
+            <div style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text-main)", marginTop: 2 }}>
               {getRegistrationFeeDisplay(candidate)}
             </div>
           </div>
         </div>
 
-        {/* Suitability */}
+        {/* Suitability Field */}
         {candidate.field && (
-          <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: "12px 16px", borderRadius: 8 }}>
+          <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: "10px 14px", borderRadius: 8, fontSize: "0.85rem" }}>
             <strong style={{ color: "#166534" }}>Ngành MTCN phù hợp:</strong> {candidate.field}
           </div>
         )}
 
-        {/* Content */}
-        <div>
-          <h4 style={{ marginBottom: 6, color: "var(--primary)" }}>Mô tả nội dung</h4>
-          <p style={{ fontSize: "0.9rem", color: "var(--text-main)", whiteSpace: "pre-line" }}>
-            {candidate.content}
-          </p>
-        </div>
+        {/* Content with Collapsible Reading */}
+        {candidate.content && (
+          <div>
+            <h4 style={{ marginBottom: 4, color: "var(--primary)", fontSize: "0.9rem" }}>Mô tả nội dung</h4>
+            <div
+              style={{
+                fontSize: "0.85rem",
+                color: "var(--text-main)",
+                whiteSpace: "pre-line",
+                lineHeight: 1.5,
+                ...(showFullContent
+                  ? {}
+                  : {
+                      display: "-webkit-box",
+                      WebkitLineClamp: 3,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                    }),
+              }}
+            >
+              {candidate.content}
+            </div>
+            {candidate.content.length > 180 && (
+              <button
+                type="button"
+                onClick={() => setShowFullContent(!showFullContent)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#2563eb",
+                  fontSize: "0.78rem",
+                  padding: 0,
+                  marginTop: 4,
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                {showFullContent ? "Thu gọn mô tả" : "Xem đầy đủ mô tả"}
+              </button>
+            )}
+          </div>
+        )}
 
-        {/* Directions */}
+        {/* Directions with Collapsible Reading */}
         {candidate.directions && (
-          <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", padding: 14, borderRadius: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, color: "#0369a1", marginBottom: 4 }}>
-              <Lightbulb size={18} />
+          <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", padding: "10px 14px", borderRadius: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700, color: "#0369a1", marginBottom: 3, fontSize: "0.85rem" }}>
+              <Lightbulb size={16} />
               Gợi ý bài viết cho GV MTCN:
             </div>
-            <div style={{ fontSize: "0.875rem", color: "#0c4a6e" }}>{candidate.directions}</div>
+            <div
+              style={{
+                fontSize: "0.85rem",
+                color: "#0c4a6e",
+                lineHeight: 1.5,
+                ...(showFullDirections
+                  ? {}
+                  : {
+                      display: "-webkit-box",
+                      WebkitLineClamp: 3,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                    }),
+              }}
+            >
+              {candidate.directions}
+            </div>
+            {candidate.directions.length > 140 && (
+              <button
+                type="button"
+                onClick={() => setShowFullDirections(!showFullDirections)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#0369a1",
+                  fontSize: "0.78rem",
+                  padding: 0,
+                  marginTop: 4,
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                {showFullDirections ? "Thu gọn gợi ý" : "Xem đầy đủ gợi ý"}
+              </button>
+            )}
           </div>
         )}
 
         {/* Links */}
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", borderTop: "1px solid var(--line)", paddingTop: 14 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", borderTop: "1px solid var(--line)", paddingTop: 10 }}>
           {candidate.sourceUrl && (
             <a
               href={candidate.sourceUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="btn btn-secondary btn-sm"
+              style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
             >
-              Mở link nguồn chính thức
-              <ExternalLink size={14} />
+              Link nguồn chính thức
+              <ExternalLink size={13} />
             </a>
           )}
           {candidate.submissionUrl && (
@@ -619,10 +823,55 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
               target="_blank"
               rel="noopener noreferrer"
               className="btn btn-secondary btn-sm"
+              style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
             >
-              Mở link nộp bài
-              <ExternalLink size={14} />
+              Link nộp bài
+              <ExternalLink size={13} />
             </a>
+          )}
+        </div>
+
+        {/* Collapsible Additional Metadata */}
+        <div style={{ borderTop: "1px solid #f1f5f9", paddingTop: 8 }}>
+          <button
+            type="button"
+            onClick={() => setShowAdditionalInfo(!showAdditionalInfo)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "#64748b",
+              fontSize: "0.78rem",
+              fontWeight: 600,
+              padding: "4px 0",
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            {showAdditionalInfo ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            Thông tin kỹ thuật & bổ sung
+          </button>
+
+          {showAdditionalInfo && (
+            <div
+              style={{
+                marginTop: 6,
+                padding: "8px 12px",
+                background: "#f8fafc",
+                borderRadius: 6,
+                fontSize: "0.78rem",
+                color: "#64748b",
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                gap: 6,
+              }}
+            >
+              <div>Thời điểm phát hiện: <strong>{formatDateVN(candidate.discoveredAt || candidate.createdAt)}</strong></div>
+              {candidate.lastUpdated && <div>Spark cập nhật: <strong>{candidate.lastUpdated}</strong></div>}
+              {candidate.indexing && <div>Chỉ mục kỷ yếu: <strong>{candidate.indexing}</strong></div>}
+              {candidate.runId && <div>Mã phiên chạy Spark: <strong>{candidate.runId}</strong></div>}
+            </div>
           )}
         </div>
       </div>

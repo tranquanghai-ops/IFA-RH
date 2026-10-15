@@ -9,6 +9,8 @@ import {
 } from "../firebase/firestore";
 import type { Publication, UserProfile } from "../types";
 import { PublicationModal } from "../components/PublicationModal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { useToast } from "../context/ToastContext";
 import { exportToExcel, exportToCsv } from "../utils/excel";
 import {
   Plus,
@@ -40,6 +42,9 @@ export const PublicationHistoryPage: React.FC = () => {
   // Modals
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingPub, setEditingPub] = useState<Publication | null>(null);
+  const [deletingPub, setDeletingPub] = useState<Publication | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const { showSuccess, showError } = useToast();
 
   const loadLecturers = async () => {
     if (isStaff) {
@@ -172,19 +177,27 @@ export const PublicationHistoryPage: React.FC = () => {
     );
   };
 
-  const handleDelete = async (pub: Publication) => {
-    if (!window.confirm(`Bạn có chắc muốn xóa công trình "${pub.title}" khỏi hồ sơ?`)) {
-      return;
-    }
+  const handleDelete = (pub: Publication) => {
+    setDeletingPub(pub);
+  };
+
+  const executeDelete = async () => {
+    if (!deletingPub || !profile) return;
+    setIsDeleting(true);
     try {
       await deletePublication(
-        pub.id,
-        pub.title,
+        deletingPub.id,
+        deletingPub.title,
         { uid: profile.uid, email: profile.email, role: profile.role }
       );
+      showSuccess(`Đã xóa công trình "${deletingPub.title}" khỏi hồ sơ.`);
+      setDeletingPub(null);
       await loadPublications();
     } catch (err: any) {
-      alert("Lỗi xóa công trình: " + err.message);
+      console.error(err);
+      showError("Lỗi xóa công trình.", err);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -496,6 +509,17 @@ export const PublicationHistoryPage: React.FC = () => {
         userId={profile.uid}
         userEmail={profile.email}
         userName={profile.name}
+      />
+
+      <ConfirmDialog
+        isOpen={!!deletingPub}
+        title="Xóa công trình nghiên cứu"
+        message={`Bạn có chắc chắn muốn xóa công trình "${deletingPub?.title}" khỏi hồ sơ? Thao tác này không thể hoàn tác.`}
+        confirmText="Xóa công trình"
+        variant="danger"
+        isLoading={isDeleting}
+        onConfirm={executeDelete}
+        onCancel={() => setDeletingPub(null)}
       />
     </div>
   );

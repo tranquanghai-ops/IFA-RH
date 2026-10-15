@@ -10,6 +10,8 @@ import {
 import type { UserProfile, AuditLog, ImportBatch, UserRole } from "../types";
 import { formatDateVN } from "../utils/date";
 import { AddAdminModal } from "../components/AddAdminModal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { useToast } from "../context/ToastContext";
 import {
   ShieldAlert,
   Users,
@@ -45,6 +47,10 @@ export const OwnerPage: React.FC = () => {
   const [isAddAdminOpen, setIsAddAdminOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const { showSuccess, showError, showWarning } = useToast();
+  const [revokingUser, setRevokingUser] = useState<UserProfile | null>(null);
+  const [roleChangeTarget, setRoleChangeTarget] = useState<{ user: UserProfile; role: UserRole } | null>(null);
+  const [isOwnerActionLoading, setIsOwnerActionLoading] = useState(false);
 
   const loadOwnerData = async () => {
     setLoading(true);
@@ -97,45 +103,44 @@ export const OwnerPage: React.FC = () => {
   });
 
   // Revoke Admin
-  const handleRevokeAdmin = async (targetUser: UserProfile) => {
+  const handleRevokeAdmin = (targetUser: UserProfile) => {
     if (targetUser.email === "tranquanghai@tdtu.edu.vn" || targetUser.role === "owner") {
-      alert("Không thể gỡ quyền hoặc thay đổi vai trò của Owner sáng lập hệ thống!");
+      showWarning("Không thể gỡ quyền hoặc thay đổi vai trò của Owner sáng lập hệ thống!");
       return;
     }
     if (targetUser.uid === profile.uid) {
-      alert("Bạn không thể tự gỡ quyền của chính mình!");
+      showWarning("Bạn không thể tự gỡ quyền của chính mình!");
       return;
     }
+    setRevokingUser(targetUser);
+  };
 
-    const confirmMsg =
-      `Xác nhận gỡ quyền Admin của "${targetUser.name} (${targetUser.email})"?\n\n` +
-      `- Vai trò mới: Giảng viên\n` +
-      `- Dữ liệu cá nhân, lịch sử NCKH và bài báo được bảo toàn nguyên vẹn.\n` +
-      `- Hành động này sẽ được ghi vào nhật ký an toàn (Audit Log).`;
-
-    if (!window.confirm(confirmMsg)) {
-      return;
-    }
-
+  const executeRevokeAdmin = async () => {
+    if (!revokingUser) return;
+    setIsOwnerActionLoading(true);
     try {
       setError("");
       setMessage("");
-      await revokeAdminRole(targetUser, {
+      await revokeAdminRole(revokingUser, {
         uid: profile.uid,
         email: profile.email,
         role: profile.role,
       });
-      setMessage(`Đã gỡ quyền Admin của ${targetUser.name} (${targetUser.email}) thành công.`);
+      showSuccess(`Đã gỡ quyền Admin của ${revokingUser.name} (${revokingUser.email}) thành công.`);
+      setRevokingUser(null);
       await loadOwnerData();
     } catch (err: any) {
-      setError(err.message || "Lỗi khi gỡ quyền Admin.");
+      console.error(err);
+      showError("Lỗi khi gỡ quyền Admin.", err);
+    } finally {
+      setIsOwnerActionLoading(false);
     }
   };
 
   // Quick Role Change from All Users table
-  const handleRoleChange = async (targetUser: UserProfile, newRole: UserRole) => {
+  const handleRoleChange = (targetUser: UserProfile, newRole: UserRole) => {
     if (targetUser.uid === profile.uid && newRole !== "owner") {
-      alert("Bạn không thể tự hạ quyền Owner của chính mình!");
+      showWarning("Bạn không thể tự hạ quyền Owner của chính mình!");
       return;
     }
 
@@ -143,38 +148,40 @@ export const OwnerPage: React.FC = () => {
       (targetUser.email === "tranquanghai@tdtu.edu.vn" || targetUser.role === "owner") &&
       newRole !== "owner"
     ) {
-      alert("Không thể thay đổi hoặc hạ quyền của tài khoản Owner sáng lập hệ thống!");
+      showWarning("Không thể thay đổi hoặc hạ quyền của tài khoản Owner sáng lập hệ thống!");
       return;
     }
 
     if (newRole === "owner") {
-      alert("Hệ thống chỉ duy trì 1 tài khoản Owner sáng lập duy nhất. Không thể tạo thêm Owner!");
+      showWarning("Hệ thống chỉ duy trì 1 tài khoản Owner sáng lập duy nhất. Không thể tạo thêm Owner!");
       return;
     }
 
-    if (
-      !window.confirm(
-        `Xác nhận thay đổi vai trò của "${targetUser.name} (${targetUser.email})" thành [${newRole.toUpperCase()}]?`
-      )
-    ) {
-      return;
-    }
+    setRoleChangeTarget({ user: targetUser, role: newRole });
+  };
 
+  const executeRoleChange = async () => {
+    if (!roleChangeTarget) return;
+    setIsOwnerActionLoading(true);
     try {
       setError("");
       setMessage("");
       await setUserRole(
-        targetUser.id,
-        targetUser.email,
-        newRole,
+        roleChangeTarget.user.id,
+        roleChangeTarget.user.email,
+        roleChangeTarget.role,
         { uid: profile.uid, email: profile.email, role: profile.role },
-        targetUser.name,
-        targetUser.role
+        roleChangeTarget.user.name,
+        roleChangeTarget.user.role
       );
-      setMessage(`Đã cập nhật vai trò cho ${targetUser.email} thành ${newRole}.`);
+      showSuccess(`Đã cập nhật vai trò cho ${roleChangeTarget.user.email} thành ${roleChangeTarget.role}.`);
+      setRoleChangeTarget(null);
       await loadOwnerData();
     } catch (err: any) {
-      setError(err.message || "Lỗi cập nhật vai trò.");
+      console.error(err);
+      showError("Lỗi cập nhật vai trò.", err);
+    } finally {
+      setIsOwnerActionLoading(false);
     }
   };
 
@@ -732,6 +739,30 @@ export const OwnerPage: React.FC = () => {
         }}
         allUsers={users}
         currentActor={{ uid: profile.uid, email: profile.email, role: profile.role }}
+      />
+
+      {/* Revoke Admin Confirmation */}
+      <ConfirmDialog
+        isOpen={!!revokingUser}
+        title="Gỡ quyền Quản trị viên (Admin)"
+        message={`Bạn có chắc chắn muốn gỡ quyền Admin của "${revokingUser?.name}" (${revokingUser?.email})? Người dùng này sẽ trở về vai trò Giảng viên/Nghiên cứu viên.`}
+        confirmText="Gỡ quyền Admin"
+        variant="danger"
+        isLoading={isOwnerActionLoading}
+        onConfirm={executeRevokeAdmin}
+        onCancel={() => setRevokingUser(null)}
+      />
+
+      {/* Role Change Confirmation */}
+      <ConfirmDialog
+        isOpen={!!roleChangeTarget}
+        title="Xác nhận thay đổi vai trò"
+        message={`Bạn có chắc chắn muốn thay đổi vai trò của "${roleChangeTarget?.user.name}" (${roleChangeTarget?.user.email}) sang "${roleChangeTarget?.role}"?`}
+        confirmText="Xác nhận thay đổi"
+        variant="warning"
+        isLoading={isOwnerActionLoading}
+        onConfirm={executeRoleChange}
+        onCancel={() => setRoleChangeTarget(null)}
       />
     </div>
   );

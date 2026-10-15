@@ -47,6 +47,8 @@ import {
   type JournalSyncErrorData,
 } from "../components/JournalSyncResultModal";
 import { JournalCandidateReviewModal } from "../components/JournalCandidateReviewModal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { useToast } from "../context/ToastContext";
 import {
   BookOpen,
   Search,
@@ -132,6 +134,15 @@ export const JournalDirectoryPage: React.FC = () => {
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
   const [isBulkApproving, setIsBulkApproving] = useState<boolean>(false);
   const [isBulkRejecting, setIsBulkRejecting] = useState<boolean>(false);
+
+  // Dialog & Toast States
+  const { showSuccess, showError, showInfo } = useToast();
+  const [confirmBulkApprove, setConfirmBulkApprove] = useState(false);
+  const [rejectingCandidate, setRejectingCandidate] = useState<JournalCandidate | null>(null);
+  const [rejectCandidateReason, setRejectCandidateReason] = useState("Chưa phù hợp tiêu chí");
+  const [restoringCandidate, setRestoringCandidate] = useState<JournalCandidate | null>(null);
+  const [confirmBulkReject, setConfirmBulkReject] = useState(false);
+  const [bulkRejectReason, setBulkRejectReason] = useState("Chưa phù hợp tiêu chí");
 
   // Modals state
   const [selectedJournalForDetail, setSelectedJournalForDetail] = useState<Journal | null>(null);
@@ -341,13 +352,13 @@ export const JournalDirectoryPage: React.FC = () => {
     }
   };
 
-  const handleBulkApprove = async () => {
+  const handleBulkApprove = () => {
     if (!user || selectedCandidateIds.length === 0) return;
-    const count = selectedCandidateIds.length;
-    if (!confirm(`Xác nhận duyệt và công bố ${count} tạp chí đã chọn vào danh mục công khai?`)) {
-      return;
-    }
+    setConfirmBulkApprove(true);
+  };
 
+  const executeBulkApprove = async () => {
+    if (!user || selectedCandidateIds.length === 0) return;
     setIsBulkApproving(true);
     try {
       const res = await bulkApproveJournalCandidates(selectedCandidateIds, {
@@ -355,79 +366,87 @@ export const JournalDirectoryPage: React.FC = () => {
         email: user.email || "",
       });
       if (res.skippedWarningCount > 0) {
-        alert(
-          `Đã duyệt thành công ${res.successCount} bản ghi! Lưu ý: ${res.skippedWarningCount} bản ghi có cảnh báo CAN_KIEM_TRA hoặc cần kiểm tra thủ công đã được giữ lại trong danh sách để Admin đối chiếu riêng.`
+        showInfo(
+          `Đã duyệt thành công ${res.successCount} bản ghi (${res.skippedWarningCount} bản ghi cần kiểm tra thủ công được giữ lại).`
         );
       } else {
-        alert(`Đã duyệt thành công ${res.successCount} bản ghi!`);
+        showSuccess(`Đã duyệt thành công ${res.successCount} tạp chí.`);
       }
       setSelectedCandidateIds([]);
+      setConfirmBulkApprove(false);
     } catch (err: any) {
-      alert("Lỗi duyệt hàng loạt: " + err.message);
+      console.error(err);
+      showError("Lỗi duyệt hàng loạt tạp chí. Vui lòng thử lại.", err);
     } finally {
       setIsBulkApproving(false);
     }
   };
 
-  const handleRejectCandidate = async (candidate: JournalCandidate) => {
+  const handleRejectCandidate = (candidate: JournalCandidate) => {
     if (!user) return;
-    const reason = window.prompt(
-      `Xác nhận từ chối duyệt tạp chí:\n"${candidate.name}"\n\nNhập lý do từ chối (tùy chọn):`,
-      "Chưa phù hợp tiêu chí"
-    );
-    if (reason === null) return;
+    setRejectCandidateReason("Chưa phù hợp tiêu chí");
+    setRejectingCandidate(candidate);
+  };
+
+  const executeRejectCandidate = async () => {
+    if (!user || !rejectingCandidate) return;
     try {
       await rejectJournalCandidate(
-        candidate.id,
-        reason.trim() || "Chưa phù hợp tiêu chí",
+        rejectingCandidate.id,
+        rejectCandidateReason.trim() || "Chưa phù hợp tiêu chí",
         { uid: user.uid, email: user.email || "" }
       );
-      setSelectedCandidateIds((prev) => prev.filter((id) => id !== candidate.id));
+      showSuccess(`Đã từ chối tạp chí "${rejectingCandidate.name}".`);
+      setSelectedCandidateIds((prev) => prev.filter((id) => id !== rejectingCandidate.id));
+      setRejectingCandidate(null);
     } catch (err: any) {
-      alert("Lỗi từ chối tạp chí: " + (err?.message || err));
+      console.error(err);
+      showError("Lỗi từ chối tạp chí.", err);
     }
   };
 
-  const handleRestoreCandidate = async (candidate: JournalCandidate) => {
+  const handleRestoreCandidate = (candidate: JournalCandidate) => {
     if (!user) return;
-    if (
-      !confirm(
-        `Khôi phục tạp chí "${candidate.name}" về hàng chờ duyệt?`
-      )
-    ) {
-      return;
-    }
+    setRestoringCandidate(candidate);
+  };
+
+  const executeRestoreCandidate = async () => {
+    if (!user || !restoringCandidate) return;
     try {
-      await restoreJournalCandidate(candidate.id, {
+      await restoreJournalCandidate(restoringCandidate.id, {
         uid: user.uid,
         email: user.email || "",
       });
-      setSelectedCandidateIds((prev) => prev.filter((id) => id !== candidate.id));
+      showSuccess(`Đã khôi phục tạp chí "${restoringCandidate.name}".`);
+      setSelectedCandidateIds((prev) => prev.filter((id) => id !== restoringCandidate.id));
+      setRestoringCandidate(null);
     } catch (err: any) {
-      alert("Lỗi khôi phục tạp chí: " + (err?.message || err));
+      console.error(err);
+      showError("Lỗi khôi phục tạp chí.", err);
     }
   };
 
-  const handleBulkReject = async () => {
+  const handleBulkReject = () => {
     if (!user || selectedCandidateIds.length === 0) return;
-    const count = selectedCandidateIds.length;
-    const reason = window.prompt(
-      `Xác nhận từ chối duyệt ${count} tạp chí đã chọn?\n\nNhập lý do từ chối (tùy chọn):`,
-      "Chưa phù hợp tiêu chí"
-    );
-    if (reason === null) return;
+    setBulkRejectReason("Chưa phù hợp tiêu chí");
+    setConfirmBulkReject(true);
+  };
 
+  const executeBulkReject = async () => {
+    if (!user || selectedCandidateIds.length === 0) return;
     setIsBulkRejecting(true);
     try {
       const res = await bulkRejectJournalCandidates(
         selectedCandidateIds,
         { uid: user.uid, email: user.email || "" },
-        reason.trim() || "Chưa phù hợp tiêu chí"
+        bulkRejectReason.trim() || "Chưa phù hợp tiêu chí"
       );
-      alert(`Đã chuyển ${res.successCount} tạp chí vào mục Từ chối duyệt.`);
+      showSuccess(`Đã chuyển ${res.successCount} tạp chí vào mục Từ chối duyệt.`);
       setSelectedCandidateIds([]);
+      setConfirmBulkReject(false);
     } catch (err: any) {
-      alert("Lỗi từ chối hàng loạt: " + err.message);
+      console.error(err);
+      showError("Lỗi từ chối hàng loạt.", err);
     } finally {
       setIsBulkRejecting(false);
     }
@@ -1984,6 +2003,68 @@ export const JournalDirectoryPage: React.FC = () => {
           }}
         />
       )}
+
+      {/* Bulk Approve Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={confirmBulkApprove}
+        title="Duyệt các tạp chí đã chọn?"
+        message={`Xác nhận duyệt và công bố ${selectedCandidateIds.length} tạp chí đã chọn vào danh mục công khai.`}
+        confirmLabel="Duyệt công bố"
+        cancelLabel="Hủy"
+        variant="primary"
+        isLoading={isBulkApproving}
+        onConfirm={executeBulkApprove}
+        onCancel={() => setConfirmBulkApprove(false)}
+      />
+
+      {/* Single Candidate Reject Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={!!rejectingCandidate}
+        title="Từ chối duyệt tạp chí?"
+        message={`Xác nhận từ chối tạp chí "${rejectingCandidate?.name}". Bản ghi sẽ được chuyển sang mục Từ chối.`}
+        confirmLabel="Từ chối"
+        cancelLabel="Hủy"
+        variant="danger"
+        promptInput={{
+          label: "Lý do từ chối (tùy chọn):",
+          value: rejectCandidateReason,
+          placeholder: "Nhập lý do từ chối...",
+          onChange: setRejectCandidateReason,
+        }}
+        onConfirm={executeRejectCandidate}
+        onCancel={() => setRejectingCandidate(null)}
+      />
+
+      {/* Single Candidate Restore Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={!!restoringCandidate}
+        title="Khôi phục tạp chí?"
+        message={`Khôi phục tạp chí "${restoringCandidate?.name}" về hàng chờ duyệt?`}
+        confirmLabel="Khôi phục"
+        cancelLabel="Hủy"
+        variant="primary"
+        onConfirm={executeRestoreCandidate}
+        onCancel={() => setRestoringCandidate(null)}
+      />
+
+      {/* Bulk Reject Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={confirmBulkReject}
+        title="Từ chối các tạp chí đã chọn?"
+        message={`Xác nhận từ chối duyệt ${selectedCandidateIds.length} tạp chí đã chọn?`}
+        confirmLabel="Từ chối tất cả"
+        cancelLabel="Hủy"
+        variant="danger"
+        isLoading={isBulkRejecting}
+        promptInput={{
+          label: "Lý do từ chối chung (tùy chọn):",
+          value: bulkRejectReason,
+          placeholder: "Nhập lý do...",
+          onChange: setBulkRejectReason,
+        }}
+        onConfirm={executeBulkReject}
+        onCancel={() => setConfirmBulkReject(false)}
+      />
     </div>
   );
 };

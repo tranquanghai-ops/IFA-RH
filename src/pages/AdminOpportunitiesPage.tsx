@@ -13,6 +13,8 @@ import type { Opportunity } from "../types";
 import { OpportunityFormModal } from "../components/OpportunityFormModal";
 import { OpportunityDetailModal } from "../components/OpportunityDetailModal";
 import { Modal } from "../components/Modal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { useToast } from "../context/ToastContext";
 import { exportToExcel, exportToCsv } from "../utils/excel";
 import { formatDateVN } from "../utils/date";
 import {
@@ -34,6 +36,7 @@ import {
 
 export const AdminOpportunitiesPage: React.FC = () => {
   const { profile } = useAuth();
+  const { showSuccess, showError, showWarning } = useToast();
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -45,6 +48,8 @@ export const AdminOpportunitiesPage: React.FC = () => {
   const [viewingOpp, setViewingOpp] = useState<Opportunity | null>(null);
   const [hidingOpp, setHidingOpp] = useState<Opportunity | null>(null);
   const [recallingOpp, setRecallingOpp] = useState<Opportunity | null>(null);
+  const [deletingOpp, setDeletingOpp] = useState<Opportunity | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
 
   const loadOpportunities = async () => {
@@ -78,19 +83,27 @@ export const AdminOpportunitiesPage: React.FC = () => {
     return matchStatus && matchSearch;
   });
 
-  const handleDelete = async (opp: Opportunity) => {
-    if (!window.confirm(`Bạn có chắc muốn xóa cơ hội "${opp.title}"?`)) {
-      return;
-    }
+  const handleDelete = (opp: Opportunity) => {
+    setDeletingOpp(opp);
+  };
+
+  const executeDelete = async () => {
+    if (!deletingOpp || !profile) return;
+    setIsDeleting(true);
     try {
       await deleteOpportunity(
-        opp.id,
-        opp.title,
+        deletingOpp.id,
+        deletingOpp.title,
         { uid: profile.uid, email: profile.email, role: profile.role }
       );
+      showSuccess(`Đã xóa cơ hội "${deletingOpp.title}".`);
+      setDeletingOpp(null);
       await loadOpportunities();
     } catch (err: any) {
-      alert("Lỗi xóa cơ hội: " + err.message);
+      console.error("Failed to delete opp:", err);
+      showError("Không thể xóa cơ hội. Vui lòng thử lại.", err);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -103,10 +116,12 @@ export const AdminOpportunitiesPage: React.FC = () => {
         email: profile.email,
         role: profile.role,
       });
+      showSuccess(`Đã ẩn tin "${hidingOpp.title}".`);
       setHidingOpp(null);
       await loadOpportunities();
     } catch (err: any) {
-      alert("Lỗi ẩn tin: " + (err.message || err));
+      console.error("Failed to hide opp:", err);
+      showError("Không thể ẩn tin. Vui lòng thử lại.", err);
     } finally {
       setActionLoading(false);
     }
@@ -120,9 +135,11 @@ export const AdminOpportunitiesPage: React.FC = () => {
         email: profile.email,
         role: profile.role,
       });
+      showSuccess(`Đã công bố lại tin "${opp.title}".`);
       await loadOpportunities();
     } catch (err: any) {
-      alert("Lỗi công bố lại tin: " + (err.message || err));
+      console.error("Failed to republish opp:", err);
+      showError("Không thể công bố lại tin. Vui lòng thử lại.", err);
     }
   };
 
@@ -135,10 +152,12 @@ export const AdminOpportunitiesPage: React.FC = () => {
         email: profile.email,
         role: profile.role,
       });
+      showSuccess(`Đã thu hồi tin "${recallingOpp.title}" về hàng chờ duyệt.`);
       setRecallingOpp(null);
       await loadOpportunities();
     } catch (err: any) {
-      alert("Lỗi thu hồi tin: " + (err.message || err));
+      console.error("Failed to recall opp:", err);
+      showError("Không thể thu hồi tin. Vui lòng thử lại.", err);
     } finally {
       setActionLoading(false);
     }
@@ -146,7 +165,7 @@ export const AdminOpportunitiesPage: React.FC = () => {
 
   const handleExportExcel = async () => {
     if (filtered.length === 0) {
-      alert("Không có dữ liệu để xuất");
+      showWarning("Không có dữ liệu để xuất");
       return;
     }
     const cols = [
@@ -175,7 +194,7 @@ export const AdminOpportunitiesPage: React.FC = () => {
 
   const handleExportCsv = () => {
     if (filtered.length === 0) {
-      alert("Không có dữ liệu để xuất");
+      showWarning("Không có dữ liệu để xuất");
       return;
     }
     const cols = [
@@ -638,6 +657,19 @@ export const AdminOpportunitiesPage: React.FC = () => {
           )}
         </div>
       </Modal>
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={!!deletingOpp}
+        title="Xóa cơ hội NCKH?"
+        message={`Bạn có chắc muốn xóa vĩnh viễn cơ hội "${deletingOpp?.title}"? Thao tác này không thể hoàn tác.`}
+        confirmLabel="Xóa"
+        cancelLabel="Hủy"
+        variant="danger"
+        isLoading={isDeleting}
+        onConfirm={executeDelete}
+        onCancel={() => setDeletingOpp(null)}
+      />
     </div>
   );
 };

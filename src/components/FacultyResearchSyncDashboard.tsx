@@ -6,6 +6,7 @@ import {
   type FacultyResearchSyncState,
 } from "../firebase/firestore";
 import { useAuth } from "../firebase/auth";
+import { ConfirmDialog } from "./ConfirmDialog";
 import {
   Sparkles,
   RefreshCw,
@@ -34,6 +35,7 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [showForceConfirm, setShowForceConfirm] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
 
   // Subscribe to real-time sync state
@@ -47,17 +49,11 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
     return () => unsubscribe();
   }, []);
 
-  const handleManualSyncNow = async () => {
+  const executeSync = async () => {
     if (!profile) return;
-    if (syncState?.syncInProgress) {
-      const confirmOverride = window.confirm(
-        "Một phiên đồng bộ đang được đánh dấu đang chạy. Bạn có muốn ép buộc tiếp tục đồng bộ?"
-      );
-      if (!confirmOverride) return;
-    }
-
     setSyncing(true);
     setMessage(null);
+    setShowForceConfirm(false);
 
     try {
       const outcome = await runFacultyResearchSyncClient(profile, {
@@ -88,6 +84,15 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
     } finally {
       setSyncing(false);
     }
+  };
+
+  const handleManualSyncNow = () => {
+    if (!profile) return;
+    if (syncState?.syncInProgress) {
+      setShowForceConfirm(true);
+      return;
+    }
+    executeSync();
   };
 
   const formatDateTime = (iso?: string | null) => {
@@ -549,6 +554,17 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={showForceConfirm}
+        title="Xác nhận ép buộc đồng bộ"
+        message="Hệ thống đang ghi nhận một phiên đồng bộ khác đang chạy. Bạn có chắc chắn muốn ép buộc giải phóng khóa và bắt đầu phiên đồng bộ mới ngay lập tức?"
+        confirmText="Ép buộc đồng bộ"
+        variant="warning"
+        isLoading={syncing}
+        onConfirm={executeSync}
+        onCancel={() => setShowForceConfirm(false)}
+      />
     </div>
   );
 };

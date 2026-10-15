@@ -15,6 +15,7 @@ import {
   writeBatch,
   onSnapshot,
   runTransaction,
+  deleteField,
   type DocumentReference,
 } from "firebase/firestore";
 import { firestore } from "./config";
@@ -699,6 +700,11 @@ export async function recallOpportunityCandidate(
     updatedBy: actor.email,
   };
 
+  // If candidate was an approved full opportunity, clear resolutionType so it displays cleanly in pending
+  if (cand.changeType !== "update" && cand.resolutionType === "APPROVED_UPDATE") {
+    candUpdate.resolutionType = deleteField();
+  }
+
   if (matchedOppId) {
     candUpdate.publishedOpportunityId = matchedOppId;
     const oppRef = doc(firestore, "opportunities", matchedOppId);
@@ -1028,11 +1034,13 @@ export async function approveCandidate(
       for (const [k, v] of Object.entries(updateOppData)) {
         if (v !== undefined) cleanUpdate[k] = v;
       }
+      // CRITICAL: Strip immutable fields from update payload to prevent rules rejection
+      delete cleanUpdate.createdAt;
+      delete cleanUpdate.createdBy;
 
       const batch = writeBatch(firestore);
       batch.update(oppRef, cleanUpdate);
       batch.update(candRef, {
-        id: resolvedCandId,
         status: "approved",
         resolutionType: "APPROVED_UPDATE",
         reviewedBy: actor.email,
@@ -1062,7 +1070,6 @@ export async function approveCandidate(
   const batch = writeBatch(firestore);
   batch.set(oppRef, newOppData);
   batch.update(candRef, {
-    id: resolvedCandId,
     status: "approved",
     resolutionType: "APPROVED_UPDATE",
     reviewedBy: actor.email,

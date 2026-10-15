@@ -11,6 +11,8 @@ import {
 } from "../firebase/firestore";
 import type { OpportunityCandidate, Opportunity } from "../types";
 import { CandidateReviewModal } from "../components/CandidateReviewModal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { useToast } from "../context/ToastContext";
 import { FacultyResearchSyncModal } from "../components/FacultyResearchSyncModal";
 import { FacultyResearchSyncDashboard } from "../components/FacultyResearchSyncDashboard";
 import { formatDateVN, parseDateSafe, getOpportunityDeadlineInfo } from "../utils/date";
@@ -140,7 +142,11 @@ export const getCandidatePrimaryCategory = (
 
   // 4. Đề xuất cập nhật CÒN CHỜ XỬ LÝ (pending / needs_review)
   // Ưu tiên cao hơn hết hạn: kể cả khi hội thảo gốc đã hết hạn, đề xuất cập nhật vẫn phải vào "Cập nhật chờ duyệt"
-  if (c.changeType === "update" || Boolean(c.publishedOpportunityId)) {
+  if (
+    c.changeType === "update" ||
+    c.resolutionType === "PENDING_UPDATE" ||
+    (Boolean(c.publishedOpportunityId) && !c.recalledAt && c.changeType !== "create")
+  ) {
     return "updates";
   }
 
@@ -184,6 +190,7 @@ export const matchesCandidateSearch = (cand: OpportunityCandidate, queryText: st
 
 export const AdminCandidatesPage: React.FC = () => {
   const { profile } = useAuth();
+  const { showSuccess, showError } = useToast();
   const [candidates, setCandidates] = useState<OpportunityCandidate[]>([]);
   const [publishedOpps, setPublishedOpps] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
@@ -198,6 +205,9 @@ export const AdminCandidatesPage: React.FC = () => {
   const [bulkApproving, setBulkApproving] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [recallingId, setRecallingId] = useState<string | null>(null);
+  const [confirmRecallCand, setConfirmRecallCand] = useState<OpportunityCandidate | null>(null);
+  const [isRecallLoading, setIsRecallLoading] = useState(false);
+  const [confirmBulkApprove, setConfirmBulkApprove] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [actionMessage, setActionMessage] = useState<{
     type: "success" | "error";
@@ -374,30 +384,20 @@ export const AdminCandidatesPage: React.FC = () => {
         next.delete(cand.id);
         return next;
       });
-      setActionMessage({
-        type: "success",
-        text: `Đã duyệt và công bố "${cand.title}" lên Cổng thông tin NCKH.`,
-      });
+      showSuccess(`Đã duyệt hội thảo "${cand.title}".`);
       await loadData();
     } catch (err: any) {
       console.error("Failed to quick approve candidate:", err);
-      setActionMessage({
-        type: "error",
-        text: `Lỗi khi duyệt "${cand.title}": ${err?.message || String(err)}`,
-      });
+      showError("Không thể duyệt hội thảo. Hệ thống chưa thể lưu thay đổi. Vui lòng thử lại.", err);
     } finally {
       setApprovingId(null);
     }
   };
 
-  const handleRecallCandidate = async (cand: OpportunityCandidate) => {
+  const executeRecallCandidate = async (cand: OpportunityCandidate) => {
     if (!profile) return;
-    const confirmRecall = window.confirm(
-      `Bạn có chắc chắn muốn thu hồi hội thảo "${cand.title}" về hàng chờ duyệt?\nHội thảo này sẽ được gỡ khỏi Cổng thông tin công khai và chuyển về trạng thái 'Chờ duyệt'.`
-    );
-    if (!confirmRecall) return;
-
     setRecallingId(cand.id);
+    setIsRecallLoading(true);
     setActionMessage(null);
     try {
       await recallOpportunityCandidate(cand, {
@@ -405,23 +405,24 @@ export const AdminCandidatesPage: React.FC = () => {
         email: profile.email,
         role: profile.role,
       });
-      setActionMessage({
-        type: "success",
-        text: `Đã thu hồi thành công "${cand.title}" về hàng chờ duyệt.`,
-      });
+      showSuccess(`Đã thu hồi hội thảo "${cand.title}" về hàng chờ duyệt.`);
+      setConfirmRecallCand(null);
       await loadData();
     } catch (err: any) {
       console.error("Failed to recall candidate:", err);
-      setActionMessage({
-        type: "error",
-        text: `Lỗi khi thu hồi "${cand.title}": ${err?.message || String(err)}`,
-      });
+      showError("Không thể thu hồi hội thảo. Hệ thống chưa thể lưu thay đổi. Vui lòng thử lại.", err);
     } finally {
       setRecallingId(null);
+      setIsRecallLoading(false);
     }
   };
 
-  const handleApproveSelected = async () => {
+  const handleRecallCandidate = async (cand: OpportunityCandidate) => {
+    // If called from CandidateReviewModal (which already has its own confirmation), execute directly
+    await executeRecallCandidate(cand);
+  };
+
+  const executeApproveSelected = async () => {
     const selectedCands = candidates.filter(
       (c) => selectedIds.has(c.id) && c.status !== "approved"
     );
@@ -440,21 +441,24 @@ export const AdminCandidatesPage: React.FC = () => {
         okCount++;
       }
       setSelectedIds(new Set());
-      setActionMessage({
-        type: "success",
-        text: `Đã duyệt và công bố thành công ${okCount} hội thảo / cơ hội NCKH.`,
-      });
+      showSuccess(`Đã duyệt và công bố ${okCount} hội thảo.`);
+      setConfirmBulkApprove(false);
       await loadData();
     } catch (err: any) {
       console.error("Failed to approve selected candidates:", err);
-      setActionMessage({
-        type: "error",
-        text: `Đã duyệt ${okCount}/${selectedCands.length} mục. Lỗi: ${err?.message || String(err)}`,
-      });
+      showError(`Đã duyệt ${okCount}/${selectedCands.length} mục. Chưa thể hoàn tất tất cả thay đổi.`, err);
       await loadData();
     } finally {
       setBulkApproving(false);
     }
+  };
+
+  const handleApproveSelected = () => {
+    const selectedCands = candidates.filter(
+      (c) => selectedIds.has(c.id) && c.status !== "approved"
+    );
+    if (selectedCands.length === 0) return;
+    setConfirmBulkApprove(true);
   };
 
   const handleBulkApproveOpen = async () => {
@@ -477,17 +481,11 @@ export const AdminCandidatesPage: React.FC = () => {
         okCount++;
       }
       setSelectedIds(new Set());
-      setActionMessage({
-        type: "success",
-        text: `Đã duyệt và công bố thành công toàn bộ ${okCount} cơ hội đang mở sang Cổng NCKH công khai.`,
-      });
+      showSuccess(`Đã duyệt và công bố ${okCount} cơ hội NCKH.`);
       await loadData();
     } catch (err: any) {
       console.error(err);
-      setActionMessage({
-        type: "error",
-        text: `Lỗi khi duyệt hàng loạt (${okCount}/${openCandidates.length}): ${err?.message || String(err)}`,
-      });
+      showError(`Đã duyệt ${okCount}/${openCandidates.length} mục. Chưa thể hoàn tất tất cả thay đổi.`, err);
       await loadData();
     } finally {
       setBulkApproving(false);
@@ -1176,7 +1174,7 @@ export const AdminCandidatesPage: React.FC = () => {
                           <button
                             type="button"
                             className="btn btn-sm"
-                            onClick={() => handleRecallCandidate(cand)}
+                            onClick={() => setConfirmRecallCand(cand)}
                             disabled={recallingId === cand.id}
                             style={{
                               background: "#fff1f2",
@@ -1520,7 +1518,7 @@ export const AdminCandidatesPage: React.FC = () => {
                       <button
                         type="button"
                         className="btn btn-sm"
-                        onClick={() => handleRecallCandidate(cand)}
+                        onClick={() => setConfirmRecallCand(cand)}
                         disabled={recallingId === cand.id}
                         style={{
                           background: "#fff1f2",
@@ -1568,10 +1566,11 @@ export const AdminCandidatesPage: React.FC = () => {
             next.delete(cand.id);
             return next;
           });
-          setActionMessage({
-            type: "success",
-            text: `Đã duyệt và công bố "${cand.title}" lên Cổng thông tin NCKH.`,
-          });
+          showSuccess(
+            cand.publishedOpportunityId
+              ? `Đã cập nhật hồ sơ "${cand.title}".`
+              : `Đã duyệt hội thảo "${cand.title}".`
+          );
           await loadData();
         }}
         onReject={async (candId, candTitle, reason) => {
@@ -1580,10 +1579,7 @@ export const AdminCandidatesPage: React.FC = () => {
             email: profile.email,
             role: profile.role,
           });
-          setActionMessage({
-            type: "success",
-            text: `Đã từ chối ứng viên "${candTitle}".`,
-          });
+          showSuccess(`Đã từ chối ứng viên "${candTitle}".`);
           await loadData();
         }}
         onNeedsReview={async (candId, candTitle, reason) => {
@@ -1592,10 +1588,7 @@ export const AdminCandidatesPage: React.FC = () => {
             email: profile.email,
             role: profile.role,
           });
-          setActionMessage({
-            type: "success",
-            text: `Đã chuyển "${candTitle}" sang trạng thái Cần hiệu chỉnh.`,
-          });
+          showSuccess(`Đã chuyển "${candTitle}" sang trạng thái Cần hiệu chỉnh.`);
           await loadData();
         }}
         onDelete={async (candId, candTitle) => {
@@ -1604,12 +1597,37 @@ export const AdminCandidatesPage: React.FC = () => {
             email: profile.email,
             role: profile.role,
           });
-          setActionMessage({
-            type: "success",
-            text: `Đã xóa ứng viên "${candTitle}".`,
-          });
+          showSuccess(`Đã xóa hồ sơ "${candTitle}".`);
           await loadData();
         }}
+      />
+
+      {/* Recall Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={!!confirmRecallCand}
+        title="Thu hồi hội thảo?"
+        message="Hội thảo sẽ được gỡ khỏi trang công khai và chuyển về danh sách chờ duyệt."
+        confirmLabel="Thu hồi"
+        cancelLabel="Hủy"
+        variant="danger"
+        isLoading={isRecallLoading}
+        onConfirm={() => {
+          if (confirmRecallCand) return executeRecallCandidate(confirmRecallCand);
+        }}
+        onCancel={() => setConfirmRecallCand(null)}
+      />
+
+      {/* Bulk Approve Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={confirmBulkApprove}
+        title="Duyệt các hội thảo đã chọn?"
+        message={`Xác nhận duyệt và công bố ${selectedIds.size} hội thảo đã chọn lên Cổng thông tin NCKH.`}
+        confirmLabel="Duyệt tất cả"
+        cancelLabel="Hủy"
+        variant="primary"
+        isLoading={bulkApproving}
+        onConfirm={executeApproveSelected}
+        onCancel={() => setConfirmBulkApprove(false)}
       />
 
       {/* Sync from IFA Faculty Research (Spark) Modal */}

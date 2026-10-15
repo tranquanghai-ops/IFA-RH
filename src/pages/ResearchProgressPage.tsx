@@ -12,6 +12,8 @@ import type { ResearchWork, ResearchStatus, UserProfile } from "../types";
 import { ResearchWorkModal } from "../components/ResearchWorkModal";
 import { ProgressHistoryModal } from "../components/ProgressHistoryModal";
 import { ConvertToPublicationModal } from "../components/ConvertToPublicationModal";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import { useToast } from "../context/ToastContext";
 import { formatDateVN } from "../utils/date";
 import { exportToExcel, exportToCsv } from "../utils/excel";
 import {
@@ -59,6 +61,9 @@ export const ResearchProgressPage: React.FC = () => {
   const [editingWork, setEditingWork] = useState<ResearchWork | null>(null);
   const [historyWork, setHistoryWork] = useState<ResearchWork | null>(null);
   const [convertingWork, setConvertingWork] = useState<ResearchWork | null>(null);
+  const [deletingWork, setDeletingWork] = useState<ResearchWork | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const { showSuccess, showError } = useToast();
 
   const isStaff = profile?.role === "admin" || profile?.role === "owner";
 
@@ -132,25 +137,35 @@ export const ResearchProgressPage: React.FC = () => {
           { uid: profile.uid, email: profile.email, role: profile.role }
         );
       }
+      showSuccess(`Đã cập nhật trạng thái thành "${newStatus}".`);
       await loadWorks();
     } catch (err: any) {
-      alert("Lỗi cập nhật trạng thái: " + err.message);
+      console.error(err);
+      showError("Lỗi cập nhật trạng thái.", err);
     }
   };
 
-  const handleDelete = async (work: ResearchWork) => {
-    if (!window.confirm(`Bạn có chắc chắn muốn xóa công trình "${work.title}"?`)) {
-      return;
-    }
+  const handleDelete = (work: ResearchWork) => {
+    setDeletingWork(work);
+  };
+
+  const executeDelete = async () => {
+    if (!deletingWork || !profile) return;
+    setIsDeleting(true);
     try {
       await deleteResearchWork(
-        work.id,
-        work.title,
+        deletingWork.id,
+        deletingWork.title,
         { uid: profile.uid, email: profile.email, role: profile.role }
       );
+      showSuccess(`Đã xóa công trình "${deletingWork.title}".`);
+      setDeletingWork(null);
       await loadWorks();
     } catch (err: any) {
-      alert("Lỗi xóa công trình: " + err.message);
+      console.error(err);
+      showError("Lỗi xóa công trình.", err);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -510,6 +525,17 @@ export const ResearchProgressPage: React.FC = () => {
         onSuccess={async () => {
           await loadWorks();
         }}
+      />
+
+      <ConfirmDialog
+        isOpen={!!deletingWork}
+        title="Xóa công trình nghiên cứu"
+        message={`Bạn có chắc chắn muốn xóa công trình "${deletingWork?.title}"? Thao tác này không thể hoàn tác.`}
+        confirmText="Xóa công trình"
+        variant="danger"
+        isLoading={isDeleting}
+        onConfirm={executeDelete}
+        onCancel={() => setDeletingWork(null)}
       />
     </div>
   );

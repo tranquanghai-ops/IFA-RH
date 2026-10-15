@@ -13,6 +13,7 @@ import {
   Check,
   RefreshCw,
 } from "lucide-react";
+import { useToast } from "../context/ToastContext";
 
 interface LecturerImportModalProps {
   isOpen: boolean;
@@ -51,6 +52,7 @@ export const LecturerImportModal: React.FC<LecturerImportModalProps> = ({
     errorCount: number;
     errors: string[];
   } | null>(null);
+  const { showError } = useToast();
 
   const resetState = () => {
     setStep("upload");
@@ -155,7 +157,8 @@ export const LecturerImportModal: React.FC<LecturerImportModalProps> = ({
       setRows(processed);
       setStep("preview");
     } catch (err: any) {
-      alert("Lỗi đọc file: " + err.message);
+      console.error(err);
+      showError("Lỗi đọc file danh sách giảng viên.", err);
     } finally {
       e.target.value = "";
     }
