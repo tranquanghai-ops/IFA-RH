@@ -795,6 +795,21 @@ export const AdminCandidatesPage: React.FC = () => {
                             {cand.conferenceCode}
                           </span>
                         )}
+                        {cand.changeType === "update" && (
+                          <span
+                            className="badge"
+                            style={{
+                              backgroundColor: "#e0f2fe",
+                              color: "#0369a1",
+                              border: "1px solid #bae6fd",
+                              fontWeight: 700,
+                              fontSize: "0.70rem",
+                              padding: "2px 6px",
+                            }}
+                          >
+                            Đề xuất cập nhật
+                          </span>
+                        )}
                         <span style={{ fontWeight: 600, color: "var(--primary)" }}>
                           {cand.title}
                         </span>
@@ -1151,6 +1166,21 @@ export const AdminCandidatesPage: React.FC = () => {
                         }}
                       >
                         {cand.conferenceCode}
+                      </span>
+                    )}
+                    {cand.changeType === "update" && (
+                      <span
+                        className="badge"
+                        style={{
+                          backgroundColor: "#e0f2fe",
+                          color: "#0369a1",
+                          border: "1px solid #bae6fd",
+                          fontWeight: 700,
+                          fontSize: "0.70rem",
+                          padding: "2px 6px",
+                        }}
+                      >
+                        Đề xuất cập nhật
                       </span>
                     )}
                     <span className="badge badge-neutral">{cand.type}</span>

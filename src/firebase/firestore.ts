@@ -34,6 +34,7 @@ import type {
   ResearchTrackingStatus,
 } from "../types";
 import { normalizeText } from "../utils/dedupe";
+import { normalizeCanonicalUrl, extractConferenceYear } from "../utils/researchDedupe";
 
 // ======================== AUDIT LOGS ========================
 export async function logAudit(
@@ -888,6 +889,9 @@ export async function approveCandidate(
   if (candidate.runId) oppData.runId = candidate.runId;
   if (candidate.discoveredAt) oppData.discoveredAt = candidate.discoveredAt;
   if (candidate.sheetStatus) oppData.sheetStatus = candidate.sheetStatus;
+  if (candidate.conferenceCode) oppData.conferenceCode = candidate.conferenceCode;
+  if (candidate.category) oppData.category = candidate.category;
+  if (candidate.lastUpdated) oppData.lastUpdated = candidate.lastUpdated;
 
   // 2. Check if candidate is linked to an existing opportunity
   let targetOppId = candidate.publishedOpportunityId || null;
@@ -903,6 +907,83 @@ export async function approveCandidate(
       targetOppId = previous.docs[0].id;
     }
   }
+
+  // 2b. If still unlinked, search existing opportunities by conferenceCode to prevent duplicate creation
+  if (!targetOppId && candidate.conferenceCode) {
+    const codeSnap = await getDocs(
+      query(
+        collection(firestore, "opportunities"),
+        where("conferenceCode", "==", candidate.conferenceCode),
+        limit(1)
+      )
+    );
+    if (!codeSnap.empty) {
+      targetOppId = codeSnap.docs[0].id;
+    }
+  }
+
+  // 2c. If still unlinked, search existing opportunities by normalized title & year, or sourceUrl
+  if (!targetOppId) {
+    const oppsSnap = await getDocs(collection(firestore, "opportunities"));
+    const norm = candidate.normalizedTitle || normalizeText(resolvedTitle);
+    const candYear =
+      extractConferenceYear(resolvedTitle) ||
+      extractConferenceYear(candidate.eventDate) ||
+      extractConferenceYear(candidate.deadline);
+    const candSource = normalizeCanonicalUrl(candidate.sourceUrl);
+
+    for (const d of oppsSnap.docs) {
+      const o = d.data();
+      const oNorm = normalizeText(o.title || "");
+      const oYear =
+        extractConferenceYear(o.title) ||
+        extractConferenceYear(o.eventDate) ||
+        extractConferenceYear(o.deadline);
+      const oSource = normalizeCanonicalUrl(o.sourceUrl);
+
+      // Exact title match (must match year if both present)
+      if (oNorm && oNorm === norm && (!candYear || !oYear || candYear === oYear)) {
+        targetOppId = d.id;
+        break;
+      }
+      // Canonical URL match
+      if (candSource && oSource && candSource === oSource && candSource.length > 8) {
+        if (!candYear || !oYear || candYear === oYear) {
+          targetOppId = d.id;
+          break;
+        }
+      }
+    }
+  }
+
+  const helperAutoCloseRelatedProposals = async (batchRef: any, oppId: string) => {
+    try {
+      const relatedSnap = await getDocs(
+        query(
+          collection(firestore, "opportunityCandidates"),
+          where("publishedOpportunityId", "==", oppId)
+        )
+      );
+      relatedSnap.docs.forEach((pDoc) => {
+        if (pDoc.id !== resolvedCandId) {
+          const pData = pDoc.data();
+          if (["pending", "needs_review"].includes(pData.status)) {
+            batchRef.update(pDoc.ref, {
+              status: "closed",
+              resolutionType: "AUTO_CLOSED",
+              rejectionReason: `Đã hoàn tất duyệt hội thảo (${actor.email}). Đề xuất cập nhật này được tự động đóng.`,
+              reviewedBy: actor.email,
+              reviewedAt: now,
+              updatedAt: now,
+              updatedBy: actor.email,
+            });
+          }
+        }
+      });
+    } catch (err) {
+      console.warn("Could not auto-close related update proposals on approve:", err);
+    }
+  };
 
   if (targetOppId) {
     const oppRef = doc(firestore, "opportunities", targetOppId);
@@ -925,6 +1006,9 @@ export async function approveCandidate(
       if (currentOpp.editedByAdmin !== undefined) {
         updateOppData.editedByAdmin = currentOpp.editedByAdmin;
       }
+      if (candidate.conferenceCode) updateOppData.conferenceCode = candidate.conferenceCode;
+      if (candidate.category) updateOppData.category = candidate.category;
+      if (candidate.lastUpdated) updateOppData.lastUpdated = candidate.lastUpdated;
 
       // Clean undefined fields
       const cleanUpdate: any = {};
@@ -944,6 +1028,8 @@ export async function approveCandidate(
         updatedBy: actor.email,
         updatedAt: now,
       });
+
+      await helperAutoCloseRelatedProposals(batch, targetOppId);
       await batch.commit();
 
       await logAudit(
@@ -971,6 +1057,8 @@ export async function approveCandidate(
     updatedBy: actor.email,
     updatedAt: now,
   });
+
+  await helperAutoCloseRelatedProposals(batch, oppRef.id);
   await batch.commit();
 
   await logAudit(

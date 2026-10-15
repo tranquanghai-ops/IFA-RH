@@ -8,7 +8,7 @@ import type { RawFacultyResearchRow } from "../services/facultyResearchData";
 export function normalizeCanonicalUrl(url?: string | null): string {
   if (!url) return "";
   let clean = url.trim().toLowerCase();
-  clean = clean.replace(/^https?:\/\//, "");
+  clean = clean.replace(/^(?:https?:\/\/|mailto:)/, "");
   clean = clean.replace(/^www\./, "");
   clean = clean.replace(/[?#].*$/, "");
   clean = clean.replace(/\/+$/, "");
@@ -385,6 +385,18 @@ export function stripTransientCountdownNotes(note?: string | null): string {
 }
 
 /**
+ * Normalizes location strings by collapsing hybrid variations (e.g. "Hybrid" vs "Trực tiếp kết hợp trực tuyến").
+ */
+export function normalizeLocationForComparison(loc?: string | null): string {
+  if (!loc) return "";
+  let clean = normalizeText(String(loc)).toLowerCase();
+  clean = clean.replace(/\b(?:hybrid|truc tiep ket hop truc tuyen|ket hop truc tuyen)\b/g, "hybrid");
+  clean = clean.replace(/[\/|,;-]\s*hybrid/g, " hybrid");
+  clean = clean.replace(/\s+/g, " ").trim();
+  return clean;
+}
+
+/**
  * Evaluates whether a detected difference between Google Sheet row and existing record
  * represents a substantive, actionable change worthy of creating an update proposal.
  */
@@ -450,10 +462,18 @@ export function isMeaningfulFieldChange(
     return normNew !== normEx;
   }
 
+  // Location comparison (normalizes hybrid phrasing variations)
+  if (key === "location") {
+    const locNew = normalizeLocationForComparison(newVal);
+    const locEx = normalizeLocationForComparison(exVal);
+    if (!locNew && !locEx) return false;
+    return locNew !== locEx;
+  }
+
   // Fee status comparison
   if (key === "feeStatus") {
-    const sNew = String(newVal || "").toUpperCase();
-    const sEx = String(exVal || "").toUpperCase();
+    const sNew = String(newVal || "").toUpperCase().trim();
+    const sEx = String(exVal || "").toUpperCase().trim();
     if ((sNew === "UNKNOWN" || !sNew) && (sEx === "UNKNOWN" || !sEx)) return false;
     return sNew !== sEx;
   }

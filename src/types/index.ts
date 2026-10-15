@@ -100,7 +100,7 @@ export type CandidateResolutionType =
   | "ADMIN_REJECTED"
   | "AUTO_CLOSED";
 
-export type CandidateStatus = "pending" | "approved" | "rejected" | "needs_review";
+export type CandidateStatus = "pending" | "approved" | "rejected" | "needs_review" | "closed";
 
 export interface OpportunityCandidate {
   id: string;
