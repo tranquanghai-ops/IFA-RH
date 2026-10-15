@@ -30,9 +30,8 @@ import {
 } from "lucide-react";
 
 export type CandidateFilterTab =
-  | "today"
-  | "updates"
   | "pending"
+  | "updates"
   | "needs_review"
   | "approved"
   | "expired"
@@ -54,16 +53,36 @@ export const getCandidateCategory = (c: OpportunityCandidate): "TN" | "QT" => {
   return "TN";
 };
 
-const isTodayDate = (dateStr?: string | null): boolean => {
-  if (!dateStr) return false;
-  const d = parseDateSafe(dateStr);
-  if (!d) return false;
-  const now = new Date();
-  return (
-    d.getDate() === now.getDate() &&
-    d.getMonth() === now.getMonth() &&
-    d.getFullYear() === now.getFullYear()
-  );
+/**
+ * Returns date formatted as YYYY-MM-DD in Vietnam timezone (Asia/Ho_Chi_Minh).
+ */
+export const getVietnamDateString = (dateInput: Date | string | number): string => {
+  const d = typeof dateInput === "string" || typeof dateInput === "number" ? new Date(dateInput) : dateInput;
+  if (!d || isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+};
+
+/**
+ * Checks if a candidate was genuinely discovered today (VN timezone Asia/Ho_Chi_Minh).
+ * Strictly requires status === "pending" and creation type (not an update proposal or approved opp).
+ * Uses discoveredAt (fallback createdAt). Never uses updatedAt or lastUpdated.
+ */
+export const isDiscoveredTodayVN = (c: OpportunityCandidate): boolean => {
+  if (c.status !== "pending") return false;
+  if (c.changeType === "update" || Boolean(c.publishedOpportunityId)) return false;
+
+  const rawDate = c.discoveredAt || c.createdAt;
+  if (!rawDate) return false;
+
+  const discoveryVNDate = getVietnamDateString(rawDate);
+  const todayVNDate = getVietnamDateString(new Date());
+
+  return Boolean(discoveryVNDate && todayVNDate && discoveryVNDate === todayVNDate);
 };
 
 export const isAutoClosedProposal = (c: OpportunityCandidate): boolean => {
@@ -96,7 +115,7 @@ export const isAdminRejectedProposal = (c: OpportunityCandidate): boolean => {
 
 export const getCandidatePrimaryCategory = (
   c: OpportunityCandidate
-): "today" | "updates" | "pending" | "needs_review" | "approved" | "expired" | "rejected" | "closed" | "out_of_scope" => {
+): "updates" | "pending" | "needs_review" | "approved" | "expired" | "rejected" | "closed" | "out_of_scope" => {
   // 1. Hồ sơ đã duyệt (hội thảo đã được Admin duyệt và công bố)
   if (c.status === "approved") {
     return "approved";
@@ -135,20 +154,13 @@ export const getCandidatePrimaryCategory = (
     return "needs_review";
   }
 
-  // 7. Mới hôm nay (chỉ hội thảo mới thật sự phát hiện hôm nay)
-  const discoveryDate = c.discoveredAt || c.createdAt;
-  if (isTodayDate(discoveryDate)) {
-    return "today";
-  }
-
-  // 8. Chờ duyệt
+  // 7. Chờ duyệt (tất cả hội thảo mới chưa duyệt)
   return "pending";
 };
 
 export const FILTER_TABS: Array<{ id: CandidateFilterTab; label: string }> = [
-  { id: "today", label: "Mới hôm nay" },
-  { id: "updates", label: "Cập nhật chờ duyệt" },
   { id: "pending", label: "Chờ duyệt" },
+  { id: "updates", label: "Cập nhật chờ duyệt" },
   { id: "needs_review", label: "Cần hiệu chỉnh" },
   { id: "approved", label: "Đã duyệt" },
   { id: "expired", label: "Hết hạn" },
@@ -157,6 +169,18 @@ export const FILTER_TABS: Array<{ id: CandidateFilterTab; label: string }> = [
   { id: "out_of_scope", label: "Ngoài phạm vi / JOISA" },
   { id: "all", label: "Tất cả" },
 ];
+
+export const matchesCandidateSearch = (cand: OpportunityCandidate, queryText: string): boolean => {
+  const q = queryText.trim().toLowerCase();
+  if (!q) return true;
+  const matchCode = !!(cand.conferenceCode && cand.conferenceCode.toLowerCase().includes(q));
+  const matchTitle = (cand.title || "").toLowerCase().includes(q);
+  const matchOrg = (cand.organizer || "").toLowerCase().includes(q);
+  const matchField = !!(cand.field && cand.field.toLowerCase().includes(q));
+  const matchLevel = !!(cand.level && cand.level.toLowerCase().includes(q));
+  const matchType = !!(cand.type && cand.type.toLowerCase().includes(q));
+  return matchCode || matchTitle || matchOrg || matchField || matchLevel || matchType;
+};
 
 export const AdminCandidatesPage: React.FC = () => {
   const { profile } = useAuth();
@@ -193,13 +217,10 @@ export const AdminCandidatesPage: React.FC = () => {
       if (!hasInitializedTab) {
         const pendingCount = cands.filter((c) => getCandidatePrimaryCategory(c) === "pending").length;
         const updatesCount = cands.filter((c) => getCandidatePrimaryCategory(c) === "updates").length;
-        const todayCount = cands.filter((c) => getCandidatePrimaryCategory(c) === "today").length;
         const needsReviewCount = cands.filter((c) => getCandidatePrimaryCategory(c) === "needs_review").length;
         if (pendingCount === 0 && updatesCount > 0) {
           setActiveTab("updates");
-        } else if (pendingCount === 0 && todayCount > 0) {
-          setActiveTab("today");
-        } else if (pendingCount === 0 && todayCount === 0 && needsReviewCount > 0) {
+        } else if (pendingCount === 0 && needsReviewCount > 0) {
           setActiveTab("needs_review");
         }
         setHasInitializedTab(true);
@@ -219,17 +240,87 @@ export const AdminCandidatesPage: React.FC = () => {
     loadData();
   }, []);
 
-  // Unique conferences summary based on Spark official codes (TN0001-TN0007, QT0001-QT0003)
+  // 1. Filter candidates by search query
+  const searchedCandidates = useMemo(() => {
+    if (!searchQuery.trim()) return candidates;
+    return candidates.filter((c) => matchesCandidateSearch(c, searchQuery));
+  }, [candidates, searchQuery]);
+
+  // 2. Compute category counts based on searchedCandidates
+  const categoryCounts = useMemo(() => {
+    let tn = 0;
+    let qt = 0;
+    for (const c of searchedCandidates) {
+      if (getCandidateCategory(c) === "QT") qt++;
+      else tn++;
+    }
+    return { all: searchedCandidates.length, tn, qt };
+  }, [searchedCandidates]);
+
+  // 3. Candidates matching BOTH search and selectedCategory
+  const categoryFilteredCandidates = useMemo(() => {
+    return searchedCandidates.filter((cand) => {
+      if (selectedCategory === "ALL") return true;
+      return getCandidateCategory(cand) === selectedCategory;
+    });
+  }, [searchedCandidates, selectedCategory]);
+
+  // 4. Tab counts strictly based on categoryFilteredCandidates (updates dynamically when category or search changes!)
+  const tabCounts = useMemo(() => {
+    const counts: Record<CandidateFilterTab, number> = {
+      pending: 0,
+      updates: 0,
+      needs_review: 0,
+      approved: 0,
+      expired: 0,
+      rejected: 0,
+      closed: 0,
+      out_of_scope: 0,
+      all: categoryFilteredCandidates.length,
+    };
+    for (const cand of categoryFilteredCandidates) {
+      const cat = getCandidatePrimaryCategory(cand);
+      counts[cat]++;
+    }
+    return counts;
+  }, [categoryFilteredCandidates]);
+
+  // 5. Final list filtered by activeTab
+  const filteredCandidates = useMemo(() => {
+    if (activeTab === "all") return categoryFilteredCandidates;
+    return categoryFilteredCandidates.filter((cand) => {
+      return getCandidatePrimaryCategory(cand) === activeTab;
+    });
+  }, [categoryFilteredCandidates, activeTab]);
+
+  // 6. Unique conferences summary dynamically reflecting selectedCategory and search
   const uniqueSummary = useMemo(() => {
-    const publishedCount = publishedOpps.filter((o) => o.status === "published").length;
-    const newPendingCount = candidates.filter(
+    const filteredPublished = publishedOpps.filter((o) => {
+      if (o.status !== "published") return false;
+      const cat = o.category || (o.conferenceCode?.startsWith("QT") ? "QT" : "TN");
+      if (selectedCategory !== "ALL" && cat !== selectedCategory) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchCode = !!(o.conferenceCode && o.conferenceCode.toLowerCase().includes(q));
+        const matchTitle = (o.title || "").toLowerCase().includes(q);
+        const matchOrg = (o.organizer || "").toLowerCase().includes(q);
+        if (!matchCode && !matchTitle && !matchOrg) return false;
+      }
+      return true;
+    });
+
+    const publishedCount = filteredPublished.length;
+
+    const newPendingCount = categoryFilteredCandidates.filter(
       (c) => c.status === "pending" && (c.changeType === "create" || !c.publishedOpportunityId)
     ).length;
-    const updateProposalsCount = candidates.filter(
+
+    const updateProposalsCount = categoryFilteredCandidates.filter(
       (c) =>
         (c.changeType === "update" || Boolean(c.publishedOpportunityId)) &&
         ["pending", "needs_review"].includes(c.status)
     ).length;
+
     const totalConferences = publishedCount + newPendingCount;
     return {
       publishedCount,
@@ -237,69 +328,7 @@ export const AdminCandidatesPage: React.FC = () => {
       updateProposalsCount,
       totalConferences,
     };
-  }, [publishedOpps, candidates]);
-
-  // Compute non-overlapping counts for each tab
-  const tabCounts = useMemo(() => {
-    const counts: Record<CandidateFilterTab, number> = {
-      today: 0,
-      updates: 0,
-      pending: 0,
-      needs_review: 0,
-      approved: 0,
-      expired: 0,
-      rejected: 0,
-      closed: 0,
-      out_of_scope: 0,
-      all: candidates.length,
-    };
-    for (const cand of candidates) {
-      const cat = getCandidatePrimaryCategory(cand);
-      counts[cat]++;
-    }
-    return counts;
-  }, [candidates]);
-
-  // Compute counts for TN / QT categories
-  const categoryCounts = useMemo(() => {
-    let tn = 0;
-    let qt = 0;
-    for (const c of candidates) {
-      if (getCandidateCategory(c) === "QT") qt++;
-      else tn++;
-    }
-    return { all: candidates.length, tn, qt };
-  }, [candidates]);
-
-  // Filter candidates based on activeTab, selectedCategory, and searchQuery
-  const filteredCandidates = useMemo(() => {
-    return candidates.filter((cand) => {
-      // 1. Tab filter
-      if (activeTab !== "all") {
-        const cat = getCandidatePrimaryCategory(cand);
-        if (cat !== activeTab) return false;
-      }
-      // 2. Category filter (TN / QT)
-      if (selectedCategory !== "ALL") {
-        const cat = getCandidateCategory(cand);
-        if (cat !== selectedCategory) return false;
-      }
-      // 3. Search query filter
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchCode = !!(cand.conferenceCode && cand.conferenceCode.toLowerCase().includes(q));
-        const matchTitle = cand.title.toLowerCase().includes(q);
-        const matchOrg = cand.organizer.toLowerCase().includes(q);
-        const matchField = !!(cand.field && cand.field.toLowerCase().includes(q));
-        const matchLevel = !!(cand.level && cand.level.toLowerCase().includes(q));
-        const matchType = !!(cand.type && cand.type.toLowerCase().includes(q));
-        if (!matchCode && !matchTitle && !matchOrg && !matchField && !matchLevel && !matchType) {
-          return false;
-        }
-      }
-      return true;
-    });
-  }, [candidates, activeTab, selectedCategory, searchQuery]);
+  }, [publishedOpps, categoryFilteredCandidates, selectedCategory, searchQuery]);
 
   const approvableInView = useMemo(
     () => filteredCandidates.filter((c) => c.status !== "approved"),
@@ -431,7 +460,7 @@ export const AdminCandidatesPage: React.FC = () => {
   const handleBulkApproveOpen = async () => {
     const openCandidates = candidates.filter((c) => {
       const cat = getCandidatePrimaryCategory(c);
-      return cat === "pending" || cat === "today";
+      return cat === "pending";
     });
     if (openCandidates.length === 0) return;
 
@@ -526,7 +555,7 @@ export const AdminCandidatesPage: React.FC = () => {
 
           {candidates.some((c) => {
             const cat = getCandidatePrimaryCategory(c);
-            return cat === "pending" || cat === "today";
+            return cat === "pending";
           }) && (
             <button
               type="button"
@@ -583,7 +612,7 @@ export const AdminCandidatesPage: React.FC = () => {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontWeight: 700, fontSize: "0.92rem", color: "#1e293b" }}>
-              Hội thảo Khoa MTCN (Spark JSON):
+              Hội thảo Khoa MTCN ({selectedCategory === "TN" ? "Trong nước" : selectedCategory === "QT" ? "Quốc tế" : "Spark JSON"}):
             </span>
             <span
               className="badge"
@@ -606,132 +635,91 @@ export const AdminCandidatesPage: React.FC = () => {
             </span>
             <span style={{ color: "#b45309", display: "inline-flex", alignItems: "center", gap: 5 }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#f59e0b", display: "inline-block" }} />
-              <strong>{uniqueSummary.newPendingCount}</strong> Mới chờ duyệt (QT0001, QT0002)
+              <strong>{uniqueSummary.newPendingCount}</strong> Mới chờ duyệt {selectedCategory === "ALL" || selectedCategory === "QT" ? "(QT0001, QT0002)" : ""}
             </span>
             <span style={{ color: "#0369a1", display: "inline-flex", alignItems: "center", gap: 5 }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#0ea5e9", display: "inline-block" }} />
-              <strong>{uniqueSummary.updateProposalsCount}</strong> Đề xuất cập nhật (QT0003)
+              <strong>{uniqueSummary.updateProposalsCount}</strong> Đề xuất cập nhật {selectedCategory === "ALL" || selectedCategory === "QT" ? "(gắn với QT0003)" : ""}
             </span>
           </div>
         </div>
       </div>
 
-      {/* Search Bar & Horizontal Responsive Filter Buttons */}
-      <div className="card" style={{ marginBottom: 20, padding: 16 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {/* Search Box */}
-          <div style={{ position: "relative", width: "100%" }}>
-            <Search
-              size={18}
-              color="var(--muted)"
-              style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }}
-            />
-            <input
-              type="text"
-              className="form-control"
-              style={{ paddingLeft: 38 }}
-              placeholder="Tìm kiếm ứng viên theo tiêu đề, đơn vị tổ chức, ngành, cấp độ..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
+      {/* 3-Level Filter Hierarchy Card: Search -> Categories -> Status Tabs */}
+      <div className="filter-card">
+        {/* 1. Search Box */}
+        <div className="search-input-wrapper">
+          <Search
+            size={18}
+            color="var(--muted)"
+            style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }}
+          />
+          <input
+            type="text"
+            className="form-control"
+            style={{ paddingLeft: 42 }}
+            placeholder="Tìm kiếm ứng viên theo tiêu đề, đơn vị tổ chức, ngành, cấp độ..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
 
-          {/* Phân loại TN / QT độc lập */}
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-              flexWrap: "wrap",
-              paddingBottom: 10,
-              borderBottom: "1px dashed #e2e8f0",
-            }}
-          >
-            <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-sub)", marginRight: 4 }}>
-              Nhóm hội thảo:
-            </span>
+        {/* 2. Nhóm hội thảo (Segmented Control) */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-sub)", minWidth: 100 }}>
+            Nhóm hội thảo:
+          </span>
+          <div className="category-segmented-control" role="group" aria-label="Phân loại hội thảo">
             <button
               type="button"
               onClick={() => setSelectedCategory("ALL")}
-              className={`btn btn-sm ${selectedCategory === "ALL" ? "btn-primary" : "btn-secondary"}`}
-              style={{ borderRadius: 20, fontSize: "0.82rem", padding: "3px 12px", fontWeight: selectedCategory === "ALL" ? 700 : 500 }}
+              className={`category-segment-btn ${selectedCategory === "ALL" ? "active" : ""}`}
             >
-              Tất cả ({categoryCounts.all})
+              <span>Tất cả</span>
+              <span className="count-badge">{categoryCounts.all}</span>
             </button>
             <button
               type="button"
               onClick={() => setSelectedCategory("TN")}
-              className={`btn btn-sm ${selectedCategory === "TN" ? "btn-primary" : "btn-secondary"}`}
-              style={{ borderRadius: 20, fontSize: "0.82rem", padding: "3px 12px", fontWeight: selectedCategory === "TN" ? 700 : 500 }}
+              className={`category-segment-btn ${selectedCategory === "TN" ? "active" : ""}`}
             >
-              🇻🇳 Trong nước (TN) ({categoryCounts.tn})
+              <span>🇻🇳 Trong nước</span>
+              <span className="count-badge">{categoryCounts.tn}</span>
             </button>
             <button
               type="button"
               onClick={() => setSelectedCategory("QT")}
-              className={`btn btn-sm ${selectedCategory === "QT" ? "btn-primary" : "btn-secondary"}`}
-              style={{ borderRadius: 20, fontSize: "0.82rem", padding: "3px 12px", fontWeight: selectedCategory === "QT" ? 700 : 500 }}
+              className={`category-segment-btn ${selectedCategory === "QT" ? "active" : ""}`}
             >
-              🌏 Quốc tế (QT) ({categoryCounts.qt})
+              <span>🌐 Quốc tế</span>
+              <span className="count-badge">{categoryCounts.qt}</span>
             </button>
           </div>
+        </div>
 
-          {/* Horizontal Filter Buttons */}
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 8,
-              alignItems: "center",
-            }}
-          >
-            {FILTER_TABS.filter((tab) => {
-              // Hide "closed" tab if count is 0
-              if (tab.id === "closed" && tabCounts.closed === 0) return false;
-              // Hide "out_of_scope" tab if count is 0
-              if (tab.id === "out_of_scope" && tabCounts.out_of_scope === 0) return false;
-              return true;
-            }).map((tab) => {
-              const isActive = activeTab === tab.id;
-              const count = tabCounts[tab.id];
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  style={{
-                    padding: "6px 14px",
-                    borderRadius: 20,
-                    border: isActive ? "1px solid var(--primary)" : "1px solid #cbd5e1",
-                    background: isActive ? "var(--primary)" : "#ffffff",
-                    color: isActive ? "#ffffff" : "var(--text-main)",
-                    fontWeight: isActive ? 600 : 500,
-                    fontSize: "0.84rem",
-                    cursor: "pointer",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    transition: "all 0.15s ease",
-                    boxShadow: isActive ? "0 2px 4px rgba(0,0,0,0.12)" : "none",
-                  }}
-                >
-                  <span>{tab.label}</span>
-                  <span
-                    style={{
-                      background: isActive ? "rgba(255, 255, 255, 0.25)" : "#f1f5f9",
-                      color: isActive ? "#ffffff" : "#475569",
-                      padding: "1px 7px",
-                      borderRadius: 10,
-                      fontSize: "0.75rem",
-                      fontWeight: 700,
-                    }}
-                  >
-                    ({count})
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+        {/* 3. Thanh trạng thái (Status Tabs) */}
+        <div className="status-tabs-container">
+          {FILTER_TABS.filter((tab) => {
+            // Standard workflow tabs always show (even if count is 0)
+            if (["closed", "out_of_scope"].includes(tab.id)) {
+              return tabCounts[tab.id] > 0;
+            }
+            return true;
+          }).map((tab) => {
+            const isActive = activeTab === tab.id;
+            const count = tabCounts[tab.id];
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={`status-tab-btn ${isActive ? "active" : ""}`}
+              >
+                <span>{tab.label}</span>
+                <span className="tab-count-badge">{count}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -787,14 +775,49 @@ export const AdminCandidatesPage: React.FC = () => {
           Đang tải dữ liệu AI tìm...
         </div>
       ) : filteredCandidates.length === 0 ? (
-        <div className="card" style={{ textAlign: "center", padding: 48, color: "var(--muted)" }}>
-          <Sparkles size={36} color="#7e22ce" style={{ margin: "0 auto 12px" }} />
-          <h3 style={{ color: "var(--primary)", marginBottom: 6 }}>Danh sách trống</h3>
-          <p style={{ fontSize: "0.9rem", maxWidth: 450, margin: "0 auto" }}>
-            Không có ứng viên nào thuộc nhóm "
-            {FILTER_TABS.find((t) => t.id === activeTab)?.label || activeTab}
-            " phù hợp với điều kiện tìm kiếm.
+        <div className="card" style={{ textAlign: "center", padding: "48px 20px", color: "var(--muted)" }}>
+          <Sparkles size={36} color="#7e22ce" style={{ margin: "0 auto 12px", opacity: 0.8 }} />
+          <h3 style={{ color: "var(--primary)", marginBottom: 8, fontSize: "1.1rem" }}>Danh sách trống</h3>
+          <p style={{ fontSize: "0.9rem", maxWidth: 520, margin: "0 auto 16px", color: "#64748b" }}>
+            {searchQuery.trim()
+              ? `Không tìm thấy hội thảo ${selectedCategory === "TN" ? "Trong nước " : selectedCategory === "QT" ? "Quốc tế " : ""}nào phù hợp với từ khóa "${searchQuery}".`
+              : selectedCategory === "TN"
+              ? `Không có hội thảo Trong nước nào đang ở trạng thái "${FILTER_TABS.find((t) => t.id === activeTab)?.label || activeTab}".`
+              : selectedCategory === "QT"
+              ? `Không có hội thảo Quốc tế nào đang ở trạng thái "${FILTER_TABS.find((t) => t.id === activeTab)?.label || activeTab}".`
+              : `Không có hội thảo nào đang ở trạng thái "${FILTER_TABS.find((t) => t.id === activeTab)?.label || activeTab}".`}
           </p>
+          {(searchQuery || selectedCategory !== "ALL" || activeTab !== "pending") && (
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+              {searchQuery && (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-secondary"
+                  onClick={() => setSearchQuery("")}
+                >
+                  Xóa tìm kiếm
+                </button>
+              )}
+              {selectedCategory !== "ALL" && (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-secondary"
+                  onClick={() => setSelectedCategory("ALL")}
+                >
+                  Xem tất cả nhóm
+                </button>
+              )}
+              {activeTab !== "all" && (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-secondary"
+                  onClick={() => setActiveTab("all")}
+                >
+                  Xem tất cả trạng thái
+                </button>
+              )}
+            </div>
+          )}
         </div>
       ) : viewMode === "table" ? (
         <div className="table-container" style={{ overflowX: "auto" }}>
@@ -886,6 +909,11 @@ export const AdminCandidatesPage: React.FC = () => {
                             }}
                           >
                             Đề xuất cập nhật
+                          </span>
+                        )}
+                        {isDiscoveredTodayVN(cand) && (
+                          <span className="badge-new-spark" title="Mới phát hiện trong ngày hôm nay (giờ VN)">
+                            <Sparkles size={10} /> NEW
                           </span>
                         )}
                         <span style={{ fontWeight: 600, color: "var(--primary)" }}>
@@ -1118,10 +1146,6 @@ export const AdminCandidatesPage: React.FC = () => {
                           <span className="badge" style={{ background: "#fef3c7", color: "#b45309" }}>
                             CẦN HIỆU CHỈNH
                           </span>
-                        ) : primaryCat === "today" ? (
-                          <span className="badge" style={{ background: "#dcfce7", color: "#15803d" }}>
-                            MỚI HÔM NAY
-                          </span>
                         ) : (
                           <span className="badge badge-new">CHỜ DUYỆT</span>
                         )}
@@ -1252,6 +1276,11 @@ export const AdminCandidatesPage: React.FC = () => {
                         {cand.conferenceCode}
                       </span>
                     )}
+                    {isDiscoveredTodayVN(cand) && (
+                      <span className="badge-new-spark" title="Mới phát hiện trong ngày hôm nay (giờ VN)">
+                        <Sparkles size={10} /> NEW
+                      </span>
+                    )}
                     {cand.changeType === "update" && (
                       <span
                         className="badge"
@@ -1325,10 +1354,6 @@ export const AdminCandidatesPage: React.FC = () => {
                     ) : primaryCat === "needs_review" ? (
                       <span className="badge" style={{ background: "#fef3c7", color: "#b45309" }}>
                         CẦN HIỆU CHỈNH
-                      </span>
-                    ) : primaryCat === "today" ? (
-                      <span className="badge" style={{ background: "#dcfce7", color: "#15803d" }}>
-                        MỚI HÔM NAY
                       </span>
                     ) : (
                       <span className="badge badge-new">CHỜ DUYỆT</span>

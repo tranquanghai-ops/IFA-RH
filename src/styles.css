@@ -1451,3 +1451,156 @@ body.modal-open {
     align-items: stretch;
   }
 }
+
+/* ==================== CANDIDATE MANAGEMENT FILTER SYSTEM ==================== */
+.filter-card {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.search-input-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.category-segmented-control {
+  display: inline-flex;
+  background: #f1f5f9;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.category-segment-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 7px;
+  border: none;
+  font-size: 0.84rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: transparent;
+  color: var(--text-sub);
+}
+
+.category-segment-btn:hover {
+  background: #ffffff;
+  color: var(--text-main);
+}
+
+.category-segment-btn.active {
+  background: var(--primary);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(15, 53, 87, 0.18);
+}
+
+.category-segment-btn .count-badge {
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.category-segment-btn.active .count-badge {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+.status-tabs-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.status-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.status-tab-btn:hover {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: var(--text-main);
+}
+
+.status-tab-btn.active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 2px 4px rgba(15, 53, 87, 0.15);
+}
+
+.status-tab-btn .tab-count-badge {
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: #f1f5f9;
+  color: #64748b;
+  min-width: 18px;
+  text-align: center;
+}
+
+.status-tab-btn.active .tab-count-badge {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+.badge-new-spark {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background-color: #ffedd5;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+  font-weight: 800;
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+}
+
+@media (max-width: 640px) {
+  .category-segmented-control {
+    width: 100%;
+  }
+  .category-segment-btn {
+    flex: 1;
+    justify-content: center;
+    padding: 6px 8px;
+    font-size: 0.78rem;
+  }
+  .status-tab-btn {
+    padding: 5px 10px;
+    font-size: 0.78rem;
+  }
+}
