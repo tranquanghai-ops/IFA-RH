@@ -348,9 +348,10 @@ export async function releaseFirestoreSyncLock(
         }
 
         if (data && data.isLocked) {
-          if (data.lockId !== lockId) {
+          const currentId = data.lockId || data.activeLockId;
+          if (currentId !== lockId) {
             console.warn(
-              `[FirestoreLock] Không thể giải phóng khóa: lockId không khớp (Hiện tại: "${data.lockId}", Yêu cầu: "${lockId}").`
+              `[FirestoreLock] Không thể giải phóng khóa: lockId không khớp (Hiện tại: "${currentId}", Yêu cầu: "${lockId}").`
             );
             return {
               released: false,
@@ -363,6 +364,7 @@ export async function releaseFirestoreSyncLock(
             {
               isLocked: false,
               lockId: "",
+              activeLockId: "",
               lastReleasedLockId: lockId,
               releasedAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
@@ -389,7 +391,8 @@ export async function releaseFirestoreSyncLock(
     const snap = await sdk.getDoc(lockRef);
     if (snap?.exists && (typeof snap.exists === "function" ? snap.exists() : true)) {
       const data = typeof snap.data === "function" ? snap.data() : snap;
-      if (data && data.isLocked && data.lockId !== lockId) {
+      const currentId = data?.lockId || data?.activeLockId;
+      if (data && data.isLocked && currentId !== lockId) {
         return { released: false, reason: "lock_id_mismatch" };
       }
     }
@@ -399,6 +402,7 @@ export async function releaseFirestoreSyncLock(
       {
         isLocked: false,
         lockId: "",
+        activeLockId: "",
         lastReleasedLockId: lockId,
         releasedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),

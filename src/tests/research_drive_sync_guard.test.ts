@@ -790,6 +790,206 @@ describe("Research Sync Guard & Concurrency Lock Suite", () => {
         globalThis.fetch = originalFetch;
       }
     });
+
+    it("aborts writes and throws LOCK_LOST if lock document cannot be read (getDoc throws)", async () => {
+      let isInitialAcquisitionDone = false;
+      const store: Record<string, any> = {};
+
+      const sdk: any = {
+        doc: (_db: any, col: string, id: string) => ({ col, id, path: `${col}/${id}` }),
+        runTransaction: async <T>(_db: any, fn: (tx: any) => Promise<T>): Promise<T> => {
+          const tx = {
+            get: async (ref: any) => ({
+              exists: () => store[ref.path] !== undefined,
+              data: () => store[ref.path],
+            }),
+            set: (ref: any, data: any) => {
+              store[ref.path] = data;
+            },
+          };
+          return await fn(tx);
+        },
+        getDoc: async (ref: any) => {
+          if (ref.path === `systemConfig/${RESEARCH_SYNC_LOCK_DOC_ID}` && isInitialAcquisitionDone) {
+            throw new Error("Network timeout or Firestore connection reset");
+          }
+          return { exists: () => store[ref.path] !== undefined, data: () => store[ref.path] };
+        },
+        setDoc: async (ref: any, data: any) => {
+          store[ref.path] = data;
+        },
+        collection: (_db: any, path: string) => ({ path }),
+        getDocs: async () => {
+          isInitialAcquisitionDone = true;
+          return { docs: [] };
+        },
+        addDoc: vi.fn(),
+      };
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ files: [{ id: "f1", name: "IFA_RH_CONFERENCES.json" }] }),
+        text: async () => JSON.stringify({ schemaVersion: 1, revision: 1, runId: "1", conferences: [{ code: "QT0001", category: "QT", title: "Hội thảo quốc tế HAXD 2027", organizer: "IEEE", country: "Ý", content: "Content" }] }),
+      }));
+
+      try {
+        await expect(
+          executeResearchSync({
+            db: {},
+            sdk,
+            user: { uid: "u_admin", email: "admin@tdtu.edu.vn", role: "admin" },
+            options: { dryRun: false, dataSource: "drive_json" },
+          })
+        ).rejects.toThrow("Không thể đọc tài liệu khóa để xác minh trước khi ghi");
+
+        expect(sdk.addDoc).not.toHaveBeenCalled();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("aborts writes and throws LOCK_LOST if lock document was deleted or already released (!isLocked)", async () => {
+      let isInitialAcquisitionDone = false;
+      const store: Record<string, any> = {};
+
+      const sdk: any = {
+        doc: (_db: any, col: string, id: string) => ({ col, id, path: `${col}/${id}` }),
+        runTransaction: async <T>(_db: any, fn: (tx: any) => Promise<T>): Promise<T> => {
+          const tx = {
+            get: async (ref: any) => ({ exists: () => store[ref.path] !== undefined, data: () => store[ref.path] }),
+            set: (ref: any, data: any) => { store[ref.path] = data; },
+          };
+          return await fn(tx);
+        },
+        getDoc: async (ref: any) => {
+          if (ref.path === `systemConfig/${RESEARCH_SYNC_LOCK_DOC_ID}` && isInitialAcquisitionDone) {
+            return { exists: () => true, data: () => ({ isLocked: false }) };
+          }
+          return { exists: () => store[ref.path] !== undefined, data: () => store[ref.path] };
+        },
+        setDoc: async (ref: any, data: any) => { store[ref.path] = data; },
+        collection: (_db: any, path: string) => ({ path }),
+        getDocs: async () => {
+          isInitialAcquisitionDone = true;
+          return { docs: [] };
+        },
+        addDoc: vi.fn(),
+      };
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ files: [{ id: "f1", name: "IFA_RH_CONFERENCES.json" }] }),
+        text: async () => JSON.stringify({ schemaVersion: 1, revision: 1, runId: "1", conferences: [{ code: "QT0001", category: "QT", title: "Hội thảo quốc tế HAXD 2027", organizer: "IEEE", country: "Ý", content: "Content" }] }),
+      }));
+
+      try {
+        await expect(
+          executeResearchSync({
+            db: {},
+            sdk,
+            user: { uid: "u_admin", email: "admin@tdtu.edu.vn", role: "admin" },
+            options: { dryRun: false, dataSource: "drive_json" },
+          })
+        ).rejects.toThrow("Khóa đồng bộ đã bị giải phóng hoặc bị hủy bởi hệ thống");
+
+        expect(sdk.addDoc).not.toHaveBeenCalled();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("verifies two concurrent sync sessions: Session 1 holds lock, Session 2 is skipped; then Session 2 can run after Session 1 completes", async () => {
+      const store: Record<string, any> = {};
+
+      const sdk: any = {
+        doc: (_db: any, col: string, id: string) => ({ col, id, path: `${col}/${id}` }),
+        runTransaction: async <T>(_db: any, fn: (tx: any) => Promise<T>): Promise<T> => {
+          const stagedWrites: any[] = [];
+          const tx = {
+            get: async (ref: any) => ({
+              exists: () => store[ref.path] !== undefined,
+              data: () => store[ref.path],
+            }),
+            set: (ref: any, data: any, opts: any) => {
+              stagedWrites.push({ key: ref.path, data, merge: opts?.merge });
+            },
+          };
+          const res = await fn(tx);
+          for (const w of stagedWrites) {
+            store[w.key] = w.merge && store[w.key] ? { ...store[w.key], ...w.data } : w.data;
+          }
+          return res;
+        },
+        getDoc: async (ref: any) => ({
+          exists: () => store[ref.path] !== undefined,
+          data: () => store[ref.path],
+        }),
+        setDoc: async (ref: any, data: any, opts: any) => {
+          store[ref.path] = opts?.merge && store[ref.path] ? { ...store[ref.path], ...data } : data;
+        },
+        updateDoc: async (ref: any, data: any) => {
+          store[ref.path] = { ...store[ref.path], ...data };
+        },
+        collection: (_db: any, path: string) => ({ path }),
+        getDocs: async () => ({ docs: [] }),
+        addDoc: async (colRef: any, data: any) => {
+          const id = `cand_${Object.keys(store).length + 1}`;
+          store[`${colRef.path}/${id}`] = { id, ...data };
+          return { id };
+        },
+        serverTimestamp: () => new Date().toISOString(),
+      };
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ files: [{ id: "f1", name: "IFA_RH_CONFERENCES.json" }] }),
+        text: async () => JSON.stringify({ schemaVersion: 1, revision: 1, runId: "1", conferences: [{ code: "QT0001", category: "QT", title: "Hội thảo quốc tế HAXD 2027", organizer: "IEEE", country: "Ý", content: "Content" }] }),
+      }));
+
+      try {
+        // Step 1: Session 1 acquires lock
+        const lock1 = await acquireFirestoreSyncLock({}, sdk, { email: "admin1@tdtu.edu.vn", uid: "u1" });
+        expect(lock1.acquired).toBe(true);
+
+        // Step 2: Session 2 tries to run while Session 1 is active
+        const session2Outcome = await executeResearchSync({
+          db: {},
+          sdk,
+          user: { uid: "u2", email: "admin2@tdtu.edu.vn", role: "admin" },
+          options: { dryRun: false, dataSource: "drive_json" },
+        });
+
+        // Session 2 is cleanly skipped with lock message
+        expect(session2Outcome.skipped).toBe(true);
+        expect(session2Outcome.reason).toContain("Một phiên đồng bộ khác đang chạy");
+
+        // Step 3: Session 1 finishes and releases lock
+        const release1 = await releaseFirestoreSyncLock({}, sdk, lock1.lockId);
+        expect(release1.released).toBe(true);
+
+        // Step 4: Session 2 can now run successfully
+        const session2Success = await executeResearchSync({
+          db: {},
+          sdk,
+          user: { uid: "u2", email: "admin2@tdtu.edu.vn", role: "admin" },
+          options: { dryRun: false, dataSource: "drive_json" },
+        });
+
+        expect(session2Success.skipped).toBe(false);
+        expect(session2Success.stats?.created).toBe(1);
+        expect(session2Success.stats?.conferenceWrites).toBe(1);
+        expect(session2Success.stats?.systemWrites).toBe(2);
+
+        // Lock is released after Session 2 finishes
+        const lockDoc = store[`systemConfig/${RESEARCH_SYNC_LOCK_DOC_ID}`];
+        expect(lockDoc.isLocked).toBe(false);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe("5. Complete Initial Sync Lifecycle Simulation (Production Equivalent)", () => {

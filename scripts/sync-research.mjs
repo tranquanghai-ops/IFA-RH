@@ -252,27 +252,113 @@ function createRestSdk(accessToken) {
       }
       return { id: autoId };
     },
-    runTransaction: async (_db, fn) => {
-      const tx = {
-        get: async (ref) => {
-          const url = `${BASE_URL}/${ref.path}`;
-          const res = await originalFetch(url, { headers });
-          if (res.status === 404) return { exists: () => false, data: () => undefined };
-          const data = await res.json();
-          return { exists: () => true, data: () => ({ id: ref.id, ...decodeFields(data.fields) }) };
-        },
-        set: async (ref, data, opts) => {
-          const url = `${BASE_URL}/${ref.path}`;
-          const fields = encodeFields(data);
-          let fullUrl = url;
-          if (opts?.merge) {
-            const mask = Object.keys(data).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
-            fullUrl = `${url}?${mask}`;
+    runTransaction: async (_db, updateFn) => {
+      const maxRetries = 5;
+      let attempt = 0;
+
+      while (attempt < maxRetries) {
+        attempt++;
+        // 1. Begin transaction on Firestore REST API
+        const beginUrl = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:beginTransaction`;
+        const beginRes = await originalFetch(beginUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ options: { readWrite: {} } }),
+        });
+        if (!beginRes.ok) {
+          throw new Error(`beginTransaction failed [${beginRes.status}]: ${await beginRes.text()}`);
+        }
+        const { transaction } = await beginRes.json();
+
+        // 2. Transaction context with buffered atomic writes
+        const bufferedWrites = [];
+        const tx = {
+          get: async (ref) => {
+            const docUrl = `${BASE_URL}/${ref.path}?transaction=${encodeURIComponent(transaction)}`;
+            const res = await originalFetch(docUrl, { headers });
+            if (res.status === 404) return { exists: () => false, data: () => undefined };
+            if (!res.ok) {
+              throw new Error(`Transaction get failed [${res.status}]: ${await res.text()}`);
+            }
+            const data = await res.json();
+            return {
+              exists: () => true,
+              data: () => ({ id: ref.id, ...decodeFields(data.fields) }),
+            };
+          },
+          set: (ref, data, opts) => {
+            const fields = encodeFields(data);
+            const writeObj = {
+              update: {
+                name: `projects/${PROJECT_ID}/databases/(default)/documents/${ref.path}`,
+                fields,
+              },
+            };
+            if (opts?.merge) {
+              writeObj.updateMask = { fieldPaths: Object.keys(data) };
+            }
+            bufferedWrites.push(writeObj);
+          },
+          update: (ref, data) => {
+            const fields = encodeFields(data);
+            bufferedWrites.push({
+              update: {
+                name: `projects/${PROJECT_ID}/databases/(default)/documents/${ref.path}`,
+                fields,
+              },
+              updateMask: { fieldPaths: Object.keys(data) },
+            });
+          },
+          delete: (ref) => {
+            bufferedWrites.push({
+              delete: `projects/${PROJECT_ID}/databases/(default)/documents/${ref.path}`,
+            });
+          },
+        };
+
+        try {
+          const result = await updateFn(tx);
+
+          // 3. Commit transaction atomically
+          const commitUrl = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:commit`;
+          const commitRes = await originalFetch(commitUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              transaction,
+              writes: bufferedWrites,
+            }),
+          });
+
+          if (!commitRes.ok) {
+            const errText = await commitRes.text();
+            // HTTP 409 ABORTED indicates lock contention / conflict: retry with backoff
+            if (commitRes.status === 409 && attempt < maxRetries) {
+              console.warn(`[Firestore REST Tx] Xung đột giao dịch (409 ABORTED), thử lại lần ${attempt}/${maxRetries}...`);
+              await new Promise(r => setTimeout(r, 100 * Math.pow(2, attempt) + Math.random() * 50));
+              continue;
+            }
+            throw new Error(`Transaction commit failed [${commitRes.status}]: ${errText}`);
           }
-          await originalFetch(fullUrl, { method: 'PATCH', headers, body: JSON.stringify({ fields }) });
-        },
-      };
-      return await fn(tx);
+
+          return result;
+        } catch (txErr) {
+          // Cleanly rollback transaction on failure
+          try {
+            const rollbackUrl = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:rollback`;
+            await originalFetch(rollbackUrl, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ transaction }),
+            });
+          } catch (_rbErr) {
+            // Ignore rollback network errors
+          }
+          if (attempt >= maxRetries || !String(txErr?.message || '').includes('409')) {
+            throw txErr;
+          }
+        }
+      }
     },
     serverTimestamp: () => new Date().toISOString(),
   };
@@ -387,29 +473,41 @@ async function main() {
     });
 
     if (outcome.skipped) {
-      console.warn(`[SYNC SKIPPED] ${outcome.reason}`);
+      console.warn('=================================================================');
+      console.warn(`[SYNC SKIPPED / TẠM DỪNG] ${outcome.reason}`);
+      console.warn('=================================================================');
+      if (!isDryRun) {
+        process.exit(1);
+      }
       return;
     }
 
     const { stats, durationMs, driveMeta, items } = outcome;
+    const finalStatus = outcome.status || ((stats.failedWrites || 0) > 0 || stats.errorCount > 0 ? 'partial_success' : 'success');
+
     console.log('=================================================================');
-    console.log('KẾT QUẢ ĐỒNG BỘ:');
+    console.log(`KẾT QUẢ ĐỒNG BỘ: [${finalStatus.toUpperCase()}]`);
     if (driveMeta) {
-      console.log(`- File Drive:            ${driveMeta.fileName} (ID: ${driveMeta.fileId}, Rev ${driveMeta.revision})`);
-      console.log(`- Run ID:                ${driveMeta.runId}`);
+      console.log(`- File Drive:                 ${driveMeta.fileName} (ID: ${driveMeta.fileId}, Rev ${driveMeta.revision})`);
+      console.log(`- Run ID:                     ${driveMeta.runId}`);
     }
-    console.log(`- Tổng số hội thảo đọc:  ${stats.read}`);
-    console.log(`- Hợp lệ theo schema:    ${stats.valid}`);
-    console.log(`- Mới tạo (chờ duyệt):   ${stats.created}`);
-    console.log(`- Đề xuất cập nhật:      ${stats.updateProposals}`);
-    console.log(`- Cập nhật trực tiếp:    ${stats.updated}`);
-    console.log(`- Khớp dữ liệu cũ:       ${stats.matched}`);
-    console.log(`- Trùng khớp không đổi:  ${stats.unchanged}`);
-    console.log(`- Giữ sửa thủ công Admin:${stats.preservedAdmin}`);
-    console.log(`- Trùng lặp / Bỏ qua:    ${stats.duplicates}`);
-    console.log(`- Số lượt ghi thành công:${stats.successWrites}`);
-    console.log(`- Lỗi:                   ${stats.errorCount}`);
-    console.log(`- Thời gian thực thi:    ${((durationMs || 0) / 1000).toFixed(2)}s`);
+    console.log(`- Tổng số hội thảo đọc:       ${stats.read}`);
+    console.log(`- Hợp lệ theo schema:         ${stats.valid}`);
+    console.log(`- Mới tạo (chờ duyệt):        ${stats.created}`);
+    console.log(`- Đề xuất cập nhật:           ${stats.updateProposals}`);
+    console.log(`- Cập nhật trực tiếp:         ${stats.updated}`);
+    console.log(`- Khớp dữ liệu cũ:            ${stats.matched}`);
+    console.log(`- Trùng khớp không đổi:       ${stats.unchanged}`);
+    console.log(`- Giữ sửa thủ công Admin:     ${stats.preservedAdmin}`);
+    console.log(`- Ngoài phạm vi (out-of-scope):${stats.outOfScope || 0}`);
+    console.log(`- Trùng lặp / Bỏ qua:         ${stats.duplicates}`);
+    console.log(`-----------------------------------------------------------------`);
+    console.log(`- Thao tác ghi dữ liệu NCKH:  ${stats.conferenceWrites ?? stats.successWrites}`);
+    console.log(`- Thao tác ghi hệ thống/nhật ký: ${stats.systemWrites || 0}`);
+    console.log(`- Tổng thao tác ghi thành công:  ${(stats.conferenceWrites ?? stats.successWrites) + (stats.systemWrites || 0)}`);
+    console.log(`- Thao tác ghi thất bại:      ${stats.failedWrites || 0}`);
+    console.log(`- Tổng số lỗi:                ${stats.errorCount}`);
+    console.log(`- Thời gian thực thi:         ${((durationMs || 0) / 1000).toFixed(2)}s`);
     console.log('=================================================================');
 
     console.log('\nCHI TIẾT TỪNG HỘI THẢO:');
@@ -417,11 +515,17 @@ async function main() {
       console.log(`[${(item.code || '----').padEnd(6)}] [${(item.action || '').padEnd(20)}] ${item.title?.slice(0, 55).padEnd(55)} -> ${item.reason}`);
     }
 
-    if (stats.errorCount > 0) {
-      process.exitCode = 0;
+    if (finalStatus === 'failed') {
+      console.error('\n[LỖI NGHIÊM TRỌNG] Quá trình đồng bộ thất bại hoàn toàn.');
+      process.exit(1);
+    } else if (finalStatus === 'partial_success') {
+      console.warn('\n[CẢNH BÁO] Quá trình đồng bộ hoàn thành một phần (PARTIAL_SUCCESS) với lỗi ghi hoặc dữ liệu.');
+      if ((stats.failedWrites || 0) > 0) {
+        process.exit(1);
+      }
     }
   } catch (err) {
-    console.error('LỖI ĐỒNG BỘ THẤT BẠI:', err);
+    console.error('\n[LỖI NGHIÊM TRỌNG] Quá trình đồng bộ thất bại:', err);
     process.exit(1);
   }
 }

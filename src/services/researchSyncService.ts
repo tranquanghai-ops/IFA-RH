@@ -36,6 +36,9 @@ export interface ResearchSyncStats {
   outOfScope: number;
   duplicates: number;
   successWrites: number;
+  conferenceWrites?: number;
+  systemWrites?: number;
+  failedWrites?: number;
   errorCount: number;
 }
 
@@ -256,7 +259,8 @@ export async function executeResearchSync({
           stateRef,
           {
             syncInProgress: true,
-            lockId,
+            lockId: acquiredLockId,
+            activeLockId: acquiredLockId,
             syncStartedAt: new Date().toISOString(),
             syncStartedAtMs: startTime,
             syncStartedBy: user.email || "system",
@@ -407,6 +411,9 @@ export async function executeResearchSync({
       outOfScope: 0,
       duplicates: 0,
       successWrites: 0,
+      conferenceWrites: 0,
+      systemWrites: 0,
+      failedWrites: 0,
       errorCount: 0,
     };
 
@@ -455,28 +462,86 @@ export async function executeResearchSync({
         });
       }
 
-      if (sdk.getDoc) {
-        try {
-          const lockRef = sdk.doc(db, "systemConfig", RESEARCH_SYNC_LOCK_DOC_ID);
-          const lockSnap = await sdk.getDoc(lockRef);
-          if (lockSnap?.exists && (typeof lockSnap.exists === "function" ? lockSnap.exists() : true)) {
-            const lockData = typeof lockSnap.data === "function" ? lockSnap.data() : lockSnap;
-            if (lockData && lockData.isLocked && lockData.lockId !== acquiredLockId) {
-              throw new ResearchSyncStageError({
-                stage: "LOCK_LOST",
-                collectionName: "systemConfig",
-                documentId: RESEARCH_SYNC_LOCK_DOC_ID,
-                operationType: "update",
-                userSummary: `Khóa phiên đồng bộ đã bị chiếm bởi phiên khác (${lockData.lockedBy || "quản trị viên khác"}). Quá trình ghi đã được hủy để bảo vệ dữ liệu.`,
-                actorUid: user.uid,
-                actorRole: user.role,
-              });
-            }
-          }
-        } catch (checkErr: any) {
-          if (checkErr instanceof ResearchSyncStageError) throw checkErr;
-          console.warn("[ResearchSync] Cảnh báo kiểm tra khóa trước khi ghi:", checkErr);
-        }
+      if (!sdk.getDoc) {
+        throw new ResearchSyncStageError({
+          stage: "LOCK_LOST",
+          collectionName: "systemConfig",
+          documentId: RESEARCH_SYNC_LOCK_DOC_ID,
+          operationType: "get",
+          userSummary: "SDK không hỗ trợ getDoc để xác minh khóa trước khi ghi.",
+          actorUid: user.uid,
+          actorRole: user.role,
+        });
+      }
+
+      let lockSnap: any;
+      try {
+        const lockRef = sdk.doc(db, "systemConfig", RESEARCH_SYNC_LOCK_DOC_ID);
+        lockSnap = await sdk.getDoc(lockRef);
+      } catch (checkErr: any) {
+        if (checkErr instanceof ResearchSyncStageError) throw checkErr;
+        throw new ResearchSyncStageError({
+          stage: "LOCK_LOST",
+          collectionName: "systemConfig",
+          documentId: RESEARCH_SYNC_LOCK_DOC_ID,
+          operationType: "get",
+          originalError: checkErr,
+          userSummary: `Không thể đọc tài liệu khóa để xác minh trước khi ghi (${checkErr?.message || String(checkErr)}). Quá trình ghi đã bị dừng để đảm bảo an toàn.`,
+          actorUid: user.uid,
+          actorRole: user.role,
+        });
+      }
+
+      const exists = typeof lockSnap?.exists === "function" ? lockSnap.exists() : Boolean(lockSnap?.exists);
+      if (!exists) {
+        throw new ResearchSyncStageError({
+          stage: "LOCK_LOST",
+          collectionName: "systemConfig",
+          documentId: RESEARCH_SYNC_LOCK_DOC_ID,
+          operationType: "get",
+          userSummary: "Tài liệu khóa đồng bộ không còn tồn tại trên hệ thống. Dừng ghi để tránh xung đột dữ liệu.",
+          actorUid: user.uid,
+          actorRole: user.role,
+        });
+      }
+
+      const lockData = typeof lockSnap.data === "function" ? lockSnap.data() : lockSnap;
+      if (!lockData || lockData.isLocked !== true) {
+        throw new ResearchSyncStageError({
+          stage: "LOCK_LOST",
+          collectionName: "systemConfig",
+          documentId: RESEARCH_SYNC_LOCK_DOC_ID,
+          operationType: "update",
+          userSummary: "Khóa đồng bộ đã bị giải phóng hoặc bị hủy bởi hệ thống. Dừng ghi để bảo vệ dữ liệu.",
+          actorUid: user.uid,
+          actorRole: user.role,
+        });
+      }
+
+      const currentLockId = lockData.lockId || lockData.activeLockId;
+      if (currentLockId !== acquiredLockId) {
+        throw new ResearchSyncStageError({
+          stage: "LOCK_LOST",
+          collectionName: "systemConfig",
+          documentId: RESEARCH_SYNC_LOCK_DOC_ID,
+          operationType: "update",
+          userSummary: `Khóa phiên đồng bộ đã bị chiếm bởi phiên khác (${lockData.lockedBy || currentLockId || "quản trị viên khác"}). Quá trình ghi đã được hủy để bảo vệ dữ liệu.`,
+          actorUid: user.uid,
+          actorRole: user.role,
+        });
+      }
+
+      const lockTime = Number(lockData.lockTimestampMs) || (lockData.lockedAt ? new Date(lockData.lockedAt).getTime() : 0);
+      if (lockTime > 0 && Date.now() - lockTime >= RESEARCH_SYNC_LOCK_TTL_MS) {
+        throw new ResearchSyncStageError({
+          stage: "LOCK_EXPIRED",
+          collectionName: "systemConfig",
+          documentId: RESEARCH_SYNC_LOCK_DOC_ID,
+          operationType: "update",
+          userSummary: "Khóa đồng bộ trên Firestore đã hết hạn thời gian (TTL 5 phút). Quá trình ghi đã bị dừng để tránh xung đột dữ liệu.",
+          actorUid: user.uid,
+          actorRole: user.role,
+        });
       }
     };
 
@@ -503,9 +568,12 @@ export async function executeResearchSync({
                 updates.type = cls.classifiedType;
               }
               await sdk.updateDoc(candRef, cleanUndefined(updates));
+              stats.conferenceWrites = (stats.conferenceWrites || 0) + 1;
               stats.successWrites++;
             } catch (reconcileErr) {
               console.warn("Lỗi cập nhật out-of-scope cho ứng viên:", cand.id, reconcileErr);
+              stats.failedWrites = (stats.failedWrites || 0) + 1;
+              stats.errorCount++;
             }
           }
         }
@@ -618,6 +686,7 @@ export async function executeResearchSync({
                     updatedBy: "SPARK_SYNC",
                   })
                 );
+                stats.conferenceWrites = (stats.conferenceWrites || 0) + 1;
                 stats.successWrites++;
               } catch (cleanErr: any) {
                 throw new ResearchSyncStageError({
@@ -707,6 +776,7 @@ export async function executeResearchSync({
                       updatedBy: "SPARK_SYNC",
                     };
                     await sdk.updateDoc(docRef, cleanUndefined(safeUpdates));
+                    stats.conferenceWrites = (stats.conferenceWrites || 0) + 1;
                     stats.successWrites++;
                   } catch (updateCandErr: any) {
                     throw new ResearchSyncStageError({
@@ -824,6 +894,7 @@ export async function executeResearchSync({
                       updatedBy: "SPARK_SYNC",
                     })
                   );
+                  stats.conferenceWrites = (stats.conferenceWrites || 0) + 1;
                   stats.successWrites++;
                 } catch (createProposalErr: any) {
                   throw new ResearchSyncStageError({
@@ -896,6 +967,7 @@ export async function executeResearchSync({
                   docRef,
                   cleanUndefined(safeUpdates)
                 );
+                stats.conferenceWrites = (stats.conferenceWrites || 0) + 1;
                 stats.successWrites++;
               } catch (updateErr: any) {
                 throw new ResearchSyncStageError({
@@ -982,6 +1054,7 @@ export async function executeResearchSync({
               cleanUndefined(newCandData)
             );
             newCandidateId = addedDoc?.id || "";
+            stats.conferenceWrites = (stats.conferenceWrites || 0) + 1;
             stats.successWrites++;
           } catch (createCandErr: any) {
             throw new ResearchSyncStageError({
@@ -1014,7 +1087,12 @@ export async function executeResearchSync({
     }
 
     const durationMs = Date.now() - startTime;
-    const finalStatus: "success" | "partial_success" = stats.errorCount > 0 ? "partial_success" : "success";
+    const finalStatus: "success" | "partial_success" | "failed" =
+      (stats.failedWrites || 0) > 0 || stats.errorCount > 0
+        ? (stats.conferenceWrites || 0) > 0 || (stats.systemWrites || 0) > 0
+          ? "partial_success"
+          : "failed"
+        : "success";
 
     // 5. Finalize state
     if (!isDryRun) {
@@ -1037,6 +1115,7 @@ export async function executeResearchSync({
         }
 
         await sdk.setDoc(stateRef, statePayload, { merge: true });
+        stats.systemWrites = (stats.systemWrites || 0) + 1;
       } catch (finalizeErr: any) {
         throw new ResearchSyncStageError({
           stage: "UPDATE_SYNC_STATE",
@@ -1072,6 +1151,7 @@ export async function executeResearchSync({
             .map((d) => ({ row: d.row, reason: d.reason })),
           createdAt: new Date().toISOString(),
         });
+        stats.systemWrites = (stats.systemWrites || 0) + 1;
       } catch (impErr: any) {
         console.warn("[WRITE_IMPORT_HISTORY] Không ghi được lịch sử imports:", impErr);
       }
@@ -1090,7 +1170,7 @@ export async function executeResearchSync({
   } catch (error: any) {
     console.error(`[ResearchSync] Lỗi trong phiên đồng bộ:`, error);
     // Mark failed status in facultyResearchSync, but never overwrite if lock was reclaimed by another session
-    if (!isDryRun && error?.stage !== "LOCK_LOST") {
+    if (!isDryRun && error?.stage !== "LOCK_LOST" && error?.stage !== "LOCK_EXPIRED") {
       try {
         await sdk.setDoc(
           stateRef,
