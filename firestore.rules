@@ -393,7 +393,7 @@ service cloud.firestore {
           'detailedContent', 'topicsDetailed',
           'recalledAt', 'recalledBy', 'hiddenAt', 'hiddenBy',
           'normalizedTitle', 'editedByAdmin', 'manualOverrides',
-          'conferenceCode', 'category'
+          'conferenceCode', 'category', 'lastUpdated'
         ]) &&
         validString(data.title, 1, 300) &&
         validString(data.organizer, 1, 200) &&
@@ -419,6 +419,7 @@ service cloud.firestore {
         validOptDate(data, 'registrationDeadline') &&
         validOptDate(data, 'eventDate') &&
         validOptDate(data, 'discoveredAt') &&
+        validOptDate(data, 'lastUpdated') &&
         validOptDate(data, 'recalledAt') &&
         validOptDate(data, 'hiddenAt') &&
         validOptString(data, 'location', 200) &&
@@ -471,7 +472,7 @@ service cloud.firestore {
           'stt', 'candidateId', 'hiddenAt', 'hiddenBy', 'sheetRowIndex',
           'unverifiedFields', 'manualReviewNeeded', 'manualReviewReason', 'confidenceLevel',
           'diffSummary', 'changeType', 'isOutOfScope', 'outOfScopeReason',
-          'resolutionType', 'conferenceCode', 'category'
+          'resolutionType', 'conferenceCode', 'category', 'lastUpdated'
         ]) &&
         validString(data.title, 1, 300) &&
         validString(data.organizer, 1, 200) &&
@@ -496,6 +497,8 @@ service cloud.firestore {
         (!('isOutOfScope' in data) || data.isOutOfScope is bool) &&
         validOptString(data, 'conferenceCode', 20) &&
         (!('category' in data) || data.category in ['TN', 'QT']) &&
+        validOptDate(data, 'discoveredAt') &&
+        validOptDate(data, 'lastUpdated') &&
         (!('publishedOpportunityId' in data) || validString(data.publishedOpportunityId, 0, 100)) &&
         (!('id' in data) || validString(data.id, 0, 100));
     }

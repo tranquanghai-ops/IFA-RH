@@ -281,7 +281,8 @@ describe("RULES Logic & Role Permissions Verification", () => {
         "createdBy", "editedByAdmin", "manualOverrides",
         "stt", "candidateId", "hiddenAt", "hiddenBy", "sheetRowIndex",
         "unverifiedFields", "manualReviewNeeded", "manualReviewReason", "confidenceLevel",
-        "diffSummary"
+        "diffSummary", "changeType", "isOutOfScope", "outOfScopeReason",
+        "resolutionType", "conferenceCode", "category", "lastUpdated"
       ]);
       if (!Object.keys(data).every((k) => allowedKeys.has(k))) return false;
 

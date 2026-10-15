@@ -1,4 +1,4 @@
-name: Weekly Research Data Sync (SPAK -> IFA-RH)
+name: Weekly Research Data Sync (Google Drive JSON Spark -> IFA-RH)
 
 on:
   schedule:
@@ -8,10 +8,6 @@ on:
     inputs:
       dry_run:
         description: 'Chỉ chạy kiểm tra thử nghiệm (Dry run), không ghi vào Firestore'
-        type: boolean
-        default: false
-      force:
-        description: 'Bỏ qua kiểm tra khóa đồng bộ nếu phiên trước bị gián đoạn'
         type: boolean
         default: false
 
@@ -48,14 +44,11 @@ jobs:
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             EXTRA_FLAGS="$EXTRA_FLAGS --dry-run"
           fi
-          if [ "${{ github.event.inputs.force }}" = "true" ]; then
-            EXTRA_FLAGS="$EXTRA_FLAGS --force"
-          fi
           
           TRIGGER_SOURCE="github_schedule"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TRIGGER_SOURCE="github_dispatch"
           fi
 
-          echo "Bắt đầu chạy đồng bộ NCKH với cờ: $EXTRA_FLAGS, nguồn: $TRIGGER_SOURCE"
-          node scripts/sync-research.mjs $TRIGGER_SOURCE $EXTRA_FLAGS
+          echo "Bắt đầu chạy đồng bộ NCKH từ Google Drive JSON với cờ: $EXTRA_FLAGS, nguồn: $TRIGGER_SOURCE"
+          npx tsx scripts/sync-research.mjs $TRIGGER_SOURCE $EXTRA_FLAGS

@@ -517,4 +517,508 @@ describe("Research Sync Guard & Concurrency Lock Suite", () => {
       }
     });
   });
+
+  describe("4. Distributed Lock Safety, TTL Expiration, and Finally Block Verification", () => {
+    it("guarantees lock is released in finally block when an error occurs during sync", async () => {
+      const store: Record<string, any> = {};
+      const sdk: any = {
+        doc: (_db: any, col: string, id: string) => ({ col, id, path: `${col}/${id}` }),
+        runTransaction: async <T>(_db: any, fn: (tx: any) => Promise<T>): Promise<T> => {
+          const stagedWrites: any[] = [];
+          const tx = {
+            get: async (ref: any) => ({
+              exists: () => store[ref.path] !== undefined,
+              data: () => store[ref.path],
+            }),
+            set: (ref: any, data: any, opts: any) => {
+              stagedWrites.push({ key: ref.path, data, merge: opts?.merge });
+            },
+          };
+          const res = await fn(tx);
+          for (const w of stagedWrites) {
+            store[w.key] = w.merge && store[w.key] ? { ...store[w.key], ...w.data } : w.data;
+          }
+          return res;
+        },
+        getDoc: async (ref: any) => ({
+          exists: () => store[ref.path] !== undefined,
+          data: () => store[ref.path],
+        }),
+        setDoc: async (ref: any, data: any, opts: any) => {
+          store[ref.path] = opts?.merge && store[ref.path] ? { ...store[ref.path], ...data } : data;
+        },
+        collection: (_db: any, path: string) => ({ path }),
+        getDocs: async (ref: any) => {
+          if (ref.path === "opportunityCandidates") {
+            throw new Error("Simulated network failure while fetching candidates");
+          }
+          return { docs: [] };
+        },
+      };
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({
+          files: [{ id: "f1", name: "IFA_RH_CONFERENCES.json" }],
+        }),
+        text: async () =>
+          JSON.stringify({
+            schemaVersion: 1,
+            revision: 1,
+            runId: "20261015-01",
+            generatedAt: "2026-10-15T00:00:00Z",
+            conferences: [
+              {
+                code: "QT0001",
+                category: "QT",
+                title: "Hội thảo quốc tế HAXD 2027",
+                organizer: "IEEE",
+                country: "Ý",
+                content: "Content",
+              },
+            ],
+          }),
+      }));
+
+      try {
+        await expect(
+          executeResearchSync({
+            db: {},
+            sdk,
+            user: { uid: "u_admin", email: "admin@tdtu.edu.vn", role: "admin" },
+            options: { dryRun: false, dataSource: "drive_json" },
+          })
+        ).rejects.toThrow();
+
+        // Lock must be released by finally block
+        const lockDoc = store[`systemConfig/${RESEARCH_SYNC_LOCK_DOC_ID}`];
+        expect(lockDoc).toBeDefined();
+        expect(lockDoc.isLocked).toBe(false);
+        expect(lockDoc.lockId).toBe("");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("aborts writes and throws LOCK_EXPIRED if sync duration exceeds TTL 5 minutes before writing", async () => {
+      const store: Record<string, any> = {};
+      const sdk: any = {
+        doc: (_db: any, col: string, id: string) => ({ col, id, path: `${col}/${id}` }),
+        runTransaction: async <T>(_db: any, fn: (tx: any) => Promise<T>): Promise<T> => {
+          const stagedWrites: any[] = [];
+          const tx = {
+            get: async (ref: any) => ({
+              exists: () => store[ref.path] !== undefined,
+              data: () => store[ref.path],
+            }),
+            set: (ref: any, data: any, opts: any) => {
+              stagedWrites.push({ key: ref.path, data, merge: opts?.merge });
+            },
+          };
+          const res = await fn(tx);
+          for (const w of stagedWrites) {
+            store[w.key] = w.merge && store[w.key] ? { ...store[w.key], ...w.data } : w.data;
+          }
+          return res;
+        },
+        getDoc: async (ref: any) => ({
+          exists: () => store[ref.path] !== undefined,
+          data: () => store[ref.path],
+        }),
+        setDoc: async (ref: any, data: any, opts: any) => {
+          store[ref.path] = opts?.merge && store[ref.path] ? { ...store[ref.path], ...data } : data;
+        },
+        collection: (_db: any, path: string) => ({ path }),
+        getDocs: async () => ({ docs: [] }),
+        addDoc: vi.fn(),
+      };
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({
+          files: [{ id: "f1", name: "IFA_RH_CONFERENCES.json" }],
+        }),
+        text: async () =>
+          JSON.stringify({
+            schemaVersion: 1,
+            revision: 1,
+            runId: "20261015-01",
+            generatedAt: "2026-10-15T00:00:00Z",
+            conferences: [
+              {
+                code: "QT0001",
+                category: "QT",
+                title: "Hội thảo quốc tế HAXD 2027",
+                organizer: "IEEE",
+                country: "Ý",
+                content: "Content",
+              },
+            ],
+          }),
+      }));
+
+      // Mock Date.now to simulate a delay of 6 minutes (360,000ms) between start and pre-write
+      const realNow = Date.now;
+      let callCount = 0;
+      vi.spyOn(Date, "now").mockImplementation(() => {
+        callCount++;
+        // Start time = 1,000,000; pre-write check = 1,000,000 + 360,000
+        return callCount === 1 ? 1000000 : 1360000;
+      });
+
+      try {
+        await expect(
+          executeResearchSync({
+            db: {},
+            sdk,
+            user: { uid: "u_admin", email: "admin@tdtu.edu.vn", role: "admin" },
+            options: { dryRun: false, dataSource: "drive_json" },
+          })
+        ).rejects.toThrow("Phiên đồng bộ đã vượt quá giới hạn thời gian (TTL 5 phút)");
+
+        // Assert zero documents written
+        expect(sdk.addDoc).not.toHaveBeenCalled();
+      } finally {
+        vi.restoreAllMocks();
+        Date.now = realNow;
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("aborts writes and throws LOCK_LOST if lock was reclaimed by another session, preserving the other session lock", async () => {
+      const store: Record<string, any> = {};
+      let hasSwappedLock = false;
+
+      const sdk: any = {
+        doc: (_db: any, col: string, id: string) => ({ col, id, path: `${col}/${id}` }),
+        runTransaction: async <T>(_db: any, fn: (tx: any) => Promise<T>): Promise<T> => {
+          const stagedWrites: any[] = [];
+          const tx = {
+            get: async (ref: any) => ({
+              exists: () => store[ref.path] !== undefined,
+              data: () => store[ref.path],
+            }),
+            set: (ref: any, data: any, opts: any) => {
+              stagedWrites.push({ key: ref.path, data, merge: opts?.merge });
+            },
+          };
+          const res = await fn(tx);
+          for (const w of stagedWrites) {
+            store[w.key] = w.merge && store[w.key] ? { ...store[w.key], ...w.data } : w.data;
+          }
+          return res;
+        },
+        getDoc: async (ref: any) => {
+          // If checking lockDoc during pre-write, simulate that another session claimed it
+          if (ref.path === `systemConfig/${RESEARCH_SYNC_LOCK_DOC_ID}` && hasSwappedLock) {
+            return {
+              exists: () => true,
+              data: () => ({
+                isLocked: true,
+                lockId: "lock_other_admin_new_session",
+                lockedBy: "admin_b@tdtu.edu.vn",
+              }),
+            };
+          }
+          return {
+            exists: () => store[ref.path] !== undefined,
+            data: () => store[ref.path],
+          };
+        },
+        setDoc: async (ref: any, data: any, opts: any) => {
+          store[ref.path] = opts?.merge && store[ref.path] ? { ...store[ref.path], ...data } : data;
+        },
+        collection: (_db: any, path: string) => ({ path }),
+        getDocs: async () => {
+          // Right after fetching docs, another session claims the lock
+          hasSwappedLock = true;
+          store[`systemConfig/${RESEARCH_SYNC_LOCK_DOC_ID}`] = {
+            isLocked: true,
+            lockId: "lock_other_admin_new_session",
+            lockedBy: "admin_b@tdtu.edu.vn",
+          };
+          return { docs: [] };
+        },
+        addDoc: vi.fn(),
+      };
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({
+          files: [{ id: "f1", name: "IFA_RH_CONFERENCES.json" }],
+        }),
+        text: async () =>
+          JSON.stringify({
+            schemaVersion: 1,
+            revision: 1,
+            runId: "20261015-01",
+            generatedAt: "2026-10-15T00:00:00Z",
+            conferences: [
+              {
+                code: "QT0001",
+                category: "QT",
+                title: "Hội thảo quốc tế HAXD 2027",
+                organizer: "IEEE",
+                country: "Ý",
+                content: "Content",
+              },
+            ],
+          }),
+      }));
+
+      try {
+        await expect(
+          executeResearchSync({
+            db: {},
+            sdk,
+            user: { uid: "u_admin_a", email: "admin_a@tdtu.edu.vn", role: "admin" },
+            options: { dryRun: false, dataSource: "drive_json" },
+          })
+        ).rejects.toThrow("Khóa phiên đồng bộ đã bị chiếm bởi phiên khác (admin_b@tdtu.edu.vn)");
+
+        // Assert zero documents written by Session A
+        expect(sdk.addDoc).not.toHaveBeenCalled();
+
+        // And Session A's finally block did NOT release Session B's lock!
+        const lockDoc = store[`systemConfig/${RESEARCH_SYNC_LOCK_DOC_ID}`];
+        expect(lockDoc.isLocked).toBe(true);
+        expect(lockDoc.lockId).toBe("lock_other_admin_new_session");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
+  describe("5. Complete Initial Sync Lifecycle Simulation (Production Equivalent)", () => {
+    it("runs dry-run (0 writes), first live sync (2 created QT + 1 update proposal), and idempotent second sync (0 duplicates)", async () => {
+      // 10 conferences matching Spark official JSON
+      const mock10Conferences = [
+        { code: "TN0001", category: "TN", title: "Hội thảo IETBHEC 2027", organizer: "ĐH Đà Nẵng", country: "Việt Nam", content: "C1" },
+        { code: "TN0002", category: "TN", title: "Hội thảo CELG 2026", organizer: "UEH-CELG", country: "Việt Nam", content: "C2" },
+        { code: "TN0003", category: "TN", title: "Hội thảo 9th CIEMB 2026", organizer: "NEU", country: "Việt Nam", content: "C3" },
+        { code: "TN0004", category: "TN", title: "Hội thảo LETJ 2027", organizer: "NEU", country: "Việt Nam", content: "C4" },
+        { code: "TN0005", category: "TN", title: "Hội thảo ICISN 2027", organizer: "ĐH Hải Dương", country: "Việt Nam", content: "C5" },
+        { code: "TN0006", category: "TN", title: "Hội thảo Đương đại trong phát triển", organizer: "NEU", country: "Việt Nam", content: "C6" },
+        { code: "TN0007", category: "TN", title: "Hội thảo RTD 2026 FutureScape", organizer: "UEH", country: "Việt Nam", content: "C7" },
+        { code: "QT0001", category: "QT", title: "Hội thảo quốc tế HAXD 2027", organizer: "IEEE Italy Section", country: "Ý", lastUpdated: "2026-10-12", content: "C8" },
+        { code: "QT0002", category: "QT", title: "Hội thảo quốc tế EvoMUSART 2027", organizer: "SPECIES Society", country: "Đức", lastUpdated: "2026-10-08", content: "C9" },
+        { code: "QT0003", category: "QT", title: "Hội thảo quốc tế Shaping the Future of the Global South", organizer: "NEU, IEASA & SMU", country: "Nam Phi / Việt Nam", location: "Pretoria (Updated)", content: "C10" },
+      ];
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({ files: [{ id: "f_official", name: "IFA_RH_CONFERENCES.json" }] }),
+        text: async () =>
+          JSON.stringify({
+            schemaVersion: 1,
+            revision: 1,
+            runId: "20261015-01",
+            generatedAt: "2026-10-15T00:00:00Z",
+            conferences: mock10Conferences,
+          }),
+      }));
+
+      // In-memory Firestore store seeded with production state: 8 published opportunities + 7 pending TN update proposals
+      const store: Record<string, any> = {};
+
+      // Seed 8 published opportunities (7 TN + 1 QT)
+      const publishedOpps: Opportunity[] = [
+        { id: "opp_ietbhec_2027", title: "Hội thảo IETBHEC 2027", organizer: "ĐH Đà Nẵng", country: "Việt Nam", type: "Hội thảo", level: "Quốc tế", topic: "T", field: "F", tags: [], deadline: "2027-02-25", suitability: "Phù hợp", content: "C1", sourceType: "SPARK", status: "published", createdAt: "2026-10-07T00:00:00Z", updatedAt: "2026-10-07T00:00:00Z", createdBy: "admin" },
+        { id: "opp_celg_2026", title: "Hội thảo CELG 2026", organizer: "UEH-CELG", country: "Việt Nam", type: "Hội thảo", level: "Quốc gia", topic: "T", field: "F", tags: [], deadline: "2026-11-15", suitability: "Phù hợp", content: "C2", sourceType: "SPARK", status: "published", createdAt: "2026-10-07T00:00:00Z", updatedAt: "2026-10-07T00:00:00Z", createdBy: "admin" },
+        { id: "opp_ciemb_2026", title: "Hội thảo 9th CIEMB 2026", organizer: "NEU", country: "Việt Nam", type: "Hội thảo", level: "Quốc tế", topic: "T", field: "F", tags: [], deadline: "2026-11-20", suitability: "Phù hợp", content: "C3", sourceType: "SPARK", status: "published", createdAt: "2026-10-07T00:00:00Z", updatedAt: "2026-10-07T00:00:00Z", createdBy: "admin" },
+        { id: "opp_letj_2027", title: "Hội thảo LETJ 2027", organizer: "NEU", country: "Việt Nam", type: "Hội thảo", level: "Quốc tế", topic: "T", field: "F", tags: [], deadline: "2027-01-15", suitability: "Phù hợp", content: "C4", sourceType: "SPARK", status: "published", createdAt: "2026-10-07T00:00:00Z", updatedAt: "2026-10-07T00:00:00Z", createdBy: "admin" },
+        { id: "opp_icisn_2027", title: "Hội thảo ICISN 2027", organizer: "ĐH Hải Dương", country: "Việt Nam", type: "Hội thảo", level: "Quốc tế", topic: "T", field: "F", tags: [], deadline: "2027-02-10", suitability: "Phù hợp", content: "C5", sourceType: "SPARK", status: "published", createdAt: "2026-10-07T00:00:00Z", updatedAt: "2026-10-07T00:00:00Z", createdBy: "admin" },
+        { id: "opp_neu_duongdai_2026", title: "Hội thảo Đương đại trong phát triển", organizer: "NEU", country: "Việt Nam", type: "Hội thảo", level: "Quốc gia", topic: "T", field: "F", tags: [], deadline: "2026-11-30", suitability: "Phù hợp", content: "C6", sourceType: "SPARK", status: "published", createdAt: "2026-10-07T00:00:00Z", updatedAt: "2026-10-07T00:00:00Z", createdBy: "admin" },
+        { id: "opp_rtd_2026", title: "Hội thảo RTD 2026 FutureScape", organizer: "UEH", country: "Việt Nam", type: "Hội thảo", level: "Quốc tế", topic: "T", field: "F", tags: [], deadline: "2026-12-01", suitability: "Phù hợp", content: "C7", sourceType: "SPARK", status: "published", createdAt: "2026-10-07T00:00:00Z", updatedAt: "2026-10-07T00:00:00Z", createdBy: "admin" },
+        { id: "opp_global_south_2026", title: "Hội thảo quốc tế Shaping the Future of the Global South", organizer: "NEU, IEASA & SMU", country: "Nam Phi / Việt Nam", type: "Hội thảo", level: "Quốc tế", topic: "T", field: "F", tags: [], deadline: "2026-10-16", suitability: "Phù hợp", location: "Pretoria", content: "C10", sourceType: "SPARK", status: "published", createdAt: "2026-10-07T01:41:19Z", updatedAt: "2026-10-07T01:41:19Z", createdBy: "tranquanghai@tdtu.edu.vn" },
+      ];
+
+      for (const opp of publishedOpps) {
+        store[`opportunities/${opp.id}`] = opp;
+      }
+
+      // Seed 7 pending TN update proposals (matching existing proposals from previous sync)
+      const proposalIds = [
+        "cand_upd_opp_ietbhec_2027", "cand_upd_opp_celg_2026", "cand_upd_opp_ciemb_2026",
+        "cand_upd_opp_letj_2027", "cand_upd_opp_icisn_2027", "cand_upd_opp_neu_duongdai_2026",
+        "cand_upd_opp_rtd_2026"
+      ];
+      for (let i = 0; i < 7; i++) {
+        const pubOpp = publishedOpps[i];
+        const propId = proposalIds[i];
+        store[`opportunityCandidates/${propId}`] = {
+          id: propId,
+          title: pubOpp.title,
+          organizer: pubOpp.organizer,
+          country: pubOpp.country,
+          type: pubOpp.type,
+          level: pubOpp.level,
+          status: "rejected",
+          resolutionType: "AUTO_CLOSED",
+          rejectionReason: "Đồng bộ chuẩn hóa: Dữ liệu Google Sheets và hội thảo đã công bố đã hoàn toàn trùng khớp, không có thay đổi thực tế.",
+          changeType: "update",
+          publishedOpportunityId: pubOpp.id,
+          sourceType: "SPARK",
+          conferenceCode: `TN000${i + 1}`,
+          category: "TN",
+          normalizedTitle: pubOpp.title.toLowerCase(),
+          createdAt: "2026-10-14T00:00:00Z",
+          updatedAt: "2026-10-14T00:00:00Z",
+        };
+      }
+
+      // Create full transactional mock SDK
+      const sdk: any = {
+        doc: (_db: any, col: string, id: string) => ({ col, id, path: `${col}/${id}` }),
+        runTransaction: async <T>(_db: any, fn: (tx: any) => Promise<T>): Promise<T> => {
+          const stagedWrites: any[] = [];
+          const tx = {
+            get: async (ref: any) => ({
+              exists: () => store[ref.path] !== undefined,
+              data: () => store[ref.path],
+            }),
+            set: (ref: any, data: any, opts: any) => {
+              stagedWrites.push({ key: ref.path, data, merge: opts?.merge });
+            },
+          };
+          const res = await fn(tx);
+          for (const w of stagedWrites) {
+            store[w.key] = w.merge && store[w.key] ? { ...store[w.key], ...w.data } : w.data;
+          }
+          return res;
+        },
+        getDoc: async (ref: any) => ({
+          exists: () => store[ref.path] !== undefined,
+          data: () => store[ref.path],
+        }),
+        setDoc: async (ref: any, data: any, opts: any) => {
+          store[ref.path] = opts?.merge && store[ref.path] ? { ...store[ref.path], ...data } : data;
+        },
+        updateDoc: async (ref: any, data: any) => {
+          store[ref.path] = { ...store[ref.path], ...data };
+        },
+        collection: (_db: any, path: string) => ({ path }),
+        getDocs: async (colRef: any) => {
+          const prefix = `${colRef.path}/`;
+          const docs = Object.keys(store)
+            .filter((k) => k.startsWith(prefix))
+            .map((k) => ({
+              id: k.replace(prefix, ""),
+              data: () => store[k],
+            }));
+          return { docs, size: docs.length };
+        },
+        addDoc: async (colRef: any, data: any) => {
+          const autoId = `cand_auto_${Object.keys(store).length + 1}`;
+          store[`${colRef.path}/${autoId}`] = { id: autoId, ...data };
+          return { id: autoId };
+        },
+        serverTimestamp: () => new Date().toISOString(),
+      };
+
+      try {
+        // --- PHASE 1: Dry-Run ---
+        const initialDocCount = Object.keys(store).length;
+        const dryRunOutcome = await executeResearchSync({
+          db: {},
+          sdk,
+          user: { uid: "u_admin", email: "tranquanghai@tdtu.edu.vn", role: "admin" },
+          options: { dryRun: true, dataSource: "drive_json" },
+        });
+
+        expect(dryRunOutcome.skipped).toBe(false);
+        expect(dryRunOutcome.stats?.read).toBe(10);
+        expect(dryRunOutcome.stats?.created).toBe(2); // QT0001, QT0002
+        expect(dryRunOutcome.stats?.updateProposals).toBe(1); // QT0003
+        expect(dryRunOutcome.stats?.unchanged).toBe(7); // 7 TN proposals unchanged
+        expect(dryRunOutcome.stats?.successWrites).toBe(0);
+        // Absolute verification: Dry run committed 0 writes to store
+        expect(Object.keys(store).length).toBe(initialDocCount);
+
+        // --- PHASE 2: First Real Sync ---
+        const firstSyncOutcome = await executeResearchSync({
+          db: {},
+          sdk,
+          user: { uid: "u_admin", email: "tranquanghai@tdtu.edu.vn", role: "admin" },
+          options: { dryRun: false, dataSource: "drive_json" },
+        });
+
+        expect(firstSyncOutcome.skipped).toBe(false);
+        expect(firstSyncOutcome.stats?.read).toBe(10);
+        expect(firstSyncOutcome.stats?.created).toBe(2); // QT0001, QT0002
+        expect(firstSyncOutcome.stats?.updateProposals).toBe(1); // QT0003 proposal
+        expect(firstSyncOutcome.stats?.unchanged).toBe(7); // 7 TN proposals unchanged (0 writes)
+        expect(firstSyncOutcome.stats?.successWrites).toBe(3); // 2 created + 1 proposal
+
+        // Verify exactly 10 candidates exist in store (7 TN + 2 new QT + 1 QT0003 proposal)
+        const allCandidates = Object.keys(store)
+          .filter((k) => k.startsWith("opportunityCandidates/"))
+          .map((k) => store[k]);
+        expect(allCandidates.length).toBe(10);
+
+        // Verify QT0001 created
+        const candQt1 = allCandidates.find((c) => c.conferenceCode === "QT0001");
+        expect(candQt1).toBeDefined();
+        expect(candQt1.status).toBe("pending");
+        expect(candQt1.changeType).toBe("create");
+        expect(candQt1.category).toBe("QT");
+        expect(candQt1.lastUpdated).toBe("2026-10-12");
+
+        // Verify QT0002 created
+        const candQt2 = allCandidates.find((c) => c.conferenceCode === "QT0002");
+        expect(candQt2).toBeDefined();
+        expect(candQt2.status).toBe("pending");
+        expect(candQt2.changeType).toBe("create");
+        expect(candQt2.category).toBe("QT");
+        expect(candQt2.lastUpdated).toBe("2026-10-08");
+
+        // Verify QT0003 update proposal created
+        const candQt3 = allCandidates.find((c) => c.conferenceCode === "QT0003");
+        expect(candQt3).toBeDefined();
+        expect(candQt3.status).toBe("pending");
+        expect(candQt3.changeType).toBe("update");
+        expect(candQt3.publishedOpportunityId).toBe("opp_global_south_2026");
+
+        // Verify 8 published opportunities were completely untouched
+        for (const opp of publishedOpps) {
+          const storedOpp = store[`opportunities/${opp.id}`];
+          expect(storedOpp).toBeDefined();
+          expect(storedOpp.status).toBe("published");
+          expect(storedOpp.title).toBe(opp.title);
+        }
+
+        // Verify lock is released
+        const lockDoc = store[`systemConfig/${RESEARCH_SYNC_LOCK_DOC_ID}`];
+        expect(lockDoc?.isLocked).toBe(false);
+
+        // --- PHASE 3: Second Real Sync (Idempotent, Same Revision) ---
+        const secondSyncOutcome = await executeResearchSync({
+          db: {},
+          sdk,
+          user: { uid: "u_admin", email: "tranquanghai@tdtu.edu.vn", role: "admin" },
+          options: { dryRun: false, dataSource: "drive_json" },
+        });
+
+        expect(secondSyncOutcome.skipped).toBe(false);
+        expect(secondSyncOutcome.stats?.read).toBe(10);
+        expect(secondSyncOutcome.stats?.created).toBe(0); // 0 new created!
+        expect(secondSyncOutcome.stats?.updateProposals).toBe(0); // 0 new proposals!
+        expect(secondSyncOutcome.stats?.unchanged).toBe(10); // All 10 unchanged!
+        expect(secondSyncOutcome.stats?.successWrites).toBe(0); // 0 writes!
+
+        // Total candidates strictly preserved at 10, no duplicate documents generated!
+        const finalCandidates = Object.keys(store)
+          .filter((k) => k.startsWith("opportunityCandidates/"))
+          .map((k) => store[k]);
+        expect(finalCandidates.length).toBe(10);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
 });
+

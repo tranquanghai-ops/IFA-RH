@@ -10,6 +10,7 @@ import {
   releaseFirestoreSyncLock,
   ResearchDriveJsonError,
   RESEARCH_SYNC_LOCK_TTL_MS,
+  RESEARCH_SYNC_LOCK_DOC_ID,
 } from "./researchDriveJsonService";
 import {
   findMatchingResearchOpportunity,
@@ -61,6 +62,8 @@ export interface ResearchSyncDiagnosticItem {
 export type SyncStage =
   | "READ_CONFIG"
   | "CLAIM_LOCK"
+  | "LOCK_EXPIRED"
+  | "LOCK_LOST"
   | "FETCH_SHEET"
   | "READ_CANDIDATES"
   | "WRITE_NEW_CANDIDATE"
@@ -75,7 +78,7 @@ export class ResearchSyncStageError extends Error {
   collectionName: string;
   documentId?: string;
   operationType: "get" | "list" | "create" | "update" | "delete";
-  originalError: any;
+  originalError?: any;
   userSummary: string;
   actorUid?: string;
   actorRole?: string;
@@ -85,7 +88,7 @@ export class ResearchSyncStageError extends Error {
     collectionName: string;
     documentId?: string;
     operationType: "get" | "list" | "create" | "update" | "delete";
-    originalError: any;
+    originalError?: any;
     userSummary?: string;
     actorUid?: string;
     actorRole?: string;
@@ -202,17 +205,18 @@ export async function executeResearchSync({
 
   // 1. Concurrency guard & Lock Check
   if (!isDryRun) {
-    try {
-      // 1a. Distributed lock check with 5-minute TTL via Firestore Transaction
-      const lockResult = await acquireFirestoreSyncLock(db, sdk, user);
-      if (!lockResult.acquired) {
-        return {
-          skipped: true,
-          reason: lockResult.message || "Một phiên đồng bộ khác đang chạy. Vui lòng thử lại sau.",
-        };
-      }
-      acquiredLockId = lockResult.lockId;
+    const lockResult = await acquireFirestoreSyncLock(db, sdk, user);
+    if (!lockResult.acquired) {
+      return {
+        skipped: true,
+        reason: lockResult.message || "Một phiên đồng bộ khác đang chạy. Vui lòng thử lại sau.",
+      };
+    }
+    acquiredLockId = lockResult.lockId;
+  }
 
+  try {
+    if (!isDryRun) {
       // 1b. Check existing facultyResearchSync state to support running sessions
       let stateSnap: any = null;
       try {
@@ -238,9 +242,6 @@ export async function executeResearchSync({
           const isFreshLock = inProgress && Date.now() - startedAtTime < RESEARCH_SYNC_LOCK_TTL_MS;
 
           if (isFreshLock) {
-            if (acquiredLockId) {
-              await releaseFirestoreSyncLock(db, sdk, acquiredLockId);
-            }
             return {
               skipped: true,
               reason: "Một phiên đồng bộ khác đang chạy. Vui lòng thử lại sau.",
@@ -280,15 +281,8 @@ export async function executeResearchSync({
           });
         }
       }
-    } catch (concurrencyErr: any) {
-      if (concurrencyErr instanceof ResearchSyncStageError) {
-        throw concurrencyErr;
-      }
-      console.warn("Lỗi kiểm tra lock:", concurrencyErr);
     }
-  }
 
-  try {
     // 2. Fetch rows: Google Drive JSON (default when dataSource === 'drive_json' or driveConfig provided) or Google Sheets
     let rows: any[] = [];
     let driveMeta: any = null;
@@ -472,7 +466,47 @@ export async function executeResearchSync({
       }
     }
 
-    // 4. Process each row
+    // 4. Pre-write safety verification: verify lock TTL and ownership before committing any writes
+    if (!isDryRun && acquiredLockId) {
+      const elapsed = Date.now() - startTime;
+      if (elapsed >= RESEARCH_SYNC_LOCK_TTL_MS) {
+        throw new ResearchSyncStageError({
+          stage: "LOCK_EXPIRED",
+          collectionName: "systemConfig",
+          documentId: RESEARCH_SYNC_LOCK_DOC_ID,
+          operationType: "update",
+          userSummary: "Phiên đồng bộ đã vượt quá giới hạn thời gian (TTL 5 phút). Quá trình ghi đã bị dừng để tránh xung đột dữ liệu.",
+          actorUid: user.uid,
+          actorRole: user.role,
+        });
+      }
+
+      if (sdk.getDoc) {
+        try {
+          const lockRef = sdk.doc(db, "systemConfig", RESEARCH_SYNC_LOCK_DOC_ID);
+          const lockSnap = await sdk.getDoc(lockRef);
+          if (lockSnap?.exists && (typeof lockSnap.exists === "function" ? lockSnap.exists() : true)) {
+            const lockData = typeof lockSnap.data === "function" ? lockSnap.data() : lockSnap;
+            if (lockData && lockData.isLocked && lockData.lockId !== acquiredLockId) {
+              throw new ResearchSyncStageError({
+                stage: "LOCK_LOST",
+                collectionName: "systemConfig",
+                documentId: RESEARCH_SYNC_LOCK_DOC_ID,
+                operationType: "update",
+                userSummary: `Khóa phiên đồng bộ đã bị chiếm bởi phiên khác (${lockData.lockedBy || "quản trị viên khác"}). Quá trình ghi đã được hủy để bảo vệ dữ liệu.`,
+                actorUid: user.uid,
+                actorRole: user.role,
+              });
+            }
+          }
+        } catch (checkErr: any) {
+          if (checkErr instanceof ResearchSyncStageError) throw checkErr;
+          console.warn("[ResearchSync] Cảnh báo kiểm tra khóa trước khi ghi:", checkErr);
+        }
+      }
+    }
+
+    // 5. Process each row
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const rowNum = i + 2; // header is row 1
@@ -884,6 +918,7 @@ export async function executeResearchSync({
             );
           } else {
             stats.matched++;
+            stats.unchanged++;
             recordSyncItem(
               row,
               i,
@@ -892,7 +927,7 @@ export async function executeResearchSync({
                 stt: sttVal,
                 title: row.title,
                 status: "matched",
-                action: "Khớp ứng viên",
+                action: "Khớp ứng viên (Không đổi)",
                 reason: "Khớp ứng viên trong hệ thống, dữ liệu không đổi",
                 targetId: target.id,
               },
@@ -1029,10 +1064,6 @@ export async function executeResearchSync({
         console.warn("[WRITE_IMPORT_HISTORY] Không ghi được lịch sử imports:", impErr);
       }
 
-      // Release distributed session lock
-      if (acquiredLockId) {
-        await releaseFirestoreSyncLock(db, sdk, acquiredLockId);
-      }
     }
 
     return {
@@ -1046,11 +1077,8 @@ export async function executeResearchSync({
     };
   } catch (error: any) {
     console.error(`[ResearchSync] Lỗi trong phiên đồng bộ:`, error);
-    // Unlock on error
+    // Mark failed status in facultyResearchSync
     if (!isDryRun) {
-      if (acquiredLockId) {
-        await releaseFirestoreSyncLock(db, sdk, acquiredLockId);
-      }
       try {
         await sdk.setDoc(
           stateRef,
@@ -1063,9 +1091,18 @@ export async function executeResearchSync({
           { merge: true }
         );
       } catch (unlockErr) {
-        console.warn("Lỗi mở khóa sau thất bại:", unlockErr);
+        console.warn("Lỗi ghi nhận trạng thái thất bại:", unlockErr);
       }
     }
     throw error;
+  } finally {
+    // Distributed lock is ALWAYS released in finally block, but only if acquiredLockId belongs to current session
+    if (acquiredLockId) {
+      try {
+        await releaseFirestoreSyncLock(db, sdk, acquiredLockId);
+      } catch (finallyReleaseErr) {
+        console.warn("[ResearchSync] Lỗi giải phóng khóa trong finally:", finallyReleaseErr);
+      }
+    }
   }
 }

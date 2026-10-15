@@ -551,10 +551,10 @@ export function classifyOutOfScopeRecord(record: {
     };
   }
 
-  // Giai đoạn C: Hội thảo thuộc nhóm QT (Quốc tế tổ chức ở nước ngoài) là hợp lệ, không bị xếp vào ngoài phạm vi!
+  // Giai đoạn C: Hội thảo thuộc nhóm QT hoặc TN đã được phân loại chính thức là hợp lệ
   const rowCategory = record.category || (record as any).category;
   const rowCode = String(record.conferenceCode || (record as any).code || "").toUpperCase();
-  if (rowCategory === "QT" || rowCode.startsWith("QT")) {
+  if (rowCategory === "QT" || rowCategory === "TN" || rowCode.startsWith("QT") || rowCode.startsWith("TN")) {
     return { isOutOfScope: false };
   }
 
@@ -584,8 +584,8 @@ export function classifyOutOfScopeRecord(record: {
   }
 
   // 3. Country explicitly outside Vietnam
-  const c = String(record.country || "").trim().toLowerCase();
-  if (c && c !== "việt nam" && c !== "vietnam" && c !== "vn" && c !== "viet nam") {
+  const c = normalizeText(String(record.country || ""));
+  if (c && c !== "viet nam" && c !== "vietnam" && c !== "vn") {
     return {
       isOutOfScope: true,
       reason: `Hội thảo quốc tế tổ chức tại ${record.country} (ngoài lãnh thổ Việt Nam)`,

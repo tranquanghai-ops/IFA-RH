@@ -103,7 +103,8 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
   const updateProposalCount = stats?.updateProposals || 0;
   const updateCount = stats?.updated || 0;
   const preservedCount = stats?.preservedAdmin || 0;
-  const matchedCount = (stats?.matched || 0) + (stats?.unchanged || 0);
+  const unchangedCount = stats?.unchanged || 0;
+  const matchedCount = stats?.matched || 0;
 
   const isCachedSource = Boolean(driveMeta?.isCached);
   const canCommit = !loading && !saving && Boolean(dryRunOutcome) && !isCachedSource && items.length > 0;
@@ -163,8 +164,8 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
             Mới: <strong style={{ color: "var(--success)" }}>{newCount}</strong> · Đề xuất:{" "}
             <strong style={{ color: "#0284c7" }}>{updateProposalCount}</strong> · Cập nhật:{" "}
             <strong style={{ color: "#d97706" }}>{updateCount}</strong> · Giữ sửa Admin:{" "}
-            <strong style={{ color: "#7c3aed" }}>{preservedCount}</strong> · Đã khớp:{" "}
-            <strong style={{ color: "var(--text-main)" }}>{matchedCount}</strong>
+            <strong style={{ color: "#7c3aed" }}>{preservedCount}</strong> · Khớp (Không đổi):{" "}
+            <strong style={{ color: "var(--text-main)" }}>{unchangedCount}</strong>
           </div>
           <div style={{ display: "flex", gap: 10 }}>
             <button type="button" className="btn btn-secondary btn-sm" onClick={onClose} disabled={saving}>
