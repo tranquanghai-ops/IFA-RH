@@ -37,6 +37,8 @@ export interface RawFacultyResearchRow {
   statusText?: string;
   updatedAt?: string;
   notes?: string;
+  conferenceCode?: string;
+  category?: "TN" | "QT";
 }
 
 /**

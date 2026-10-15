@@ -86,6 +86,8 @@ export interface Opportunity {
   recalledBy?: string;
   hiddenAt?: string;
   hiddenBy?: string;
+  conferenceCode?: string; // Mã hội thảo cố định (TN0001, QT0001)
+  category?: "TN" | "QT"; // Phân loại: TN (Trong nước) hoặc QT (Quốc tế)
   createdAt: string;
   updatedAt: string;
   createdBy: string;
@@ -160,6 +162,8 @@ export interface OpportunityCandidate {
   recalledBy?: string;
   createdBy?: string;
   updatedBy?: string;
+  conferenceCode?: string; // Mã hội thảo cố định (TN0001, QT0001)
+  category?: "TN" | "QT"; // Phân loại: TN (Trong nước) hoặc QT (Quốc tế)
   normalizedTitle: string;
   createdAt: string;
   updatedAt: string;

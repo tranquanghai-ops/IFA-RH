@@ -924,8 +924,8 @@ describe("IFA-RH — Opportunity Sync Architecture & Governance Suite (13 Points
     const closedProposal: OpportunityCandidate = {
       ...staleProposal,
       status: "rejected",
-      resolutionType: "AUTO_CLOSED",
-      rejectionReason: "Hội thảo gốc đã được Admin thu hồi về hàng chờ duyệt ban đầu.",
+      resolutionType: "ADMIN_REJECTED",
+      rejectionReason: `Hội thảo gốc đã được Admin (${actorEmail}) thu hồi về hàng chờ duyệt ban đầu. Đề xuất cập nhật này bị hủy tương ứng.`,
       reviewedBy: actorEmail,
       reviewedAt: now,
       updatedAt: now,
@@ -937,8 +937,9 @@ describe("IFA-RH — Opportunity Sync Architecture & Governance Suite (13 Points
     expect(restoredCandidate.status).toBe("pending");
     expect(restoredCandidate.updatedBy).toBe(actorEmail);
     expect(closedProposal.status).toBe("rejected");
-    expect(closedProposal.resolutionType).toBe("AUTO_CLOSED");
+    expect(closedProposal.resolutionType).toBe("ADMIN_REJECTED");
     expect(closedProposal.rejectionReason).toContain("thu hồi");
+    expect(closedProposal.reviewedBy).toBe(actorEmail);
   });
 });
 

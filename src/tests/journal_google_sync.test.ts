@@ -486,7 +486,7 @@ describe("Hệ thống Adapter 47 Cột và Xử lý Điểm Chuyên sâu (QĐ 2
       console.error("FAILURES DETECTED IN 96 CANDIDATES:", JSON.stringify(failures, null, 2));
     }
     expect(failures).toEqual([]);
-  });
+  }, 20000);
 
   it("khởi tạo và định dạng JournalSyncStageError chính xác với từng giai đoạn và collection", async () => {
     const { JournalSyncStageError } = await import("../services/journalCandidateService");

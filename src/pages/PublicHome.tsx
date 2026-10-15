@@ -83,6 +83,17 @@ export function buildHomeTabUrl(tab: PublicHomeTab): string {
   return tab === "journals" ? "/?tab=journals" : "/";
 }
 
+export const getOpportunityCategory = (opp: Opportunity): "TN" | "QT" => {
+  if (opp.category === "TN" || opp.category === "QT") return opp.category;
+  if (opp.conferenceCode?.startsWith("QT")) return "QT";
+  if (opp.conferenceCode?.startsWith("TN")) return "TN";
+  const c = String(opp.country || "").trim().toLowerCase();
+  if (c && c !== "việt nam" && c !== "vietnam" && c !== "vn" && c !== "viet nam") {
+    return "QT";
+  }
+  return "TN";
+};
+
 export const PublicHome: React.FC = () => {
   // Active Main Tab: "conferences" (Hội thảo - default) | "journals" (Tạp chí)
   const [activeMainTab, setActiveMainTab] = useState<PublicHomeTab>(() =>
@@ -97,6 +108,7 @@ export const PublicHome: React.FC = () => {
   const [error, setError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTag, setSelectedTag] = useState("Tất cả");
+  const [selectedCategory, setSelectedCategory] = useState<"ALL" | "TN" | "QT">("ALL");
   const [selectedType, setSelectedType] = useState("Tất cả");
   const [selectedOpp, setSelectedOpp] = useState<Opportunity | null>(null);
 
@@ -183,9 +195,23 @@ export const PublicHome: React.FC = () => {
   const isInExpiredTab = selectedTag === EXPIRED_TAB;
   const basePool = isInExpiredTab ? expiredOpportunities : activeOpportunities;
 
+  const countTN = useMemo(
+    () => basePool.filter((o) => getOpportunityCategory(o) === "TN").length,
+    [basePool]
+  );
+  const countQT = useMemo(
+    () => basePool.filter((o) => getOpportunityCategory(o) === "QT").length,
+    [basePool]
+  );
+
   const filteredOpportunities = basePool.filter((opp) => {
+    const oppCat = getOpportunityCategory(opp);
+    const matchCategory =
+      selectedCategory === "ALL" || oppCat === selectedCategory;
+
     const matchQuery =
       searchQuery.trim() === "" ||
+      (opp.conferenceCode && opp.conferenceCode.toLowerCase().includes(searchQuery.toLowerCase())) ||
       opp.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       opp.organizer.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (opp.field && opp.field.toLowerCase().includes(searchQuery.toLowerCase())) ||
@@ -214,7 +240,7 @@ export const PublicHome: React.FC = () => {
 
     const matchType = selectedType === "Tất cả" || opp.type === selectedType;
 
-    return matchQuery && matchTag && matchType;
+    return matchCategory && matchQuery && matchTag && matchType;
   });
 
   // ============================================================================
@@ -522,6 +548,62 @@ export const PublicHome: React.FC = () => {
                   <option value="Hợp tác nghiên cứu">Hợp tác nghiên cứu</option>
                 </select>
               </div>
+            </div>
+
+            {/* Phân loại Hội thảo: Tất cả / Trong nước (TN) / Quốc tế (QT) */}
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                flexWrap: "wrap",
+                alignItems: "center",
+                marginBottom: 14,
+                paddingBottom: 10,
+                borderBottom: "1px dashed var(--line)",
+              }}
+            >
+              <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-sub)", marginRight: 4 }}>
+                Phạm vi tổ chức:
+              </span>
+              <button
+                type="button"
+                className={`btn btn-sm ${selectedCategory === "ALL" ? "btn-primary" : "btn-secondary"}`}
+                onClick={() => setSelectedCategory("ALL")}
+                style={{
+                  borderRadius: "20px",
+                  fontWeight: selectedCategory === "ALL" ? 700 : 500,
+                  fontSize: "0.82rem",
+                  padding: "4px 12px",
+                }}
+              >
+                Tất cả ({basePool.length})
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${selectedCategory === "TN" ? "btn-primary" : "btn-secondary"}`}
+                onClick={() => setSelectedCategory("TN")}
+                style={{
+                  borderRadius: "20px",
+                  fontWeight: selectedCategory === "TN" ? 700 : 500,
+                  fontSize: "0.82rem",
+                  padding: "4px 12px",
+                }}
+              >
+                🇻🇳 Hội thảo trong nước (TN) ({countTN})
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${selectedCategory === "QT" ? "btn-primary" : "btn-secondary"}`}
+                onClick={() => setSelectedCategory("QT")}
+                style={{
+                  borderRadius: "20px",
+                  fontWeight: selectedCategory === "QT" ? 700 : 500,
+                  fontSize: "0.82rem",
+                  padding: "4px 12px",
+                }}
+              >
+                🌏 Hội thảo quốc tế (QT) ({countQT})
+              </button>
             </div>
 
             {/* Filter Chips */}

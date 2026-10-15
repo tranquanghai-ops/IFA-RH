@@ -392,7 +392,8 @@ service cloud.firestore {
           'publicationFee', 'registrationFee', 'feeStatus', 'feeSourceUrl',
           'detailedContent', 'topicsDetailed',
           'recalledAt', 'recalledBy', 'hiddenAt', 'hiddenBy',
-          'normalizedTitle', 'editedByAdmin', 'manualOverrides'
+          'normalizedTitle', 'editedByAdmin', 'manualOverrides',
+          'conferenceCode', 'category'
         ]) &&
         validString(data.title, 1, 300) &&
         validString(data.organizer, 1, 200) &&
@@ -442,6 +443,8 @@ service cloud.firestore {
         validOptString(data, 'hiddenBy', 100) &&
         validOptString(data, 'updatedBy', 100) &&
         validOptString(data, 'normalizedTitle', 500) &&
+        validOptString(data, 'conferenceCode', 20) &&
+        (!('category' in data) || data.category in ['TN', 'QT']) &&
         (!('editedByAdmin' in data) || data.editedByAdmin is bool) &&
         (!('manualOverrides' in data) || (data.manualOverrides is list && data.manualOverrides.size() <= 50)) &&
         validOptString(data, 'id', 100);
@@ -468,7 +471,7 @@ service cloud.firestore {
           'stt', 'candidateId', 'hiddenAt', 'hiddenBy', 'sheetRowIndex',
           'unverifiedFields', 'manualReviewNeeded', 'manualReviewReason', 'confidenceLevel',
           'diffSummary', 'changeType', 'isOutOfScope', 'outOfScopeReason',
-          'resolutionType'
+          'resolutionType', 'conferenceCode', 'category'
         ]) &&
         validString(data.title, 1, 300) &&
         validString(data.organizer, 1, 200) &&
@@ -491,6 +494,8 @@ service cloud.firestore {
         (!('diffSummary' in data) || (data.diffSummary is list && data.diffSummary.size() <= 50)) &&
         (!('changeType' in data) || data.changeType in ['create', 'update']) &&
         (!('isOutOfScope' in data) || data.isOutOfScope is bool) &&
+        validOptString(data, 'conferenceCode', 20) &&
+        (!('category' in data) || data.category in ['TN', 'QT']) &&
         (!('publishedOpportunityId' in data) || validString(data.publishedOpportunityId, 0, 100)) &&
         (!('id' in data) || validString(data.id, 0, 100));
     }

@@ -82,7 +82,20 @@ export function findMatchingResearchOpportunity(
   const rowId = (row as any).id;
 
   for (const existing of existingList) {
-    // Rule 0: Match by explicit Document ID, candidateId, or publishedOpportunityId
+    // Rule 0a: Match by conferenceCode (e.g. TN0001, QT0001)
+    const rowCode = (row as any).conferenceCode || (row as any).code;
+    const exCode = existing.conferenceCode || existing.code;
+    if (rowCode && exCode && String(rowCode).trim().toUpperCase() === String(exCode).trim().toUpperCase()) {
+      return {
+        isMatch: true,
+        matchedId: existing.id,
+        target: existing,
+        matchType: "code_match" as any,
+        reason: `Khớp chính xác mã hội thảo (${rowCode})`,
+      };
+    }
+
+    // Rule 0b: Match by explicit Document ID, candidateId, or publishedOpportunityId
     if (rowId) {
       if (
         existing.id === rowId ||
@@ -508,8 +521,10 @@ export function classifyOutOfScopeRecord(record: {
   title?: string;
   country?: string;
   type?: string;
+  category?: "TN" | "QT" | string;
   isOutOfScope?: boolean;
   outOfScopeReason?: string;
+  [key: string]: any;
 }): OutOfScopeClassification {
   if (record.isOutOfScope === true) {
     return {
@@ -519,7 +534,12 @@ export function classifyOutOfScopeRecord(record: {
     };
   }
 
-  const rawTitle = String(record.title || "");
+  // Giai đoạn C: Hội thảo thuộc nhóm QT (Quốc tế tổ chức ở nước ngoài) là hợp lệ, không bị xếp vào ngoài phạm vi!
+  if (record.category === "QT") {
+    return { isOutOfScope: false };
+  }
+
+  const rawTitle = String(record.title || (record as any).name || "");
   const normTitle = normalizeText(rawTitle);
 
   // 1. JOISA - Journal CFP / Special Issue invitation (thư mời viết bài tạp chí)

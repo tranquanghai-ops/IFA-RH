@@ -41,6 +41,19 @@ export type CandidateFilterTab =
   | "out_of_scope"
   | "all";
 
+export type CandidateCategoryFilter = "ALL" | "TN" | "QT";
+
+export const getCandidateCategory = (c: OpportunityCandidate): "TN" | "QT" => {
+  if (c.category === "TN" || c.category === "QT") return c.category;
+  if (c.conferenceCode?.startsWith("QT")) return "QT";
+  if (c.conferenceCode?.startsWith("TN")) return "TN";
+  const country = String(c.country || "").trim().toLowerCase();
+  if (country && country !== "việt nam" && country !== "vietnam" && country !== "vn" && country !== "viet nam") {
+    return "QT";
+  }
+  return "TN";
+};
+
 const isTodayDate = (dateStr?: string | null): boolean => {
   if (!dateStr) return false;
   const d = parseDateSafe(dateStr);
@@ -148,6 +161,7 @@ export const AdminCandidatesPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"grid" | "table">("table");
   const [activeTab, setActiveTab] = useState<CandidateFilterTab>("pending");
+  const [selectedCategory, setSelectedCategory] = useState<CandidateCategoryFilter>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
 
   // Modals & Actions
@@ -222,7 +236,18 @@ export const AdminCandidatesPage: React.FC = () => {
     return counts;
   }, [candidates]);
 
-  // Filter candidates based on activeTab and searchQuery
+  // Compute counts for TN / QT categories
+  const categoryCounts = useMemo(() => {
+    let tn = 0;
+    let qt = 0;
+    for (const c of candidates) {
+      if (getCandidateCategory(c) === "QT") qt++;
+      else tn++;
+    }
+    return { all: candidates.length, tn, qt };
+  }, [candidates]);
+
+  // Filter candidates based on activeTab, selectedCategory, and searchQuery
   const filteredCandidates = useMemo(() => {
     return candidates.filter((cand) => {
       // 1. Tab filter
@@ -230,21 +255,27 @@ export const AdminCandidatesPage: React.FC = () => {
         const cat = getCandidatePrimaryCategory(cand);
         if (cat !== activeTab) return false;
       }
-      // 2. Search query filter
+      // 2. Category filter (TN / QT)
+      if (selectedCategory !== "ALL") {
+        const cat = getCandidateCategory(cand);
+        if (cat !== selectedCategory) return false;
+      }
+      // 3. Search query filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
+        const matchCode = !!(cand.conferenceCode && cand.conferenceCode.toLowerCase().includes(q));
         const matchTitle = cand.title.toLowerCase().includes(q);
         const matchOrg = cand.organizer.toLowerCase().includes(q);
         const matchField = !!(cand.field && cand.field.toLowerCase().includes(q));
         const matchLevel = !!(cand.level && cand.level.toLowerCase().includes(q));
         const matchType = !!(cand.type && cand.type.toLowerCase().includes(q));
-        if (!matchTitle && !matchOrg && !matchField && !matchLevel && !matchType) {
+        if (!matchCode && !matchTitle && !matchOrg && !matchField && !matchLevel && !matchType) {
           return false;
         }
       }
       return true;
     });
-  }, [candidates, activeTab, searchQuery]);
+  }, [candidates, activeTab, selectedCategory, searchQuery]);
 
   const approvableInView = useMemo(
     () => filteredCandidates.filter((c) => c.status !== "approved"),
@@ -533,6 +564,46 @@ export const AdminCandidatesPage: React.FC = () => {
             />
           </div>
 
+          {/* Phân loại TN / QT độc lập */}
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              flexWrap: "wrap",
+              paddingBottom: 10,
+              borderBottom: "1px dashed #e2e8f0",
+            }}
+          >
+            <span style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--text-sub)", marginRight: 4 }}>
+              Nhóm hội thảo:
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelectedCategory("ALL")}
+              className={`btn btn-sm ${selectedCategory === "ALL" ? "btn-primary" : "btn-secondary"}`}
+              style={{ borderRadius: 20, fontSize: "0.82rem", padding: "3px 12px", fontWeight: selectedCategory === "ALL" ? 700 : 500 }}
+            >
+              Tất cả ({categoryCounts.all})
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedCategory("TN")}
+              className={`btn btn-sm ${selectedCategory === "TN" ? "btn-primary" : "btn-secondary"}`}
+              style={{ borderRadius: 20, fontSize: "0.82rem", padding: "3px 12px", fontWeight: selectedCategory === "TN" ? 700 : 500 }}
+            >
+              🇻🇳 Trong nước (TN) ({categoryCounts.tn})
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedCategory("QT")}
+              className={`btn btn-sm ${selectedCategory === "QT" ? "btn-primary" : "btn-secondary"}`}
+              style={{ borderRadius: 20, fontSize: "0.82rem", padding: "3px 12px", fontWeight: selectedCategory === "QT" ? 700 : 500 }}
+            >
+              🌏 Quốc tế (QT) ({categoryCounts.qt})
+            </button>
+          </div>
+
           {/* Horizontal Filter Buttons */}
           <div
             style={{
@@ -707,8 +778,26 @@ export const AdminCandidatesPage: React.FC = () => {
                       )}
                     </td>
                     <td>
-                      <div style={{ fontWeight: 600, color: "var(--primary)", marginBottom: 2 }}>
-                        {cand.title}
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 2 }}>
+                        {cand.conferenceCode && (
+                          <span
+                            className="badge"
+                            style={{
+                              backgroundColor: cand.conferenceCode.startsWith("QT") ? "#fef3c7" : "#e0e7ff",
+                              color: cand.conferenceCode.startsWith("QT") ? "#92400e" : "#3730a3",
+                              border: `1px solid ${cand.conferenceCode.startsWith("QT") ? "#fde68a" : "#c7d2fe"}`,
+                              fontWeight: 800,
+                              fontSize: "0.72rem",
+                              padding: "2px 6px",
+                              letterSpacing: "0.5px",
+                            }}
+                          >
+                            {cand.conferenceCode}
+                          </span>
+                        )}
+                        <span style={{ fontWeight: 600, color: "var(--primary)" }}>
+                          {cand.title}
+                        </span>
                       </div>
                       {cand.sourceUrl && (
                         <a
@@ -1040,13 +1129,29 @@ export const AdminCandidatesPage: React.FC = () => {
                     gap: 6,
                   }}
                 >
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                     {!isApproved && (
                       <input
                         type="checkbox"
                         checked={selectedIds.has(cand.id)}
                         onChange={() => toggleSelectOne(cand.id)}
                       />
+                    )}
+                    {cand.conferenceCode && (
+                      <span
+                        className="badge"
+                        style={{
+                          backgroundColor: cand.conferenceCode.startsWith("QT") ? "#fef3c7" : "#e0e7ff",
+                          color: cand.conferenceCode.startsWith("QT") ? "#92400e" : "#3730a3",
+                          border: `1px solid ${cand.conferenceCode.startsWith("QT") ? "#fde68a" : "#c7d2fe"}`,
+                          fontWeight: 800,
+                          fontSize: "0.72rem",
+                          padding: "2px 6px",
+                          letterSpacing: "0.5px",
+                        }}
+                      >
+                        {cand.conferenceCode}
+                      </span>
                     )}
                     <span className="badge badge-neutral">{cand.type}</span>
                     {cand.level && (

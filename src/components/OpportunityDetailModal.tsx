@@ -140,6 +140,22 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
               flexWrap: "wrap",
             }}
           >
+            {opportunity.conferenceCode && (
+              <span
+                className="badge"
+                style={{
+                  backgroundColor: opportunity.conferenceCode.startsWith("QT") ? "#fef3c7" : "#e0e7ff",
+                  color: opportunity.conferenceCode.startsWith("QT") ? "#92400e" : "#3730a3",
+                  border: `1px solid ${opportunity.conferenceCode.startsWith("QT") ? "#fde68a" : "#c7d2fe"}`,
+                  fontWeight: 800,
+                  fontSize: "0.8rem",
+                  padding: "3px 9px",
+                  letterSpacing: "0.5px",
+                }}
+              >
+                Mã: {opportunity.conferenceCode} ({opportunity.category === "QT" || opportunity.conferenceCode.startsWith("QT") ? "Hội thảo quốc tế" : "Hội thảo trong nước"})
+              </span>
+            )}
             {opportunity.type && (
               <span className="badge badge-neutral" style={{ fontWeight: 700 }}>
                 {opportunity.type}

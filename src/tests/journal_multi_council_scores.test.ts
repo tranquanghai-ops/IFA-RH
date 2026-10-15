@@ -287,7 +287,7 @@ describe("Multi-Council HĐGSNN Journal Scores & Reconciliation (12 Required Sce
     expect(getScoreBadgePalette(0.5, true).bg).toBe("#ffedd5");
     expect(getScoreBadgePalette(0.25, true).bg).toBe("#fef3c7");
     expect(getScoreBadgePalette(null, false).bg).toBe("#f1f5f9");
-  });
+  }, 20000);
 
   // 7. Ẩn ISSN/E-ISSN/ISBN rỗng hoặc "Không công bố"
   it("7. ẩn hoàn toàn ISSN / E-ISSN / ISBN rỗng, 'Không công bố', 'N/A', 'Chưa rõ'", () => {

@@ -634,8 +634,8 @@ export async function recallOpportunityToCandidateQueue(
         if (["pending", "needs_review"].includes(pData.status)) {
           batch.update(pDoc.ref, {
             status: "rejected",
-            resolutionType: "AUTO_CLOSED",
-            rejectionReason: "Hội thảo gốc đã được Admin thu hồi về hàng chờ duyệt ban đầu.",
+            resolutionType: "ADMIN_REJECTED",
+            rejectionReason: `Hội thảo gốc đã được Admin (${actor.email}) thu hồi về hàng chờ duyệt ban đầu. Đề xuất cập nhật này bị hủy tương ứng.`,
             reviewedBy: actor.email,
             reviewedAt: now,
             updatedAt: now,
@@ -723,8 +723,8 @@ export async function recallOpportunityCandidate(
           if (["pending", "needs_review"].includes(pData.status)) {
             batch.update(pDoc.ref, {
               status: "rejected",
-              resolutionType: "AUTO_CLOSED",
-              rejectionReason: "Hội thảo gốc đã được Admin thu hồi về hàng chờ duyệt ban đầu.",
+              resolutionType: "ADMIN_REJECTED",
+              rejectionReason: `Hội thảo gốc đã được Admin (${actor.email}) thu hồi về hàng chờ duyệt ban đầu. Đề xuất cập nhật này bị hủy tương ứng.`,
               reviewedBy: actor.email,
               reviewedAt: now,
               updatedAt: now,

@@ -447,6 +447,22 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
 
         <div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+            {candidate.conferenceCode && (
+              <span
+                className="badge"
+                style={{
+                  backgroundColor: candidate.conferenceCode.startsWith("QT") ? "#fef3c7" : "#e0e7ff",
+                  color: candidate.conferenceCode.startsWith("QT") ? "#92400e" : "#3730a3",
+                  border: `1px solid ${candidate.conferenceCode.startsWith("QT") ? "#fde68a" : "#c7d2fe"}`,
+                  fontWeight: 800,
+                  fontSize: "0.75rem",
+                  padding: "3px 8px",
+                  letterSpacing: "0.5px",
+                }}
+              >
+                {candidate.conferenceCode}
+              </span>
+            )}
             <span className="badge badge-neutral" style={{ fontWeight: 700 }}>
               {candidate.type}
             </span>

@@ -134,6 +134,22 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
             maxWidth: "calc(100% - 110px)",
           }}
         >
+          {opportunity.conferenceCode && (
+            <span
+              className="badge"
+              style={{
+                backgroundColor: opportunity.conferenceCode.startsWith("QT") ? "#fef3c7" : "#e0e7ff",
+                color: opportunity.conferenceCode.startsWith("QT") ? "#92400e" : "#3730a3",
+                border: `1px solid ${opportunity.conferenceCode.startsWith("QT") ? "#fde68a" : "#c7d2fe"}`,
+                fontWeight: 800,
+                fontSize: "0.72rem",
+                padding: "2px 7px",
+                letterSpacing: "0.5px",
+              }}
+            >
+              {opportunity.conferenceCode}
+            </span>
+          )}
           {opportunity.type && (
             <span
               className="badge badge-neutral"
