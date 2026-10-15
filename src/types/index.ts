@@ -92,6 +92,12 @@ export interface Opportunity {
   updatedBy?: string;
 }
 
+export type CandidateResolutionType =
+  | "PENDING_UPDATE"
+  | "APPROVED_UPDATE"
+  | "ADMIN_REJECTED"
+  | "AUTO_CLOSED";
+
 export type CandidateStatus = "pending" | "approved" | "rejected" | "needs_review";
 
 export interface OpportunityCandidate {
@@ -130,6 +136,7 @@ export interface OpportunityCandidate {
   sheetStatus?: string;
   sourceType: "SPARK";
   status: CandidateStatus;
+  resolutionType?: CandidateResolutionType;
   rejectionReason?: string;
   reviewedBy?: string;
   reviewedAt?: string;

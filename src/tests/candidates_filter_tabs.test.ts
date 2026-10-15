@@ -115,27 +115,115 @@ describe("Dữ liệu AI tìm - Bộ lọc và phân loại trạng thái không
     expect(cat).not.toBe("expired");
   });
 
-  it("phân loại 'closed' cho đề xuất cập nhật tự động đóng do trùng khớp, tách biệt hoàn toàn với 'rejected' của Admin", () => {
-    // Đề xuất tự đóng do SPARK_SYNC
-    const autoClosedCand: OpportunityCandidate = {
+  // Test 1: Spark cập nhật trước (updatedBy=SPARK_SYNC), Admin từ chối sau
+  it("Test 1: Khi Spark cập nhật trước (updatedBy = SPARK_SYNC) nhưng Admin từ chối, kết quả bắt buộc là 'rejected' và không bao giờ bị phân loại nhầm thành 'closed'", () => {
+    // Trường hợp A: Có resolutionType = ADMIN_REJECTED
+    const rejectedWithResType: OpportunityCandidate = {
+      ...baseCandidate,
+      status: "rejected",
+      changeType: "update",
+      publishedOpportunityId: "opp_ietbhec_2027",
+      resolutionType: "ADMIN_REJECTED",
+      rejectionReason: "Hội thảo chưa có văn bản chính thức của BTC.",
+      reviewedBy: "tranquanghai@tdtu.edu.vn",
+      updatedBy: "SPARK_SYNC", // Giả lập trường hợp Spark đã từng ghi SPARK_SYNC trước đó
+    };
+    expect(isAutoClosedProposal(rejectedWithResType)).toBe(false);
+    expect(getCandidatePrimaryCategory(rejectedWithResType)).toBe("rejected");
+
+    // Trường hợp B: Dữ liệu legacy không có resolutionType nhưng có reviewedBy là email Admin
+    const rejectedLegacy: OpportunityCandidate = {
+      ...baseCandidate,
+      status: "rejected",
+      changeType: "update",
+      publishedOpportunityId: "opp_letj_2027",
+      rejectionReason: "Không thuộc định hướng nghiên cứu Khoa MTCN",
+      reviewedBy: "admin@tdtu.edu.vn",
+      updatedBy: "SPARK_SYNC", // Giá trị cũ từ lần sync trước
+    };
+    expect(isAutoClosedProposal(rejectedLegacy)).toBe(false);
+    expect(getCandidatePrimaryCategory(rejectedLegacy)).toBe("rejected");
+  });
+
+  // Test 2: Hệ thống tự đóng thực sự
+  it("Test 2: Hệ thống tự đóng thực sự (AUTO_CLOSED) được phân loại vào 'closed', không cộng vào 'rejected'", () => {
+    // Trường hợp có resolutionType = AUTO_CLOSED
+    const autoClosedExplicit: OpportunityCandidate = {
+      ...baseCandidate,
+      status: "rejected",
+      changeType: "update",
+      publishedOpportunityId: "opp_icisn_2027",
+      resolutionType: "AUTO_CLOSED",
+      rejectionReason: "Đồng bộ chuẩn hóa: Dữ liệu Google Sheets và hội thảo đã công bố đã hoàn toàn trùng khớp, không có thay đổi thực tế.",
+      reviewedBy: "SPARK_SYNC",
+      updatedBy: "SPARK_SYNC",
+    };
+    expect(isAutoClosedProposal(autoClosedExplicit)).toBe(true);
+    expect(getCandidatePrimaryCategory(autoClosedExplicit)).toBe("closed");
+
+    // Trường hợp legacy tự đóng có chuỗi text chuẩn hóa và không có email admin
+    const autoClosedLegacy: OpportunityCandidate = {
       ...baseCandidate,
       status: "rejected",
       publishedOpportunityId: "opp_icisn_2027",
       rejectionReason: "Đồng bộ chuẩn hóa: Dữ liệu Google Sheets và hội thảo đã công bố đã hoàn toàn trùng khớp, không có thay đổi thực tế.",
       updatedBy: "SPARK_SYNC",
     };
-    expect(isAutoClosedProposal(autoClosedCand)).toBe(true);
-    expect(getCandidatePrimaryCategory(autoClosedCand)).toBe("closed");
+    expect(isAutoClosedProposal(autoClosedLegacy)).toBe(true);
+    expect(getCandidatePrimaryCategory(autoClosedLegacy)).toBe("closed");
+  });
 
-    // Đề xuất bị Admin từ chối thực sự
-    const adminRejectedCand: OpportunityCandidate = {
+  // Test 9: Phân loại hết hạn theo thứ tự ưu tiên
+  it("Test 9: Bảo toàn phân loại đúng cho các trạng thái khi đã hết hạn nộp", () => {
+    const pastDeadline = "2024-01-01";
+
+    // 1. Hội thảo mới chưa duyệt mà hết hạn -> "expired"
+    const newExpired: OpportunityCandidate = {
+      ...baseCandidate,
+      status: "pending",
+      deadline: pastDeadline,
+      sheetStatus: "HẾT HẠN",
+    };
+    expect(getCandidatePrimaryCategory(newExpired)).toBe("expired");
+
+    // 2. Đề xuất cập nhật của hội thảo đã hết hạn -> "updates" (Cập nhật chờ duyệt)
+    const updateExpired: OpportunityCandidate = {
+      ...baseCandidate,
+      status: "pending",
+      changeType: "update",
+      publishedOpportunityId: "opp_ietbhec_2027",
+      deadline: pastDeadline,
+      sheetStatus: "HẾT HẠN",
+    };
+    expect(getCandidatePrimaryCategory(updateExpired)).toBe("updates");
+
+    // 3. Hồ sơ đã duyệt mà hết hạn -> "approved" (không bị đẩy sang expired)
+    const approvedExpired: OpportunityCandidate = {
+      ...baseCandidate,
+      status: "approved",
+      deadline: pastDeadline,
+    };
+    expect(getCandidatePrimaryCategory(approvedExpired)).toBe("approved");
+
+    // 4. Hồ sơ bị từ chối mà hết hạn -> "rejected" (không bị đẩy sang expired)
+    const rejectedExpired: OpportunityCandidate = {
       ...baseCandidate,
       status: "rejected",
-      rejectionReason: "Hồ sơ không đạt chuẩn hội thảo khoa học cấp khoa.",
+      resolutionType: "ADMIN_REJECTED",
+      deadline: pastDeadline,
       reviewedBy: "admin@tdtu.edu.vn",
     };
-    expect(isAutoClosedProposal(adminRejectedCand)).toBe(false);
-    expect(getCandidatePrimaryCategory(adminRejectedCand)).toBe("rejected");
+    expect(getCandidatePrimaryCategory(rejectedExpired)).toBe("rejected");
+
+    // 5. Đề xuất tự đóng mà hết hạn -> "closed" (không bị đẩy sang expired)
+    const closedExpired: OpportunityCandidate = {
+      ...baseCandidate,
+      status: "rejected",
+      resolutionType: "AUTO_CLOSED",
+      publishedOpportunityId: "opp_1",
+      deadline: pastDeadline,
+    };
+    expect(getCandidatePrimaryCategory(closedExpired)).toBe("closed");
   });
 
   it("phân loại 'pending' khi candidate được đồng bộ hôm nay nhưng ngày phát hiện gốc (discoveredAt) là ngày cũ", () => {

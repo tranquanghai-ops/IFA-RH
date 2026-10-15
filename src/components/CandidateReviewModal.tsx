@@ -273,7 +273,18 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
                 marginBottom: candidate.diffSummary && candidate.diffSummary.length > 0 ? 12 : 0,
               }}
             >
-              Mã hồ sơ gốc: <code>{candidate.publishedOpportunityId}</code>. Khi duyệt, các thông tin thay đổi bên dưới sẽ được áp dụng vào hồ sơ đang công bố, bảo toàn ngày tạo và quyền hạn gốc.
+              <div>
+                Mã hồ sơ gốc: <code>{candidate.publishedOpportunityId}</code>. Khi duyệt, các thông tin thay đổi bên dưới sẽ được áp dụng vào hồ sơ đang công bố, bảo toàn ngày tạo và quyền hạn gốc.
+              </div>
+              <div style={{ fontSize: "0.78rem", color: "#2563eb", marginTop: 4 }}>
+                Phát hiện gốc: <strong>{formatDateVN(candidate.discoveredAt || candidate.createdAt)}</strong>
+                {candidate.updatedAt && (
+                  <span> • Cập nhật gần nhất: <strong>{formatDateVN(candidate.updatedAt)}</strong></span>
+                )}
+                {candidate.resolutionType && (
+                  <span> • Trạng thái: <strong>{candidate.resolutionType}</strong></span>
+                )}
+              </div>
             </div>
             {candidate.diffSummary && candidate.diffSummary.length > 0 && (
               <div
@@ -316,6 +327,33 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {candidate.status === "rejected" && (
+          <div
+            style={{
+              background: candidate.resolutionType === "AUTO_CLOSED" ? "#f8fafc" : "#fef2f2",
+              border: candidate.resolutionType === "AUTO_CLOSED" ? "1px solid #cbd5e1" : "1px solid #fecaca",
+              borderRadius: 8,
+              padding: "12px 16px",
+              fontSize: "0.85rem",
+              color: candidate.resolutionType === "AUTO_CLOSED" ? "#475569" : "#991b1b",
+            }}
+          >
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>
+              {candidate.resolutionType === "AUTO_CLOSED"
+                ? "Hệ thống tự động đóng (Dữ liệu trùng khớp)"
+                : `Bị từ chối bởi: ${candidate.reviewedBy || "Admin"}`}
+            </div>
+            <div>
+              <strong>Lý do:</strong> {candidate.rejectionReason || "Không có lý do chi tiết"}
+            </div>
+            {(candidate.reviewedAt || candidate.updatedAt) && (
+              <div style={{ fontSize: "0.75rem", marginTop: 4, opacity: 0.85 }}>
+                Thời gian: {formatDateVN(candidate.reviewedAt || candidate.updatedAt)}
               </div>
             )}
           </div>

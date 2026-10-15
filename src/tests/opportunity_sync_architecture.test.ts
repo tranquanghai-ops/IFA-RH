@@ -713,4 +713,66 @@ describe("IFA-RH — Opportunity Sync Architecture & Governance Suite (13 Points
       })
     ).rejects.toThrow(ResearchSyncStageError);
   });
+
+  // Point 18 (Test 3): Quyết định từ chối của Admin được bảo toàn tuyệt đối khi đồng bộ lặp lại
+  it("Point 18 (Test 3): Preserves Admin rejection of update proposal across repeated syncs without reopening to pending or overwriting", async () => {
+    // 1. Seed published opportunity with old deadline
+    const rows = await fetchFacultyResearchSheetRows();
+    const candidate0 = mapRowToCandidate(rows[0], 0);
+    mockStore.opportunities["opp_ietbhec_2027"] = {
+      ...candidate0,
+      id: "opp_ietbhec_2027",
+      deadline: "01/01/2025",
+      fullPaperDeadline: "01/01/2025",
+      status: "published",
+      createdAt: "2026-09-01T10:00:00.000Z",
+      createdBy: "original_creator@tdtu.edu.vn",
+    };
+
+    // 2. Seed rejected update proposal
+    const rejId = "cand_upd_opp_ietbhec_2027";
+    mockStore.opportunityCandidates[rejId] = {
+      ...candidate0,
+      id: rejId,
+      status: "rejected",
+      changeType: "update",
+      publishedOpportunityId: "opp_ietbhec_2027",
+      resolutionType: "ADMIN_REJECTED",
+      reviewedBy: "tranquanghai@tdtu.edu.vn",
+      updatedBy: "tranquanghai@tdtu.edu.vn",
+      rejectionReason: "Chưa có thông báo văn bản chính thức của BTC.",
+      diffSummary: [
+        { field: "deadline", label: "Hạn nộp tóm tắt", oldValue: "01/01/2025", newValue: candidate0.deadline },
+        { field: "fullPaperDeadline", label: "Hạn nộp toàn văn", oldValue: "01/01/2025", newValue: candidate0.fullPaperDeadline },
+      ],
+      createdAt: "2026-10-14T08:00:00.000Z",
+      updatedAt: "2026-10-14T09:00:00.000Z",
+    };
+
+    // 3. Execute sync with the same row data
+    const outcome = await executeResearchSync({
+      db: {},
+      sdk: mockSdk,
+      user: { uid: "u_admin", email: "admin@tdtu.edu.vn", role: "admin" },
+      options: { force: true },
+    });
+
+    expect(outcome.status).toBe("success");
+
+    // Rejection must be STRICTLY preserved
+    const candidate = mockStore.opportunityCandidates[rejId];
+    expect(candidate.status).toBe("rejected");
+    expect(candidate.resolutionType).toBe("ADMIN_REJECTED");
+    expect(candidate.reviewedBy).toBe("tranquanghai@tdtu.edu.vn");
+    expect(candidate.rejectionReason).toBe("Chưa có thông báo văn bản chính thức của BTC.");
+
+    // Diagnostics confirms preservation
+    const diag = outcome.diagnostics?.find((d) => d.targetId === rejId);
+    expect(diag).toBeDefined();
+    expect(diag?.status).toBe("preserved_rejection");
+
+    // Published opportunity remains intact
+    expect(mockStore.opportunities["opp_ietbhec_2027"].deadline).toBe("01/01/2025");
+    expect(mockStore.opportunities["opp_ietbhec_2027"].status).toBe("published");
+  });
 });

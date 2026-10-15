@@ -54,15 +54,31 @@ const isTodayDate = (dateStr?: string | null): boolean => {
 };
 
 export const isAutoClosedProposal = (c: OpportunityCandidate): boolean => {
+  // 1. Explicit resolutionType check
+  if (c.resolutionType === "AUTO_CLOSED") return true;
+  if (c.resolutionType === "ADMIN_REJECTED") return false;
+
+  // 2. Fallback check for legacy records
   if (c.status !== "rejected" && (c.status as string) !== "closed") return false;
   if (!c.publishedOpportunityId) return false;
-  return (
-    c.updatedBy === "SPARK_SYNC" ||
-    c.reviewedBy === "SPARK_SYNC" ||
+
+  // If an actual admin/user email reviewed it, it's definitely an ADMIN rejection, NEVER auto-closed
+  if (c.reviewedBy && c.reviewedBy !== "SPARK_SYNC" && c.reviewedBy.includes("@")) {
+    return false;
+  }
+
+  // Must have clear auto-closed textual indicator from system sync
+  const hasAutoClosedReason =
     Boolean(c.rejectionReason?.includes("Đồng bộ chuẩn hóa")) ||
     Boolean(c.rejectionReason?.includes("Tự động đóng")) ||
-    Boolean(c.rejectionReason?.includes("trùng khớp"))
-  );
+    Boolean(c.rejectionReason?.includes("trùng khớp"));
+
+  return hasAutoClosedReason && (!c.reviewedBy || c.reviewedBy === "SPARK_SYNC");
+};
+
+export const isAdminRejectedProposal = (c: OpportunityCandidate): boolean => {
+  if (c.status !== "rejected") return false;
+  return !isAutoClosedProposal(c);
 };
 
 export const getCandidatePrimaryCategory = (
@@ -722,26 +738,61 @@ export const AdminCandidatesPage: React.FC = () => {
                             color: "#0369a1",
                             marginTop: 4,
                             display: "flex",
-                            alignItems: "center",
-                            gap: 6,
-                            flexWrap: "wrap",
+                            flexDirection: "column",
+                            gap: 3,
                           }}
                         >
-                          <span>
-                            Hồ sơ gốc: <strong>{cand.publishedOpportunityId}</strong>
-                          </span>
-                          {cand.diffSummary && cand.diffSummary.length > 0 && (
-                            <span
-                              style={{
-                                color: "#475569",
-                                background: "#f1f5f9",
-                                padding: "1px 6px",
-                                borderRadius: 4,
-                              }}
-                            >
-                              Thay đổi: {cand.diffSummary.map((d) => d.label || d.field).join(", ")}
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                            <span>
+                              Hồ sơ gốc: <strong>{cand.publishedOpportunityId}</strong>
                             </span>
-                          )}
+                            {cand.diffSummary && cand.diffSummary.length > 0 && (
+                              <span
+                                style={{
+                                  color: "#475569",
+                                  background: "#f1f5f9",
+                                  padding: "1px 6px",
+                                  borderRadius: 4,
+                                }}
+                              >
+                                Thay đổi: {cand.diffSummary.map((d) => d.label || d.field).join(", ")}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: "0.71rem", color: "#64748b" }}>
+                            Phát hiện gốc: {formatDateVN(cand.discoveredAt || cand.createdAt)}
+                            {cand.updatedAt && ` • Cập nhật: ${formatDateVN(cand.updatedAt)}`}
+                          </div>
+                        </div>
+                      )}
+                      {primaryCat === "closed" && (
+                        <div
+                          style={{
+                            fontSize: "0.72rem",
+                            color: "#475569",
+                            background: "#f8fafc",
+                            border: "1px solid #cbd5e1",
+                            borderRadius: 4,
+                            padding: "3px 6px",
+                            marginTop: 4,
+                          }}
+                        >
+                          <strong>Tự đóng:</strong> {cand.rejectionReason || "Dữ liệu trùng khớp với hội thảo đã công bố"}
+                        </div>
+                      )}
+                      {primaryCat === "rejected" && (
+                        <div
+                          style={{
+                            fontSize: "0.72rem",
+                            color: "#991b1b",
+                            background: "#fef2f2",
+                            border: "1px solid #fecaca",
+                            borderRadius: 4,
+                            padding: "3px 6px",
+                            marginTop: 4,
+                          }}
+                        >
+                          <strong>Từ chối bởi {cand.reviewedBy || "Admin"}:</strong> {cand.rejectionReason || "Không có lý do"}
                         </div>
                       )}
                     </td>
@@ -1094,13 +1145,13 @@ export const AdminCandidatesPage: React.FC = () => {
                       background: "#eff6ff",
                       color: "#1d4ed8",
                       border: "1px solid #bfdbfe",
-                      padding: "6px 10px",
+                      padding: "8px 10px",
                       borderRadius: 6,
                       fontSize: "0.75rem",
                       marginBottom: 12,
                       display: "flex",
                       flexDirection: "column",
-                      gap: 2,
+                      gap: 4,
                     }}
                   >
                     <div>
@@ -1111,6 +1162,43 @@ export const AdminCandidatesPage: React.FC = () => {
                         Thay đổi: {cand.diffSummary.map((d) => d.label || d.field).join(", ")}
                       </div>
                     )}
+                    <div style={{ color: "#64748b", fontSize: "0.71rem" }}>
+                      Phát hiện gốc: {formatDateVN(cand.discoveredAt || cand.createdAt)}
+                      {cand.updatedAt && ` • Cập nhật: ${formatDateVN(cand.updatedAt)}`}
+                    </div>
+                  </div>
+                )}
+
+                {primaryCat === "closed" && (
+                  <div
+                    style={{
+                      background: "#f8fafc",
+                      color: "#475569",
+                      border: "1px solid #cbd5e1",
+                      padding: "6px 10px",
+                      borderRadius: 6,
+                      fontSize: "0.75rem",
+                      marginBottom: 12,
+                    }}
+                  >
+                    <strong>Tự đóng (Hệ thống):</strong> {cand.rejectionReason || "Dữ liệu trùng khớp với hội thảo công bố"}
+                  </div>
+                )}
+
+                {primaryCat === "rejected" && (
+                  <div
+                    style={{
+                      background: "#fef2f2",
+                      color: "#991b1b",
+                      border: "1px solid #fecaca",
+                      padding: "6px 10px",
+                      borderRadius: 6,
+                      fontSize: "0.75rem",
+                      marginBottom: 12,
+                    }}
+                  >
+                    <div><strong>Người từ chối:</strong> {cand.reviewedBy || "Admin"}</div>
+                    <div><strong>Lý do:</strong> {cand.rejectionReason || "Chưa có lý do"}</div>
                   </div>
                 )}
 

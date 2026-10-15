@@ -876,9 +876,11 @@ export async function approveCandidate(
       batch.update(candRef, {
         id: resolvedCandId,
         status: "approved",
+        resolutionType: "APPROVED_UPDATE",
         reviewedBy: actor.email,
         reviewedAt: now,
         publishedOpportunityId: targetOppId,
+        updatedBy: actor.email,
         updatedAt: now,
       });
       await batch.commit();
@@ -901,9 +903,11 @@ export async function approveCandidate(
   batch.update(candRef, {
     id: resolvedCandId,
     status: "approved",
+    resolutionType: "APPROVED_UPDATE",
     reviewedBy: actor.email,
     reviewedAt: now,
     publishedOpportunityId: oppRef.id,
+    updatedBy: actor.email,
     updatedAt: now,
   });
   await batch.commit();
@@ -928,9 +932,11 @@ export async function rejectCandidate(
   await updateDoc(candRef, {
     id: candRef.id,
     status: "rejected",
+    resolutionType: "ADMIN_REJECTED",
     rejectionReason: reason,
     reviewedBy: actor.email,
     reviewedAt: now,
+    updatedBy: actor.email,
     updatedAt: now,
   });
 
@@ -957,6 +963,7 @@ export async function markCandidateNeedsReview(
     rejectionReason: reason || "Yêu cầu hiệu chỉnh thông tin",
     reviewedBy: actor.email,
     reviewedAt: now,
+    updatedBy: actor.email,
     updatedAt: now,
   });
 

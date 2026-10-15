@@ -40,6 +40,7 @@ export interface ResearchSyncDiagnosticItem {
     | "updated"
     | "update_proposal"
     | "preserved_admin"
+    | "preserved_rejection"
     | "out_of_scope"
     | "skipped"
     | "invalid";
@@ -437,7 +438,10 @@ export async function executeResearchSync({
                   docRef,
                   cleanUndefined({
                     status: "rejected",
+                    resolutionType: "AUTO_CLOSED",
                     rejectionReason: "Đồng bộ chuẩn hóa: Dữ liệu Google Sheets và hội thảo đã công bố đã hoàn toàn trùng khớp, không có thay đổi thực tế.",
+                    reviewedBy: "SPARK_SYNC",
+                    reviewedAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString(),
                     updatedBy: "SPARK_SYNC",
                   })
@@ -485,6 +489,7 @@ export async function executeResearchSync({
                     ...diff.updates,
                     diffSummary: diff.diffSummary,
                     changeType: "update",
+                    resolutionType: "PENDING_UPDATE",
                     publishedOpportunityId: target.id,
                     discoveredAt: target.discoveredAt || existingProposal.discoveredAt || row.discoveredAt,
                     updatedAt: new Date().toISOString(),
@@ -517,9 +522,59 @@ export async function executeResearchSync({
                 targetId: existingProposal.id,
               });
             } else {
+              // Check if there is an existing proposal for this opportunity that was already REJECTED by Admin
+              const rejectedProposal = candidates.find(
+                (c) =>
+                  (c.publishedOpportunityId === target.id || c.id === `cand_upd_${target.id}`) &&
+                  c.status === "rejected" &&
+                  (c.resolutionType === "ADMIN_REJECTED" || (Boolean(c.reviewedBy) && c.reviewedBy !== "SPARK_SYNC"))
+              );
+
+              // If rejected by Admin, check if incoming row diff matches what was already reviewed and rejected
+              const hasNewDiffBeyondRejection = (() => {
+                if (!rejectedProposal) return true;
+                if (rejectedProposal.diffSummary && rejectedProposal.diffSummary.length > 0) {
+                  const rejDiffSummary = rejectedProposal.diffSummary;
+                  if (rejDiffSummary.length !== diff.diffSummary.length) return true;
+                  const rejKeys = new Set(rejDiffSummary.map((d: any) => d.field));
+                  for (const key of diff.changedKeys) {
+                    if (!rejKeys.has(key)) return true;
+                    const incomingVal = (diff.updates as any)[key];
+                    const rejField = rejDiffSummary.find((d: any) => d.field === key);
+                    if (rejField && rejField.newValue !== incomingVal) return true;
+                  }
+                  return false;
+                }
+                for (const key of diff.changedKeys) {
+                  const incomingVal = (diff.updates as any)[key];
+                  const rejVal = (rejectedProposal as any)[key];
+                  if (incomingVal !== rejVal) return true;
+                }
+                return false;
+              })();
+
+              if (rejectedProposal && !hasNewDiffBeyondRejection) {
+                // Strictly preserve Admin's rejection! Do not overwrite, do not re-open!
+                stats.matched++;
+                stats.preservedAdmin++;
+                diagnostics.push({
+                  row: rowNum,
+                  stt: sttVal,
+                  title: row.title,
+                  status: "preserved_rejection",
+                  action: "Giữ quyết định từ chối",
+                  reason: `Admin (${rejectedProposal.reviewedBy}) đã từ chối đề xuất này trước đó. Bảo toàn lịch sử kiểm duyệt, không tự ý mở lại`,
+                  targetId: rejectedProposal.id,
+                });
+                continue;
+              }
+
               // Create new update candidate in opportunityCandidates with deterministic idempotent ID
+              const candId = (rejectedProposal && hasNewDiffBeyondRejection)
+                ? `cand_upd_${target.id}_${Date.now()}`
+                : `cand_upd_${target.id}`;
+
               const { id: _ignoreSlugId, ...candidateFields } = mapRowToCandidate(row, i);
-              const candId = `cand_upd_${target.id}`;
               const existingCand = candidates.find((c) => c.id === candId);
               const createdAt = existingCand?.createdAt || new Date().toISOString();
               const discoveredAt = target.discoveredAt || row.discoveredAt || candidateFields.discoveredAt;
@@ -533,12 +588,14 @@ export async function executeResearchSync({
                       id: candId,
                       status: "pending",
                       changeType: "update",
+                      resolutionType: "PENDING_UPDATE",
                       publishedOpportunityId: target.id,
                       diffSummary: diff.diffSummary,
                       sourceType: "SPARK",
                       createdAt: createdAt,
                       discoveredAt: discoveredAt,
                       updatedAt: new Date().toISOString(),
+                      updatedBy: "SPARK_SYNC",
                     })
                   );
                   stats.successWrites++;
