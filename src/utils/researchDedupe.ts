@@ -561,21 +561,27 @@ export function classifyOutOfScopeRecord(record: {
   category?: "TN" | "QT" | string;
   isOutOfScope?: boolean;
   outOfScopeReason?: string;
+  status?: string;
+  conferenceCode?: string;
   [key: string]: any;
 }): OutOfScopeClassification {
+  // Giai đoạn C: Hội thảo đã duyệt / đã công bố hoặc thuộc nhóm QT hoặc TN chính thức luôn là hợp lệ (in-scope)
+  if (record.status === "approved" || record.status === "published") {
+    return { isOutOfScope: false };
+  }
+
+  const rowCategory = record.category || (record as any).category;
+  const rowCode = String(record.conferenceCode || (record as any).code || "").toUpperCase();
+  if (rowCategory === "QT" || rowCategory === "TN" || rowCode.startsWith("QT") || rowCode.startsWith("TN")) {
+    return { isOutOfScope: false };
+  }
+
   if (record.isOutOfScope === true) {
     return {
       isOutOfScope: true,
       reason: record.outOfScopeReason || "Ngoài phạm vi hội thảo trong nước",
       classifiedType: record.type,
     };
-  }
-
-  // Giai đoạn C: Hội thảo thuộc nhóm QT hoặc TN đã được phân loại chính thức là hợp lệ
-  const rowCategory = record.category || (record as any).category;
-  const rowCode = String(record.conferenceCode || (record as any).code || "").toUpperCase();
-  if (rowCategory === "QT" || rowCategory === "TN" || rowCode.startsWith("QT") || rowCode.startsWith("TN")) {
-    return { isOutOfScope: false };
   }
 
   const rawTitle = String(record.title || (record as any).name || "");

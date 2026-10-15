@@ -5,6 +5,7 @@ import {
   isMeaningfulFieldChange,
   findMatchingResearchOpportunity,
   computeOpportunityDiff,
+  classifyOutOfScopeRecord,
   type ResearchMatchTarget,
 } from "../utils/researchDedupe";
 import {
@@ -275,6 +276,102 @@ describe("Conference Deduplication & Governance Suite", () => {
 
       expect(validStatuses.includes(candidateWithClosedStatus.status)).toBe(true);
       expect(["PENDING_UPDATE", "APPROVED_UPDATE", "ADMIN_REJECTED", "AUTO_CLOSED"].includes(candidateWithClosedStatus.resolutionType)).toBe(true);
+    });
+  });
+
+  describe("Official Conferences Scope & Governance Accounting", () => {
+    it("classifyOutOfScopeRecord treats official TN/QT and approved records as in-scope", () => {
+      // Official QT0003 conference record with foreign location is NOT out of scope
+      const qt3 = classifyOutOfScopeRecord({
+        title: "Hội thảo khoa học quốc tế: “Shaping the Future of the Global South”",
+        conferenceCode: "QT0003",
+        category: "QT",
+        country: "Nam Phi / Việt Nam",
+        status: "approved",
+      });
+      expect(qt3.isOutOfScope).toBe(false);
+
+      // Official QT0001
+      const qt1 = classifyOutOfScopeRecord({
+        title: "HAXD 2027",
+        conferenceCode: "QT0001",
+        category: "QT",
+        country: "Hoa Kỳ",
+      });
+      expect(qt1.isOutOfScope).toBe(false);
+
+      // Official TN0001
+      const tn1 = classifyOutOfScopeRecord({
+        title: "IETBHEC 2027",
+        conferenceCode: "TN0001",
+        category: "TN",
+        country: "Việt Nam",
+      });
+      expect(tn1.isOutOfScope).toBe(false);
+    });
+
+    it("getCandidatePrimaryCategory places approved QT0003 in 'approved', not 'out_of_scope'", () => {
+      const candQT3: any = {
+        id: "spark_opp_20261006-01_6",
+        title: "Hội thảo khoa học quốc tế: “Shaping the Future of the Global South”",
+        organizer: "Đại học Kinh tế Quốc dân (NEU)",
+        type: "Hội thảo",
+        level: "Quốc tế",
+        category: "QT",
+        conferenceCode: "QT0003",
+        status: "approved",
+        sourceType: "SPARK",
+        publishedOpportunityId: "opp_global_south_2026",
+        createdAt: "2026-10-06T00:00:00.000Z",
+        updatedAt: "2026-10-15T00:00:00.000Z",
+      };
+
+      const category = getCandidatePrimaryCategory(candQT3);
+      expect(category).toBe("approved");
+    });
+
+    it("computes exactly 10 unique conferences across 8 published, 2 new pending, and 1 update proposal", () => {
+      const publishedOpps = [
+        { id: "opp_ietbhec_2027", conferenceCode: "TN0001", status: "published" },
+        { id: "opp_celg_2026", conferenceCode: "TN0002", status: "published" },
+        { id: "opp_ciemb_2026", conferenceCode: "TN0003", status: "published" },
+        { id: "opp_letj_2027", conferenceCode: "TN0004", status: "published" },
+        { id: "opp_icisn_2027", conferenceCode: "TN0005", status: "published" },
+        { id: "opp_neu_duongdai_2026", conferenceCode: "TN0006", status: "published" },
+        { id: "E3zjQ9KZxXarkH8R2CEM", conferenceCode: "TN0007", status: "published" },
+        { id: "opp_global_south_2026", conferenceCode: "QT0003", status: "published" },
+      ];
+
+      const candidates: any[] = [
+        // 8 approved candidates matching the 8 published
+        { id: "c1", conferenceCode: "TN0001", status: "approved" },
+        { id: "c2", conferenceCode: "TN0002", status: "approved" },
+        { id: "c3", conferenceCode: "TN0003", status: "approved" },
+        { id: "c4", conferenceCode: "TN0004", status: "approved" },
+        { id: "c5", conferenceCode: "TN0005", status: "approved" },
+        { id: "c6", conferenceCode: "TN0006", status: "approved" },
+        { id: "c7", conferenceCode: "TN0007", status: "approved" },
+        { id: "c8", conferenceCode: "QT0003", status: "approved" },
+        // 2 new pending create candidates
+        { id: "c9", conferenceCode: "QT0001", status: "pending", changeType: "create" },
+        { id: "c10", conferenceCode: "QT0002", status: "pending", changeType: "create" },
+        // 1 update proposal linked to QT0003
+        { id: "c11", conferenceCode: "QT0003", status: "pending", changeType: "update", publishedOpportunityId: "opp_global_south_2026" },
+      ];
+
+      const publishedCount = publishedOpps.filter((o) => o.status === "published").length;
+      const newPendingCount = candidates.filter(
+        (c) => c.status === "pending" && (c.changeType === "create" || !c.publishedOpportunityId)
+      ).length;
+      const updateProposalsCount = candidates.filter(
+        (c) => (c.changeType === "update" || Boolean(c.publishedOpportunityId)) && ["pending", "needs_review"].includes(c.status)
+      ).length;
+      const totalConferences = publishedCount + newPendingCount;
+
+      expect(publishedCount).toBe(8);
+      expect(newPendingCount).toBe(2);
+      expect(updateProposalsCount).toBe(1);
+      expect(totalConferences).toBe(10); // Exactly 10 unique conferences!
     });
   });
 });

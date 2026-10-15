@@ -97,14 +97,18 @@ export const isAdminRejectedProposal = (c: OpportunityCandidate): boolean => {
 export const getCandidatePrimaryCategory = (
   c: OpportunityCandidate
 ): "today" | "updates" | "pending" | "needs_review" | "approved" | "expired" | "rejected" | "closed" | "out_of_scope" => {
-  // 1. Ngoài phạm vi / JOISA
-  if (c.isOutOfScope === true || classifyOutOfScopeRecord(c).isOutOfScope) {
-    return "out_of_scope";
-  }
-
-  // 2. Hồ sơ đã duyệt
+  // 1. Hồ sơ đã duyệt (hội thảo đã được Admin duyệt và công bố)
   if (c.status === "approved") {
     return "approved";
+  }
+
+  // 2. Ngoài phạm vi / JOISA (chỉ áp dụng cho hồ sơ chưa duyệt và không thuộc nhóm hội thảo chính thức TN/QT)
+  const isOfficial =
+    c.category === "QT" ||
+    c.category === "TN" ||
+    (c.conferenceCode && (c.conferenceCode.startsWith("QT") || c.conferenceCode.startsWith("TN")));
+  if (!isOfficial && (c.isOutOfScope === true || classifyOutOfScopeRecord(c).isOutOfScope)) {
+    return "out_of_scope";
   }
 
   // 3. Phân biệt: Tự đóng vì trùng khớp vs Admin từ chối (tránh làm sai thống kê "Từ chối")
@@ -214,6 +218,26 @@ export const AdminCandidatesPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Unique conferences summary based on Spark official codes (TN0001-TN0007, QT0001-QT0003)
+  const uniqueSummary = useMemo(() => {
+    const publishedCount = publishedOpps.filter((o) => o.status === "published").length;
+    const newPendingCount = candidates.filter(
+      (c) => c.status === "pending" && (c.changeType === "create" || !c.publishedOpportunityId)
+    ).length;
+    const updateProposalsCount = candidates.filter(
+      (c) =>
+        (c.changeType === "update" || Boolean(c.publishedOpportunityId)) &&
+        ["pending", "needs_review"].includes(c.status)
+    ).length;
+    const totalConferences = publishedCount + newPendingCount;
+    return {
+      publishedCount,
+      newPendingCount,
+      updateProposalsCount,
+      totalConferences,
+    };
+  }, [publishedOpps, candidates]);
 
   // Compute non-overlapping counts for each tab
   const tabCounts = useMemo(() => {
@@ -544,6 +568,54 @@ export const AdminCandidatesPage: React.FC = () => {
         onOpenSyncModal={() => setIsSyncModalOpen(true)}
       />
 
+      {/* 10 Unique Conferences Governance Summary */}
+      <div
+        className="card"
+        style={{
+          marginBottom: 16,
+          padding: "12px 18px",
+          background: "linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)",
+          border: "1px solid #cbd5e1",
+          borderRadius: 8,
+          boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontWeight: 700, fontSize: "0.92rem", color: "#1e293b" }}>
+              Hội thảo Khoa MTCN (Spark JSON):
+            </span>
+            <span
+              className="badge"
+              style={{
+                background: "#0284c7",
+                color: "#ffffff",
+                padding: "3px 10px",
+                borderRadius: 12,
+                fontWeight: 700,
+                fontSize: "0.82rem",
+              }}
+            >
+              {uniqueSummary.totalConferences} hội thảo duy nhất
+            </span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 18, fontSize: "0.84rem", flexWrap: "wrap" }}>
+            <span style={{ color: "#166534", display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", display: "inline-block" }} />
+              <strong>{uniqueSummary.publishedCount}</strong> Đã công bố
+            </span>
+            <span style={{ color: "#b45309", display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#f59e0b", display: "inline-block" }} />
+              <strong>{uniqueSummary.newPendingCount}</strong> Mới chờ duyệt (QT0001, QT0002)
+            </span>
+            <span style={{ color: "#0369a1", display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#0ea5e9", display: "inline-block" }} />
+              <strong>{uniqueSummary.updateProposalsCount}</strong> Đề xuất cập nhật (QT0003)
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* Search Bar & Horizontal Responsive Filter Buttons */}
       <div className="card" style={{ marginBottom: 20, padding: 16 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -613,7 +685,13 @@ export const AdminCandidatesPage: React.FC = () => {
               alignItems: "center",
             }}
           >
-            {FILTER_TABS.map((tab) => {
+            {FILTER_TABS.filter((tab) => {
+              // Hide "closed" tab if count is 0
+              if (tab.id === "closed" && tabCounts.closed === 0) return false;
+              // Hide "out_of_scope" tab if count is 0
+              if (tab.id === "out_of_scope" && tabCounts.out_of_scope === 0) return false;
+              return true;
+            }).map((tab) => {
               const isActive = activeTab === tab.id;
               const count = tabCounts[tab.id];
               return (
@@ -848,7 +926,13 @@ export const AdminCandidatesPage: React.FC = () => {
                         >
                           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                             <span>
-                              Hồ sơ gốc: <strong>{cand.publishedOpportunityId}</strong>
+                              Hồ sơ gốc:{" "}
+                              <strong>
+                                {(() => {
+                                  const orig = publishedOpps.find((o) => o.id === cand.publishedOpportunityId);
+                                  return orig ? `[${orig.conferenceCode || "Đã duyệt"}] ${orig.title}` : cand.publishedOpportunityId;
+                                })()}
+                              </strong>
                             </span>
                             {cand.diffSummary && cand.diffSummary.length > 0 && (
                               <span
@@ -1290,7 +1374,13 @@ export const AdminCandidatesPage: React.FC = () => {
                     }}
                   >
                     <div>
-                      Hồ sơ gốc: <strong>{cand.publishedOpportunityId}</strong>
+                      Hồ sơ gốc:{" "}
+                      <strong>
+                        {(() => {
+                          const orig = publishedOpps.find((o) => o.id === cand.publishedOpportunityId);
+                          return orig ? `[${orig.conferenceCode || "Đã duyệt"}] ${orig.title}` : cand.publishedOpportunityId;
+                        })()}
+                      </strong>
                     </div>
                     {cand.diffSummary && cand.diffSummary.length > 0 && (
                       <div style={{ color: "#475569", fontSize: "0.72rem" }}>

@@ -48,3 +48,4 @@ playwright-report/
 blob-report/
 
 *.tsbuildinfo
+backups/
