@@ -78,7 +78,7 @@ rules_version = '2';
 // Collection: opportunityCandidates
 // Document ID: candidateId (auto-generated)
 // Fields:
-//   - Similar to opportunities, with status in ['pending', 'approved', 'rejected', 'needs_review'],
+//   - Similar to opportunities, with status in ['pending', 'approved', 'rejected', 'needs_review', 'closed'],
 //     sourceType == 'SPARK', normalizedTitle: string (required, 1-500 chars),
 //     rejectionReason: string (optional, max 1000 chars), reviewedBy: string (optional),
 //     updatedBy: string (optional, max 100 chars),
@@ -485,7 +485,7 @@ service cloud.firestore {
         data.level in ['Quốc tế', 'Quốc gia', 'Cấp Trường', 'Cấp Khoa', 'Khác'] &&
         data.sourceType == 'SPARK' &&
         data.status in [
-          'pending', 'approved', 'rejected', 'needs_review',
+          'pending', 'approved', 'rejected', 'needs_review', 'closed',
           'MỚI', 'moi', 'new'
         ] &&
         (!('resolutionType' in data) || data.resolutionType in ['PENDING_UPDATE', 'APPROVED_UPDATE', 'ADMIN_REJECTED', 'AUTO_CLOSED']) &&

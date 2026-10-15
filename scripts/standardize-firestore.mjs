@@ -48,6 +48,22 @@ function encodeFields(obj) {
   return fields;
 }
 
+async function getDocument(col, id) {
+  const url = `${BASE_URL}/${col}/${id}`;
+  const res = await originalFetch(url, { headers });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to get ${col}/${id}: ${await res.text()}`);
+  const data = await res.json();
+  const fields = {};
+  for (const [k, v] of Object.entries(data.fields || {})) {
+    if (v.stringValue !== undefined) fields[k] = v.stringValue;
+    else if (v.booleanValue !== undefined) fields[k] = v.booleanValue;
+    else if (v.integerValue !== undefined) fields[k] = Number(v.integerValue);
+    else if (v.arrayValue?.values) fields[k] = v.arrayValue.values.map(x => x.stringValue);
+  }
+  return { id, ...fields };
+}
+
 async function updateDocument(col, id, data) {
   const fields = encodeFields(data);
   const mask = Object.keys(data).map(k => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join('&');
@@ -146,6 +162,20 @@ async function main() {
   // 1. Standardize 8 published opportunities & sync official Spark clean fields for TN0001-TN0007
   console.log('--- 1. Chuẩn hóa 8 published opportunities ---');
   for (const item of CONFERENCES_MAP) {
+    const existingOpp = await getDocument('opportunities', item.oppId);
+    if (!existingOpp) continue;
+
+    if (existingOpp.editedByAdmin === true) {
+      console.log(`[SKIP FIELD OVERWRITE] Opportunity ${item.oppId} has editedByAdmin=true, preserving Admin edits.`);
+      await updateDocument('opportunities', item.oppId, {
+        conferenceCode: item.code,
+        category: item.category,
+        candidateId: item.origCandId,
+      });
+      continue;
+    }
+
+    const manualOverrides = new Set(existingOpp.manualOverrides || []);
     const sparkRow = sparkRows.find(r => r.conferenceCode === item.code);
     const updates = {
       conferenceCode: item.code,
@@ -156,16 +186,16 @@ async function main() {
       updatedBy: 'SPARK_STANDARDIZATION',
     };
 
-    // For TN0001-TN0007, sync the clean Spark JSON fields to eliminate false-positive diffs
+    // For TN0001-TN0007, sync the clean Spark JSON fields to eliminate false-positive diffs, respecting manualOverrides
     if (sparkRow && item.category === 'TN') {
-      if (sparkRow.location) updates.location = sparkRow.location;
-      if (sparkRow.directions) updates.directions = sparkRow.directions;
-      if (sparkRow.submissionUrl) updates.submissionUrl = sparkRow.submissionUrl.replace(/^mailto:/, '');
-      if (sparkRow.feeStatus) updates.feeStatus = sparkRow.feeStatus;
-      if (sparkRow.publicationFee) updates.publicationFee = sparkRow.publicationFee;
-      if (sparkRow.registrationFee) updates.registrationFee = sparkRow.registrationFee;
-      if (sparkRow.notes) updates.notes = sparkRow.notes;
-      if (sparkRow.content) updates.content = sparkRow.content;
+      if (sparkRow.location && !manualOverrides.has('location')) updates.location = sparkRow.location;
+      if (sparkRow.directions && !manualOverrides.has('directions')) updates.directions = sparkRow.directions;
+      if (sparkRow.submissionUrl && !manualOverrides.has('submissionUrl')) updates.submissionUrl = sparkRow.submissionUrl.replace(/^mailto:/, '');
+      if (sparkRow.feeStatus && !manualOverrides.has('feeStatus')) updates.feeStatus = sparkRow.feeStatus;
+      if (sparkRow.publicationFee && !manualOverrides.has('publicationFee')) updates.publicationFee = sparkRow.publicationFee;
+      if (sparkRow.registrationFee && !manualOverrides.has('registrationFee')) updates.registrationFee = sparkRow.registrationFee;
+      if (sparkRow.notes && !manualOverrides.has('notes')) updates.notes = sparkRow.notes;
+      if (sparkRow.content && !manualOverrides.has('content')) updates.content = sparkRow.content;
     }
 
     await updateDocument('opportunities', item.oppId, updates);
@@ -243,31 +273,28 @@ async function main() {
   });
   console.log('[RETAINED] Candidate cand_auto_1792055682982_ee4ci -> QT0002, pending create');
 
-  // 6. Reset sync locks
-  console.log('\n--- 6. Giải phóng lock đồng bộ nếu còn treo ---');
+  // 6. Safe check for sync locks (only reset if idle or expired)
+  console.log('\n--- 6. Kiểm tra khóa đồng bộ ---');
   try {
-    await updateDocument('systemConfig', 'facultyResearchSync', {
-      syncInProgress: false,
-      activeLockId: null,
-      lockId: null,
-      lastSyncStatus: 'idle',
-      updatedAt: now,
-    });
-    console.log('[PASS] Released facultyResearchSync lock.');
+    const syncDoc = await getDocument('systemConfig', 'facultyResearchSync');
+    if (syncDoc) {
+      const lockTime = syncDoc.syncStartedAtMs || (syncDoc.syncStartedAt ? new Date(syncDoc.syncStartedAt).getTime() : 0);
+      const isExpired = lockTime > 0 && Date.now() - lockTime > 5 * 60 * 1000;
+      if (!syncDoc.syncInProgress || isExpired) {
+        await updateDocument('systemConfig', 'facultyResearchSync', {
+          syncInProgress: false,
+          activeLockId: null,
+          lockId: null,
+          lastSyncStatus: 'idle',
+          updatedAt: now,
+        });
+        console.log('[PASS] Cleaned up idle/expired facultyResearchSync lock.');
+      } else {
+        console.log('[SAFE] An active sync session is running within TTL, skipping lock release.');
+      }
+    }
   } catch (e) {
-    console.warn('Could not reset facultyResearchSync lock:', e.message);
-  }
-
-  try {
-    await updateDocument('systemConfig', 'facultyResearchSyncLock', {
-      isLocked: false,
-      lockId: null,
-      activeLockId: null,
-      updatedAt: now,
-    });
-    console.log('[PASS] Released facultyResearchSyncLock lock.');
-  } catch (e) {
-    console.warn('Could not reset facultyResearchSyncLock lock:', e.message);
+    console.warn('Could not check facultyResearchSync lock:', e.message);
   }
 
   console.log('\n=============================================================');

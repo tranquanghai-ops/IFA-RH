@@ -34,7 +34,7 @@ import type {
   ResearchTrackingStatus,
 } from "../types";
 import { normalizeText } from "../utils/dedupe";
-import { normalizeCanonicalUrl, extractConferenceYear } from "../utils/researchDedupe";
+import { normalizeCanonicalUrl, extractConferenceYear, computeOpportunityDiff } from "../utils/researchDedupe";
 
 // ======================== AUDIT LOGS ========================
 export async function logAudit(
@@ -956,7 +956,7 @@ export async function approveCandidate(
     }
   }
 
-  const helperAutoCloseRelatedProposals = async (batchRef: any, oppId: string) => {
+  const helperAutoCloseRelatedProposals = async (batchRef: any, oppId: string, latestOppData: any) => {
     try {
       const relatedSnap = await getDocs(
         query(
@@ -968,15 +968,28 @@ export async function approveCandidate(
         if (pDoc.id !== resolvedCandId) {
           const pData = pDoc.data();
           if (["pending", "needs_review"].includes(pData.status)) {
-            batchRef.update(pDoc.ref, {
-              status: "closed",
-              resolutionType: "AUTO_CLOSED",
-              rejectionReason: `Đã hoàn tất duyệt hội thảo (${actor.email}). Đề xuất cập nhật này được tự động đóng.`,
-              reviewedBy: actor.email,
-              reviewedAt: now,
-              updatedAt: now,
-              updatedBy: actor.email,
-            });
+            // Check if this pending proposal still has substantive unmerged changes compared to latest published opportunity
+            const diffAgainstNewOpp = computeOpportunityDiff(latestOppData, pData as any);
+            if (!diffAgainstNewOpp.hasChanges) {
+              // Completely redundant proposal -> safe to auto-close
+              batchRef.update(pDoc.ref, {
+                status: "closed",
+                resolutionType: "AUTO_CLOSED",
+                rejectionReason: `Đã hoàn tất duyệt hội thảo (${actor.email}). Toàn bộ nội dung trong đề xuất này đã hoàn toàn trùng khớp với thông tin công bố mới nhất.`,
+                reviewedBy: actor.email,
+                reviewedAt: now,
+                updatedAt: now,
+                updatedBy: actor.email,
+              });
+            } else {
+              // Proposal still has unmerged substantive changes -> preserve pending for Admin review
+              // Update diffSummary to reflect remaining diff against new published state
+              batchRef.update(pDoc.ref, {
+                diffSummary: diffAgainstNewOpp.diffSummary,
+                updatedAt: now,
+                updatedBy: "SYSTEM_SYNC",
+              });
+            }
           }
         }
       });
@@ -1029,7 +1042,7 @@ export async function approveCandidate(
         updatedAt: now,
       });
 
-      await helperAutoCloseRelatedProposals(batch, targetOppId);
+      await helperAutoCloseRelatedProposals(batch, targetOppId, cleanUpdate);
       await batch.commit();
 
       await logAudit(
@@ -1045,8 +1058,9 @@ export async function approveCandidate(
 
   // 3. Brand new candidate approval -> Create new published opportunity
   const oppRef = doc(collection(firestore, "opportunities"));
+  const newOppData = { ...oppData, id: oppRef.id, createdAt: now, updatedAt: now };
   const batch = writeBatch(firestore);
-  batch.set(oppRef, { ...oppData, createdAt: now, updatedAt: now });
+  batch.set(oppRef, newOppData);
   batch.update(candRef, {
     id: resolvedCandId,
     status: "approved",
@@ -1058,7 +1072,7 @@ export async function approveCandidate(
     updatedAt: now,
   });
 
-  await helperAutoCloseRelatedProposals(batch, oppRef.id);
+  await helperAutoCloseRelatedProposals(batch, oppRef.id, newOppData);
   await batch.commit();
 
   await logAudit(

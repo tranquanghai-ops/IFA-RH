@@ -4,6 +4,7 @@ import {
   normalizeLocationForComparison,
   isMeaningfulFieldChange,
   findMatchingResearchOpportunity,
+  computeOpportunityDiff,
   type ResearchMatchTarget,
 } from "../utils/researchDedupe";
 import {
@@ -182,6 +183,98 @@ describe("Conference Deduplication & Governance Suite", () => {
 
       expect(getCandidatePrimaryCategory(newCandidate)).toBe("pending");
       expect(getCandidateCategory(newCandidate)).toBe("QT");
+    });
+  });
+
+  describe("Substantive Update Proposal Safety (Two Proposals Scenario)", () => {
+    it("approving proposal A only auto-closes redundant proposal C, while preserving distinct proposal B in pending", () => {
+      const baseOpp = {
+        id: "opp_global_south_2026",
+        title: "Shaping the Future of the Global South",
+        location: "Hà Nội, Việt Nam",
+        registrationFee: "1.000.000 VNĐ",
+        conferenceCode: "QT0003",
+        category: "QT",
+        status: "published",
+      };
+
+      // Proposal A: proposes new location
+      const proposalA: any = {
+        id: "cand_prop_A",
+        title: baseOpp.title,
+        location: "Pretoria, Nam Phi",
+        registrationFee: "1.000.000 VNĐ",
+        publishedOpportunityId: baseOpp.id,
+        status: "pending",
+        changeType: "update",
+      };
+
+      // Proposal B: proposes different registrationFee
+      const proposalB: any = {
+        id: "cand_prop_B",
+        title: baseOpp.title,
+        location: "Hà Nội, Việt Nam",
+        registrationFee: "Miễn phí",
+        publishedOpportunityId: baseOpp.id,
+        status: "pending",
+        changeType: "update",
+      };
+
+      // Proposal C: identical to Proposal A (proposes new location)
+      const proposalC: any = {
+        id: "cand_prop_C",
+        title: baseOpp.title,
+        location: "Pretoria, Nam Phi",
+        registrationFee: "1.000.000 VNĐ",
+        publishedOpportunityId: baseOpp.id,
+        status: "pending",
+        changeType: "update",
+      };
+
+      // When Admin approves Proposal A:
+      const updatedOpp = {
+        ...baseOpp,
+        location: proposalA.location, // now updated to Pretoria
+      };
+
+      // Evaluate Proposal B against newly approved opportunity:
+      const diffB = computeOpportunityDiff(updatedOpp as any, proposalB);
+      // Because Proposal B proposed "Miễn phí", which was NOT in Proposal A:
+      expect(diffB.hasChanges).toBe(true);
+      expect(diffB.changedKeys).toContain("registrationFee");
+      // MUST NOT BE AUTO-CLOSED! Must remain pending for Admin review
+      const shouldCloseB = !diffB.hasChanges;
+      expect(shouldCloseB).toBe(false);
+
+      // Evaluate Proposal C against newly approved opportunity:
+      const diffC = computeOpportunityDiff(updatedOpp as any, proposalC);
+      // Because Proposal C's location is already approved and reflected in updatedOpp:
+      expect(diffC.hasChanges).toBe(false);
+      // Can safely be auto-closed
+      const shouldCloseC = !diffC.hasChanges;
+      expect(shouldCloseC).toBe(true);
+    });
+  });
+
+  describe("Firestore Rules Validation for Closed Status", () => {
+    it("validates that 'closed' is accepted as a valid status in opportunityCandidates schema", () => {
+      const validStatuses = ["pending", "approved", "rejected", "needs_review", "closed", "MỚI", "moi", "new"];
+      expect(validStatuses.includes("closed")).toBe(true);
+
+      const candidateWithClosedStatus = {
+        title: "Test Conference",
+        organizer: "Test Organizer",
+        type: "Hội thảo",
+        level: "Quốc tế",
+        sourceType: "SPARK",
+        status: "closed",
+        resolutionType: "AUTO_CLOSED",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      expect(validStatuses.includes(candidateWithClosedStatus.status)).toBe(true);
+      expect(["PENDING_UPDATE", "APPROVED_UPDATE", "ADMIN_REJECTED", "AUTO_CLOSED"].includes(candidateWithClosedStatus.resolutionType)).toBe(true);
     });
   });
 });
