@@ -7,9 +7,11 @@ import {
   RawFacultyResearchRow,
 } from "../services/facultyResearchData";
 import {
-  fetchFacultyResearchSheetRows,
-  DEFAULT_RESEARCH_SHEET_NAME,
-} from "../services/researchSheetService";
+  fetchLatestConferencesFromDrive,
+  mapJsonConferenceToRawRow,
+  DEFAULT_DRIVE_FOLDER_ID,
+  DEFAULT_DRIVE_FILE_NAME,
+} from "../services/researchDriveJsonService";
 import {
   findMatchingResearchOpportunity,
   isEditedByAdmin,
@@ -49,7 +51,16 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
 }) => {
   const { profile } = useAuth();
   const [sourceData, setSourceData] = useState<RawFacultyResearchRow[]>([]);
-  const [sourceName, setSourceName] = useState("Đang tải dữ liệu từ Google Sheets...");
+  const [sourceName, setSourceName] = useState("Đang tải dữ liệu từ Google Drive JSON...");
+  const [driveMeta, setDriveMeta] = useState<{
+    folderId: string;
+    fileId: string;
+    fileName: string;
+    revision: number;
+    runId?: string;
+    generatedAt?: string;
+    isCached?: boolean;
+  } | null>(null);
   const [loadingSheet, setLoadingSheet] = useState(false);
   const [isLiveSheet, setIsLiveSheet] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -63,25 +74,39 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
   } | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
 
-  // Load from Google Sheets when modal opens
-  const loadLiveSheet = async () => {
+  // Load latest conferences from Google Drive JSON
+  const loadDriveData = async () => {
     setLoadingSheet(true);
     setErrorMsg("");
     setSaveResult(null);
     try {
-      const rows = await fetchFacultyResearchSheetRows();
-      if (Array.isArray(rows) && rows.length > 0) {
-        setSourceData(rows);
-        setSourceName(`Google Sheets IFA Faculty Research / ${DEFAULT_RESEARCH_SHEET_NAME} (${rows.length} dòng trực tiếp)`);
-        setIsLiveSheet(true);
-      } else {
-        setSourceData(OFFICIAL_FACULTY_RESEARCH_RECORDS);
-        setSourceName("Dataset dự phòng chính thức (8 bản ghi Spark)");
-        setIsLiveSheet(false);
-      }
+      const res = await fetchLatestConferencesFromDrive({
+        folderId: DEFAULT_DRIVE_FOLDER_ID,
+        fileName: DEFAULT_DRIVE_FILE_NAME,
+      });
+
+      const rows = res.payload.conferences.map((c, i) =>
+        mapJsonConferenceToRawRow(c, i, res.payload.runId)
+      );
+
+      setSourceData(rows);
+      setDriveMeta({
+        folderId: DEFAULT_DRIVE_FOLDER_ID,
+        fileId: res.fileId,
+        fileName: res.fileName,
+        revision: res.revision,
+        runId: res.payload.runId,
+        generatedAt: res.payload.generatedAt,
+        isCached: res.isCached,
+      });
+
+      const tnCount = res.payload.conferences.filter((c) => (c.code || "").startsWith("TN")).length;
+      const qtCount = res.payload.conferences.filter((c) => (c.code || "").startsWith("QT")).length;
+      setSourceName(`Google Drive JSON — ${res.fileName} (Rev ${res.revision}: ${tnCount} TN, ${qtCount} QT)`);
+      setIsLiveSheet(true);
     } catch (err: any) {
-      console.warn("Không tải được live Google Sheet:", err);
-      setErrorMsg(`Không tải được Google Sheets trực tuyến: ${err.message}. Đã nạp dataset dự phòng.`);
+      console.warn("Không tải được Google Drive JSON:", err);
+      setErrorMsg(`Không tải được Google Drive JSON (${err.message}). Đang chuyển sang dataset dự phòng.`);
       setSourceData(OFFICIAL_FACULTY_RESEARCH_RECORDS);
       setSourceName("Dataset dự phòng chính thức (8 bản ghi Spark)");
       setIsLiveSheet(false);
@@ -92,7 +117,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
 
   useEffect(() => {
     if (isOpen) {
-      loadLiveSheet();
+      loadDriveData();
     }
   }, [isOpen]);
 
@@ -203,8 +228,11 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
     setErrorMsg("");
 
     try {
-      // Run full sync engine directly against Google Sheets
-      const outcome = await runFacultyResearchSyncClient(profile, { force: true });
+      // Run full sync engine directly against Google Drive JSON
+      const outcome = await runFacultyResearchSyncClient(profile, {
+        force: true,
+        dataSource: "drive_json",
+      });
       if (outcome.skipped) {
         setErrorMsg(outcome.reason || "Phiên đồng bộ đã bị bỏ qua.");
       } else {
@@ -231,10 +259,10 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Đồng bộ cơ hội NCKH từ IFA Faculty Research"
+      title="Đồng bộ cơ hội NCKH từ Google Drive JSON (Spark)"
       maxWidth="large"
       footer={
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", flexWrap: "wrap", gap: 8 }}>
           <div style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
             Mới: <strong style={{ color: "var(--success)" }}>{newCount}</strong> · Đề xuất:{" "}
             <strong style={{ color: "#0284c7" }}>{updateProposalCount}</strong> · Cập nhật:{" "}
@@ -285,12 +313,19 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
             gap: 10,
           }}
         >
-          <div>
-            <div style={{ fontWeight: 700, color: "#166534", fontSize: "0.9rem" }}>
-              Nguồn dữ liệu: {sourceName}
+          <div style={{ flex: "1 1 280px" }}>
+            <div style={{ fontWeight: 700, color: "#166534", fontSize: "0.9rem", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <span>{sourceName}</span>
+              {driveMeta?.isCached && (
+                <span style={{ fontSize: "0.75rem", background: "#fef3c7", color: "#92400e", padding: "1px 6px", borderRadius: 4 }}>
+                  Bản nhớ đệm
+                </span>
+              )}
             </div>
-            <div style={{ color: "#15803d", fontSize: "0.8125rem", marginTop: 2 }}>
-              Google Sheets: <code>1ug0b4Holu6nGp6NwO-JViqe7XexeDLlwirqRELGwh4U</code> · Tab: <code>HỘI THẢO</code>
+            <div style={{ color: "#15803d", fontSize: "0.8125rem", marginTop: 4, display: "flex", flexWrap: "wrap", gap: "6px 14px" }}>
+              <span>Thư mục: <code>IFA_RH_DATA</code> (<code>{driveMeta?.folderId || DEFAULT_DRIVE_FOLDER_ID}</code>)</span>
+              {driveMeta?.fileId && <span>File ID: <code>{driveMeta.fileId}</code></span>}
+              {driveMeta?.generatedAt && <span>Tạo lúc: {formatDateVN(driveMeta.generatedAt)}</span>}
             </div>
           </div>
 
@@ -298,12 +333,12 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
             <button
               type="button"
               className="btn btn-secondary btn-sm"
-              onClick={loadLiveSheet}
+              onClick={loadDriveData}
               disabled={loadingSheet}
               style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
             >
               <RotateCw size={14} className={loadingSheet ? "spin" : ""} />
-              {loadingSheet ? "Đang tải..." : "Tải lại Sheet"}
+              {loadingSheet ? "Đang tải..." : "Tải lại Drive"}
             </button>
           </div>
         </div>

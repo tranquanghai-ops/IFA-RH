@@ -1859,7 +1859,13 @@ export function subscribeFacultyResearchSyncState(
 
 export async function runFacultyResearchSyncClient(
   user: { uid: string; email: string; role?: UserRole },
-  options?: { force?: boolean; dryRun?: boolean; sheetConfig?: { sheetId?: string; sheetName?: string } }
+  options?: {
+    force?: boolean;
+    dryRun?: boolean;
+    sheetConfig?: { sheetId?: string; sheetName?: string };
+    dataSource?: "drive_json" | "sheets";
+    driveConfig?: { folderId?: string; fileName?: string };
+  }
 ) {
   const { executeResearchSync } = await import("../services/researchSyncService");
   const sdk = {
@@ -1882,6 +1888,8 @@ export async function runFacultyResearchSyncClient(
       force: options?.force,
       dryRun: options?.dryRun,
       sheetConfig: options?.sheetConfig,
+      dataSource: options?.dataSource || "drive_json",
+      driveConfig: options?.driveConfig,
     },
   });
 }

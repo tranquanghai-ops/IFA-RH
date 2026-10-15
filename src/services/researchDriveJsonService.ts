@@ -3,7 +3,8 @@ import type { OpportunityFeeStatus } from "../types";
 
 export const GOOGLE_DRIVE_PUBLIC_API_KEY = "AIzaSyC992nRuw5qkBpy7-AtC3BjbbnB1uoX1gA";
 
-export const DEFAULT_DRIVE_FOLDER_ID = "1nOjBhXVwTaEsJzo8Ta23Uom2fQKx1BOo";
+export const DEFAULT_DRIVE_FOLDER_ID = "1bizJ43wLrsSWUIRBpBsBi2NpMZZ9bidI";
+export const ARCHIVE_DRIVE_FOLDER_ID = "13tIOy7JhNM8iI4L9gVGHl6DxFmWfQvTc";
 export const DEFAULT_DRIVE_FILE_NAME = "IFA_RH_CONFERENCES.json";
 export const TEST_DRIVE_FILE_NAME = "IFA_RH_CONFERENCES_TEST.json";
 
@@ -18,11 +19,15 @@ export interface JsonConference {
   level?: string;
   topic?: string;
   field?: string;
+  // Spark 28-field schema & IFA-RH compatibility
+  relevance?: string;
   suitability?: string;
   abstractDeadline?: string;
+  submissionDeadline?: string;
   fullPaperDeadline?: string;
   registrationDeadline?: string;
   deadline?: string;
+  conferenceDate?: string;
   eventDate?: string;
   location?: string;
   fee?: string;
@@ -30,18 +35,24 @@ export interface JsonConference {
   registrationFee?: string;
   feeStatus?: OpportunityFeeStatus;
   feeSourceUrl?: string;
+  publication?: string;
   publicationFormat?: string;
   indexing?: string;
   content: string;
   detailedContent?: string;
+  suggestedTopics?: string[] | string;
   topicsDetailed?: string[];
   directions?: string;
   sourceUrl?: string;
   submissionUrl?: string;
   notes?: string;
+  keywords?: string[] | string;
   tags?: string[] | string;
   status?: string;
+  detectedAt?: string;
   discoveredAt?: string;
+  lastUpdated?: string;
+  updatedAt?: string;
   [key: string]: any;
 }
 
@@ -121,6 +132,152 @@ export function getDriveConferencesCache() {
 
 export function setDriveConferencesCache(cache: typeof inMemoryCache): void {
   inMemoryCache = cache;
+}
+
+/**
+ * Normalizes date formats without timezone conversion.
+ * - Single ISO or YYYY-MM-DD HH:mm:ss -> DD/MM/YYYY
+ * - Date ranges (e.g. 2027-02-25 - 2027-02-27 or 25/02/2027 - 27/02/2027) -> DD/MM/YYYY - DD/MM/YYYY
+ * - Existing DD/MM/YYYY preserved as-is.
+ */
+export function normalizeConferenceDate(rawDate?: string | null): string {
+  if (!rawDate) return "";
+  const str = String(rawDate).trim();
+  if (!str) return "";
+
+  // Date range (e.g. "03/12/2026 - 04/12/2026" or "2026-12-03 - 2026-12-04")
+  if (str.includes(" - ")) {
+    const parts = str.split(" - ");
+    if (parts.length === 2) {
+      const p1 = normalizeConferenceDate(parts[0]);
+      const p2 = normalizeConferenceDate(parts[1]);
+      if (p1 && p2) {
+        return `${p1} - ${p2}`;
+      }
+    }
+    return str;
+  }
+
+  // If already DD/MM/YYYY
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(str)) {
+    const [d, m, y] = str.split("/");
+    return `${d.padStart(2, "0")}/${m.padStart(2, "0")}/${y}`;
+  }
+
+  // If YYYY-MM-DD or YYYY-MM-DD HH:mm:ss or ISO
+  const m = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) {
+    const [, yyyy, mm, dd] = m;
+    return `${dd.padStart(2, "0")}/${mm.padStart(2, "0")}/${yyyy}`;
+  }
+
+  return str;
+}
+
+export interface FirestoreLockResult {
+  acquired: boolean;
+  lockId?: string;
+  message?: string;
+  lockedBy?: string;
+  lockedAt?: string;
+  remainingSeconds?: number;
+}
+
+export const RESEARCH_SYNC_LOCK_DOC_ID = "research_sync_lock";
+export const RESEARCH_SYNC_LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Acquires a distributed session lock in Firestore systemConfig collection
+ * with a 5-minute TTL to prevent concurrent sync executions across admins/browsers.
+ */
+export async function acquireFirestoreSyncLock(
+  db: any,
+  sdk: {
+    doc: (db: any, col: string, id: string) => any;
+    getDoc: (ref: any) => Promise<any>;
+    setDoc: (ref: any, data: any, options?: any) => Promise<any>;
+  },
+  actor: { email?: string; uid?: string },
+  force = false
+): Promise<FirestoreLockResult> {
+  const lockRef = sdk.doc(db, "systemConfig", RESEARCH_SYNC_LOCK_DOC_ID);
+  const now = Date.now();
+
+  try {
+    const snap = await sdk.getDoc(lockRef);
+    if (snap?.exists && (typeof snap.exists === "function" ? snap.exists() : true)) {
+      const data = typeof snap.data === "function" ? snap.data() : snap;
+      if (data && data.isLocked) {
+        const lockTime = Number(data.lockTimestampMs) || (data.lockedAt ? new Date(data.lockedAt).getTime() : 0);
+        const elapsed = now - lockTime;
+        if (elapsed < RESEARCH_SYNC_LOCK_TTL_MS && !force) {
+          const remainingSeconds = Math.max(1, Math.ceil((RESEARCH_SYNC_LOCK_TTL_MS - elapsed) / 1000));
+          return {
+            acquired: false,
+            message: `Một phiên đồng bộ khác đang chạy bởi ${data.lockedBy || "quản trị viên khác"}. Khóa sẽ tự hết hạn sau ${remainingSeconds} giây.`,
+            lockedBy: data.lockedBy,
+            lockedAt: data.lockedAt,
+            remainingSeconds,
+          };
+        }
+      }
+    }
+
+    const lockId = `lock_${now}_${Math.random().toString(36).substring(2, 9)}`;
+    await sdk.setDoc(
+      lockRef,
+      {
+        isLocked: true,
+        lockId,
+        lockedBy: actor.email || actor.uid || "unknown",
+        lockedAt: new Date().toISOString(),
+        lockTimestampMs: now,
+        ttlMs: RESEARCH_SYNC_LOCK_TTL_MS,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+
+    return {
+      acquired: true,
+      lockId,
+    };
+  } catch (err: any) {
+    console.warn("[FirestoreLock] Lỗi khi tạo khóa đồng bộ:", err);
+    return {
+      acquired: false,
+      message: `Không thể thiết lập khóa đồng bộ trên Firestore: ${err.message || String(err)}`,
+    };
+  }
+}
+
+/**
+ * Releases the distributed session lock in Firestore systemConfig collection.
+ */
+export async function releaseFirestoreSyncLock(
+  db: any,
+  sdk: {
+    doc: (db: any, col: string, id: string) => any;
+    setDoc: (ref: any, data: any, options?: any) => Promise<any>;
+  },
+  lockId?: string
+): Promise<void> {
+  try {
+    const lockRef = sdk.doc(db, "systemConfig", RESEARCH_SYNC_LOCK_DOC_ID);
+    await sdk.setDoc(
+      lockRef,
+      {
+        isLocked: false,
+        lockId: "",
+        lastReleasedLockId: lockId || "",
+        releasedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    console.warn("[FirestoreLock] Lỗi khi giải phóng khóa đồng bộ:", err);
+  }
 }
 
 /**
@@ -230,36 +387,40 @@ export async function fetchLatestConferencesFromDrive(
   const allowFallback = options.allowFallback !== false;
 
   try {
-    // 1. List files in target folder
-    // Search for non-trashed files with names matching targetFileName or test name
-    const q = encodeURIComponent(`'${folderId}' in parents and trashed=false and mimeType != 'application/vnd.google-apps.folder'`);
-    const listUrl = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType,size,version,modifiedTime)&key=${apiKey}`;
+    // 1. List files in target folder with pagination support
+    let allFiles: Array<{ id: string; name: string; modifiedTime?: string }> = [];
+    let pageToken: string | undefined = undefined;
 
-    const listRes = await fetch(listUrl, { signal: options.signal });
-    if (!listRes.ok) {
-      throw new ResearchDriveJsonError(
-        `Không thể liệt kê file trong thư mục Google Drive (${folderId}). Trạng thái: ${listRes.status} ${listRes.statusText}`,
-        "DRIVE_LIST_FAILED",
-        listRes.status
-      );
-    }
+    do {
+      const pageParam: string = pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "";
+      const q: string = encodeURIComponent(`'${folderId}' in parents and trashed=false and mimeType != 'application/vnd.google-apps.folder'`);
+      const listUrl: string = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=nextPageToken,files(id,name,mimeType,size,version,modifiedTime)&pageSize=100&key=${apiKey}${pageParam}`;
 
-    const listData = await listRes.json();
-    const allFiles: Array<{ id: string; name: string; modifiedTime?: string }> = listData.files || [];
+      const listRes: Response = await fetch(listUrl, { signal: options.signal });
+      if (!listRes.ok) {
+        throw new ResearchDriveJsonError(
+          `Không thể liệt kê file trong thư mục Google Drive (${folderId}). Trạng thái: ${listRes.status} ${listRes.statusText}`,
+          "DRIVE_LIST_FAILED",
+          listRes.status
+        );
+      }
 
-    // Filter files matching targetFileName (or if searching for production but test exists, support fallback in test mode)
-    let candidateFiles = allFiles.filter(
-      (f) => f.name === targetFileName || f.name.toLowerCase() === targetFileName.toLowerCase()
+      const listData: any = await listRes.json();
+      if (Array.isArray(listData.files)) {
+        allFiles.push(...listData.files);
+      }
+      pageToken = listData.nextPageToken;
+    } while (pageToken);
+
+    // Strictly filter files matching targetFileName (case-insensitive)
+    // Never fall back to test file if targetFileName is not found
+    const candidateFiles = allFiles.filter(
+      (f) => f.name.trim().toLowerCase() === targetFileName.trim().toLowerCase()
     );
-
-    // If targetFileName not found, but TEST_DRIVE_FILE_NAME is present, fall back to test file
-    if (candidateFiles.length === 0 && targetFileName === DEFAULT_DRIVE_FILE_NAME) {
-      candidateFiles = allFiles.filter((f) => f.name === TEST_DRIVE_FILE_NAME);
-    }
 
     if (candidateFiles.length === 0) {
       throw new ResearchDriveJsonError(
-        `Không tìm thấy file nào có tên "${targetFileName}" trong thư mục Google Drive (${folderId}).`,
+        `Không tìm thấy file nào có tên "${targetFileName}" trong thư mục Google Drive (${folderId}). Vui lòng đảm bảo file được chia sẻ quyền xem (Viewer) và đặt đúng trong thư mục IFA_RH_DATA.`,
         "FILE_NOT_FOUND",
         404
       );
@@ -359,6 +520,7 @@ export async function fetchLatestConferencesFromDrive(
 /**
  * Maps a JsonConference item from the Google Drive JSON file to the standard RawFacultyResearchRow.
  * Preserves all operational fields, assigns conferenceCode and category.
+ * Fully supports Spark's 28-field schema names while maintaining backward compatibility with IFA-RH legacy names.
  */
 export function mapJsonConferenceToRawRow(
   conf: JsonConference,
@@ -366,14 +528,62 @@ export function mapJsonConferenceToRawRow(
   runId?: string
 ): RawFacultyResearchRow {
   const normCode = conf.code.trim().toUpperCase();
-  const cat = conf.category === "QT" ? "QT" : "TN";
+  // Ensure category is strictly "QT" if code starts with "QT", or "TN" if "TN"
+  const cat = normCode.startsWith("QT") || conf.category === "QT" ? "QT" : "TN";
 
-  // Normalize tags
-  const tagsStr = Array.isArray(conf.tags)
+  // Normalize keywords / tags
+  const tagsStr = Array.isArray(conf.keywords)
+    ? conf.keywords.join(", ")
+    : typeof conf.keywords === "string"
+    ? conf.keywords
+    : Array.isArray(conf.tags)
     ? conf.tags.join(", ")
     : typeof conf.tags === "string"
     ? conf.tags
     : "";
+
+  // Normalize suggestedTopics / directions / topicsDetailed
+  const suggestedTopicsStr = Array.isArray(conf.suggestedTopics)
+    ? conf.suggestedTopics.join("; ")
+    : typeof conf.suggestedTopics === "string"
+    ? conf.suggestedTopics
+    : "";
+  const directions = conf.directions?.trim() || suggestedTopicsStr;
+  const topicsDetailed = Array.isArray(conf.suggestedTopics)
+    ? conf.suggestedTopics
+    : Array.isArray(conf.topicsDetailed)
+    ? conf.topicsDetailed
+    : [];
+
+  // Normalize fee & feeStatus
+  const feeStr = conf.fee?.trim() || "";
+  let feeStatus: OpportunityFeeStatus = "UNKNOWN";
+  let publicationFee = conf.publicationFee?.trim() || "";
+  let registrationFee = conf.registrationFee?.trim() || "";
+
+  if (conf.feeStatus) {
+    feeStatus = conf.feeStatus;
+  } else if (!feeStr || /^(chưa xác minh|chưa rõ|chưa có|không rõ|n\/a|unknown)$/i.test(feeStr)) {
+    feeStatus = "UNKNOWN";
+  } else if (/^miễn phí$/i.test(feeStr)) {
+    feeStatus = "FREE";
+    if (!publicationFee) publicationFee = "Miễn phí";
+    if (!registrationFee) registrationFee = "Miễn phí";
+  } else {
+    feeStatus = "SPECIFIED";
+  }
+
+  // Normalize dates to DD/MM/YYYY without timezone shifts
+  const submissionDeadline = conf.submissionDeadline || conf.fullPaperDeadline || conf.deadline || "";
+  const normSubmissionDl = normalizeConferenceDate(submissionDeadline);
+  const normAbstractDl = normalizeConferenceDate(conf.abstractDeadline);
+  const normRegistrationDl = normalizeConferenceDate(conf.registrationDeadline);
+  const normEventDate = normalizeConferenceDate(conf.conferenceDate || conf.eventDate);
+
+  // Relevance / suitability
+  const suitability = conf.relevance?.trim() || conf.suitability?.trim() || "Phù hợp";
+  // Publication / publicationFormat
+  const publicationFormat = conf.publication?.trim() || conf.publicationFormat?.trim() || "";
 
   return {
     stt: index + 1,
@@ -385,28 +595,28 @@ export function mapJsonConferenceToRawRow(
     level: conf.level?.trim() || (cat === "QT" ? "Quốc tế" : "Quốc gia"),
     type: conf.type?.trim() || "Hội thảo",
     topic: conf.topic?.trim() || "",
-    suitability: conf.suitability?.trim() || "Phù hợp",
+    suitability,
     field: conf.field?.trim() || "Chung Khoa MTCN",
-    abstractDeadline: conf.abstractDeadline || "",
-    fullPaperDeadline: conf.fullPaperDeadline || "",
-    registrationDeadline: conf.registrationDeadline || "",
-    deadline: conf.deadline || conf.fullPaperDeadline || "",
-    eventDate: conf.eventDate || "",
-    location: conf.location || "",
-    fee: conf.fee || "",
-    publicationFee: conf.publicationFee || "",
-    registrationFee: conf.registrationFee || "",
-    feeStatus: conf.feeStatus || (conf.fee ? "SPECIFIED" : "UNKNOWN"),
+    abstractDeadline: normAbstractDl,
+    fullPaperDeadline: normSubmissionDl,
+    registrationDeadline: normRegistrationDl,
+    deadline: normSubmissionDl,
+    eventDate: normEventDate,
+    location: conf.location?.trim() || "",
+    fee: feeStr,
+    publicationFee,
+    registrationFee,
+    feeStatus,
     feeSourceUrl: conf.feeSourceUrl || "",
-    publicationFormat: conf.publicationFormat || "",
-    indexing: conf.indexing || "",
+    publicationFormat,
+    indexing: conf.indexing?.trim() || "",
     content: conf.content?.trim() || "",
     detailedContent: conf.detailedContent?.trim() || "",
-    topicsDetailed: Array.isArray(conf.topicsDetailed) ? conf.topicsDetailed : [],
-    directions: conf.directions?.trim() || "",
+    topicsDetailed,
+    directions,
     tags: tagsStr,
     statusText: conf.status || "CÒN HẠN",
-    discoveredAt: conf.discoveredAt || new Date().toISOString(),
+    discoveredAt: conf.detectedAt || conf.discoveredAt || new Date().toISOString(),
     notes: conf.notes || "",
     runId: runId || conf.runId || "",
     // Extra fields attached for seamless TN/QT governance

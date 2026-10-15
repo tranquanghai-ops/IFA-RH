@@ -82,7 +82,7 @@ export function findMatchingResearchOpportunity(
   const rowId = (row as any).id;
 
   for (const existing of existingList) {
-    // Rule 0a: Match by conferenceCode (e.g. TN0001, QT0001)
+    // Rule 0a: Match by conferenceCode (e.g. TN0001, QT0001) or known historical records
     const rowCode = (row as any).conferenceCode || (row as any).code;
     const exCode = existing.conferenceCode || existing.code;
     if (rowCode && exCode && String(rowCode).trim().toUpperCase() === String(exCode).trim().toUpperCase()) {
@@ -92,6 +92,20 @@ export function findMatchingResearchOpportunity(
         target: existing,
         matchType: "code_match" as any,
         reason: `Khớp chính xác mã hội thảo (${rowCode})`,
+      };
+    }
+
+    // Direct mapping for historical published record QT0003 -> opp_global_south_2026
+    if (
+      String(rowCode || "").toUpperCase() === "QT0003" &&
+      (existing.id === "opp_global_south_2026" || existing.candidateId === "spark_opp_20261006-01_6")
+    ) {
+      return {
+        isMatch: true,
+        matchedId: existing.id,
+        target: existing,
+        matchType: "code_match" as any,
+        reason: `Khớp mã hội thảo QT0003 với hội thảo đã công bố (${existing.id})`,
       };
     }
 
@@ -354,15 +368,18 @@ export function normalizeTextForComparison(text?: string | null): string {
 }
 
 /**
- * Strips transient countdown phrasing from notes (e.g. "Còn 24 ngày", "(tính từ 06/10/2026)", "HẠN NỘP GẤP:").
+ * Strips transient countdown phrasing from notes (e.g. "Còn 24 ngày", "(tính từ 06/10/2026)", "HẠN NỘP GẤP:", "(còn 131 ngày)").
  */
 export function stripTransientCountdownNotes(note?: string | null): string {
   if (!note) return "";
   let clean = normalizeTextForComparison(note);
   clean = clean.replace(/\(tính từ \d{1,2}\/\d{1,2}\/\d{4}\)/gi, "");
   clean = clean.replace(/\(tính từ \d{4}-\d{2}-\d{2}\)/gi, "");
-  clean = clean.replace(/(?:hạn nộp\s+)?còn\s+\d+\s+ngày/gi, "");
-  clean = clean.replace(/hạn nộp gấp:?/gi, "");
+  clean = clean.replace(/\b(?:sắp hết hạn|hạn nộp rất gấp|hạn nộp gấp):?/gi, "");
+  clean = clean.replace(/\(?\b(?:chỉ\s+)?còn\s+\d+\s+ngày(?:\s+đến\s+hạn[^)]*)?\)?/gi, "");
+  clean = clean.replace(/\(?\bhạn\s+nộp\s+còn\s+\d+\s+ngày\)?/gi, "");
+  clean = clean.replace(/\(?\bhạn\s+nộp\s+\d{1,2}\/\d{1,2}\/\d{4}\s*\(còn\s+\d+\s+ngày\)\)?/gi, "");
+  clean = clean.replace(/\(còn\s+\d+\s+ngày\)/gi, "");
   clean = clean.replace(/[;,.\s]+$/, "").replace(/^[;,.\s]+/, "");
   return normalizeTextForComparison(clean);
 }
@@ -535,7 +552,9 @@ export function classifyOutOfScopeRecord(record: {
   }
 
   // Giai đoạn C: Hội thảo thuộc nhóm QT (Quốc tế tổ chức ở nước ngoài) là hợp lệ, không bị xếp vào ngoài phạm vi!
-  if (record.category === "QT") {
+  const rowCategory = record.category || (record as any).category;
+  const rowCode = String(record.conferenceCode || (record as any).code || "").toUpperCase();
+  if (rowCategory === "QT" || rowCode.startsWith("QT")) {
     return { isOutOfScope: false };
   }
 

@@ -4,6 +4,12 @@ import {
   DEFAULT_RESEARCH_SHEET_NAME,
 } from "./researchSheetService";
 import {
+  fetchLatestConferencesFromDrive,
+  mapJsonConferenceToRawRow,
+  acquireFirestoreSyncLock,
+  releaseFirestoreSyncLock,
+} from "./researchDriveJsonService";
+import {
   findMatchingResearchOpportunity,
   isEditedByAdmin,
   computeOpportunityDiff,
@@ -107,6 +113,14 @@ export interface ResearchSyncOutcome {
   stats?: ResearchSyncStats;
   diagnostics?: ResearchSyncDiagnosticItem[];
   durationMs?: number;
+  driveMeta?: {
+    fileId: string;
+    fileName: string;
+    revision: number;
+    generatedAt?: string;
+    runId?: string;
+    isCached?: boolean;
+  };
 }
 
 export interface ResearchSyncSdk {
@@ -156,6 +170,8 @@ export async function executeResearchSync({
     dryRun?: boolean;
     runSource?: "github_schedule" | "github_dispatch" | "manual_admin" | "manual_cli";
     sheetConfig?: { sheetId?: string; sheetName?: string };
+    dataSource?: "drive_json" | "sheets";
+    driveConfig?: { folderId?: string; fileName?: string };
   };
 }): Promise<ResearchSyncOutcome> {
   const startTime = Date.now();
@@ -164,10 +180,21 @@ export async function executeResearchSync({
 
   const stateRef = sdk.doc(db, "systemConfig", "facultyResearchSync");
   const lockId = crypto.randomUUID();
+  let acquiredLockId: string | undefined = undefined;
 
   // 1. Concurrency guard & Lock Check
   if (!isDryRun) {
     try {
+      // 1a. Distributed lock check with 5-minute TTL
+      const lockResult = await acquireFirestoreSyncLock(db, sdk, user, options.force);
+      if (!lockResult.acquired) {
+        return {
+          skipped: true,
+          reason: lockResult.message || "Một phiên đồng bộ khác đang chạy. Vui lòng thử lại sau.",
+        };
+      }
+      acquiredLockId = lockResult.lockId;
+
       let stateSnap: any = null;
       try {
         stateSnap = await sdk.getDoc(stateRef);
@@ -241,23 +268,59 @@ export async function executeResearchSync({
   }
 
   try {
-    // 2. Fetch rows from Google Sheets
+    // 2. Fetch rows: Google Drive JSON (default when dataSource === 'drive_json' or driveConfig provided) or Google Sheets
     let rows: any[] = [];
-    try {
-      rows = await fetchFacultyResearchSheetRows(options.sheetConfig);
-      if (!Array.isArray(rows) || rows.length === 0) {
-        throw new Error("Không có dữ liệu trả về từ Google Sheets IFA Faculty Research.");
+    let driveMeta: any = null;
+    const isDriveSource = options.dataSource === "drive_json" || Boolean(options.driveConfig);
+
+    if (isDriveSource) {
+      try {
+        const driveResult = await fetchLatestConferencesFromDrive({
+          folderId: options.driveConfig?.folderId,
+          fileName: options.driveConfig?.fileName,
+        });
+        driveMeta = {
+          fileId: driveResult.fileId,
+          fileName: driveResult.fileName,
+          revision: driveResult.revision,
+          generatedAt: driveResult.payload.generatedAt,
+          runId: driveResult.payload.runId,
+          isCached: driveResult.isCached,
+        };
+        rows = driveResult.payload.conferences.map((c, idx) =>
+          mapJsonConferenceToRawRow(c, idx, driveResult.payload.runId)
+        );
+        if (rows.length === 0) {
+          throw new Error("Không có hội thảo nào trong file Google Drive JSON.");
+        }
+      } catch (driveErr: any) {
+        throw new ResearchSyncStageError({
+          stage: "FETCH_SHEET",
+          collectionName: "google_drive_json",
+          operationType: "get",
+          originalError: driveErr,
+          userSummary: `Lỗi kết nối hoặc đọc Google Drive JSON: ${driveErr.message}`,
+          actorUid: user.uid,
+          actorRole: user.role,
+        });
       }
-    } catch (sheetErr: any) {
-      throw new ResearchSyncStageError({
-        stage: "FETCH_SHEET",
-        collectionName: "google_sheets",
-        operationType: "get",
-        originalError: sheetErr,
-        userSummary: "Lỗi kết nối hoặc đọc Google Sheets IFA Faculty Research",
-        actorUid: user.uid,
-        actorRole: user.role,
-      });
+    } else {
+      try {
+        rows = await fetchFacultyResearchSheetRows(options.sheetConfig);
+        if (!Array.isArray(rows) || rows.length === 0) {
+          throw new Error("Không có dữ liệu trả về từ Google Sheets IFA Faculty Research.");
+        }
+      } catch (sheetErr: any) {
+        throw new ResearchSyncStageError({
+          stage: "FETCH_SHEET",
+          collectionName: "google_sheets",
+          operationType: "get",
+          originalError: sheetErr,
+          userSummary: "Lỗi kết nối hoặc đọc Google Sheets IFA Faculty Research",
+          actorUid: user.uid,
+          actorRole: user.role,
+        });
+      }
     }
 
     // 3. Fetch existing Firestore records
@@ -798,22 +861,23 @@ export async function executeResearchSync({
     // 5. Finalize state
     if (!isDryRun) {
       try {
-        await sdk.setDoc(
-          stateRef,
-          {
-            lastSyncAt: new Date().toISOString(),
-            lastSyncDate: new Date().toISOString().split("T")[0],
-            lastSyncStatus: finalStatus,
-            lastSyncSource: runSource,
-            lastSyncStats: stats,
-            durationMs,
-            diagnostics: diagnostics.slice(0, 30),
-            syncInProgress: false,
-            lockId: "",
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
+        const statePayload: any = {
+          lastSyncAt: new Date().toISOString(),
+          lastSyncDate: new Date().toISOString().split("T")[0],
+          lastSyncStatus: finalStatus,
+          lastSyncSource: runSource,
+          lastSyncStats: stats,
+          durationMs,
+          diagnostics: diagnostics.slice(0, 30),
+          syncInProgress: false,
+          lockId: "",
+          updatedAt: new Date().toISOString(),
+        };
+        if (driveMeta) {
+          statePayload.driveMeta = driveMeta;
+        }
+
+        await sdk.setDoc(stateRef, statePayload, { merge: true });
       } catch (finalizeErr: any) {
         throw new ResearchSyncStageError({
           stage: "UPDATE_SYNC_STATE",
@@ -830,11 +894,15 @@ export async function executeResearchSync({
       // Record in imports collection for audit history
       try {
         const importRef = sdk.doc(db, "imports", `imp_spark_${Date.now()}`);
+        const importFileName = driveMeta
+          ? `Google Drive JSON (${driveMeta.fileName} Rev ${driveMeta.revision})`
+          : `IFA Faculty Research (${options.sheetConfig?.sheetName || DEFAULT_RESEARCH_SHEET_NAME})`;
+
         await sdk.setDoc(importRef, {
           id: importRef.id,
           timestamp: new Date().toISOString(),
           importedBy: user.email || "system",
-          fileName: `IFA Faculty Research (${options.sheetConfig?.sheetName || DEFAULT_RESEARCH_SHEET_NAME})`,
+          fileName: importFileName,
           type: "opportunities",
           totalRows: stats.read,
           successCount: stats.created + stats.updated + stats.updateProposals + stats.matched + stats.preservedAdmin,
@@ -848,6 +916,11 @@ export async function executeResearchSync({
       } catch (impErr: any) {
         console.warn("[WRITE_IMPORT_HISTORY] Không ghi được lịch sử imports:", impErr);
       }
+
+      // Release distributed session lock
+      if (acquiredLockId) {
+        await releaseFirestoreSyncLock(db, sdk, acquiredLockId);
+      }
     }
 
     return {
@@ -856,11 +929,15 @@ export async function executeResearchSync({
       stats,
       diagnostics,
       durationMs,
+      driveMeta: driveMeta || undefined,
     };
   } catch (error: any) {
     console.error(`[ResearchSync] Lỗi trong phiên đồng bộ:`, error);
     // Unlock on error
     if (!isDryRun) {
+      if (acquiredLockId) {
+        await releaseFirestoreSyncLock(db, sdk, acquiredLockId);
+      }
       try {
         await sdk.setDoc(
           stateRef,

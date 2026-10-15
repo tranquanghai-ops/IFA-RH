@@ -41,59 +41,84 @@
 
 ---
 
-## 3. Cấu trúc từng bản ghi Hội thảo (`conferences[i]`) — Đầy đủ 27 trường nghiệp vụ
+## 3. Cấu trúc từng bản ghi Hội thảo (`conferences[i]`) — Đầy đủ 28 trường nghiệp vụ thực tế của Spark
 
-Mỗi phần tử trong mảng `conferences` phải có đầy đủ các trường sau:
+Spark xuất bản 28 trường nghiệp vụ. IFA-RH ánh xạ đầy đủ và tương thích ngược với schema nội bộ:
+
+### Bảng ánh xạ 28 trường dữ liệu Spark ↔ IFA-RH
+
+| STT | Trường JSON của Spark | Trường IFA-RH ánh xạ | Kiểu dữ liệu | Mô tả & Quy tắc xử lý |
+| :---: | :--- | :--- | :---: | :--- |
+| 1 | `code` | `conferenceCode` / `code` | `string` | Mã định danh bất biến (`TNxxxx` hoặc `QTxxxx`). |
+| 2 | `category` | `category` | `"TN" \| "QT"` | Phân loại: TN (Trong nước) hoặc QT (Quốc tế tổ chức ở nước ngoài). |
+| 3 | `title` | `title` | `string` | Tiêu đề chính thức của hội thảo. |
+| 4 | `organizer` | `organizer` | `string` | Đơn vị chủ trì / đồng tổ chức. |
+| 5 | `country` | `country` | `string` | Quốc gia tổ chức (Việt Nam, Ý, Đức, Nam Phi / Việt Nam...). |
+| 6 | `year` | `year` | `number` | Năm tổ chức (2026, 2027). |
+| 7 | `type` | `type` | `string` | Loại hình ("Hội thảo", "Hội nghị", "Call for Papers"...). |
+| 8 | `level` | `level` | `string` | Cấp độ ("Quốc tế", "Quốc gia"). |
+| 9 | `topic` | `topic` | `string` | Chủ đề học thuật chính. |
+| 10 | `field` | `field` | `string` | Ngành đào tạo phù hợp tại Khoa MTCN. |
+| 11 | `relevance` | `suitability` | `string` | Mức độ phù hợp ("Rất phù hợp", "Phù hợp", "Tham khảo"). |
+| 12 | `abstractDeadline` | `abstractDeadline` | `string` | Hạn nộp tóm tắt (chuẩn hóa `DD/MM/YYYY`). |
+| 13 | `submissionDeadline` | `fullPaperDeadline`, `deadline` | `string` | Hạn nộp bài toàn văn (chuẩn hóa `DD/MM/YYYY`). |
+| 14 | `registrationDeadline` | `registrationDeadline` | `string` | Hạn đăng ký tham dự (chuẩn hóa `DD/MM/YYYY`). |
+| 15 | `conferenceDate` | `eventDate` | `string` | Ngày diễn ra hội thảo (chuẩn hóa `DD/MM/YYYY` hoặc dải ngày). |
+| 16 | `location` | `location` | `string` | Địa điểm tổ chức hoặc hình thức (Trực tiếp, Hybrid, Online). |
+| 17 | `fee` | `fee`, `feeStatus` | `string` | Lệ phí ("Miễn phí" -> FREE; "Chưa xác minh" -> UNKNOWN; có phí -> SPECIFIED). |
+| 18 | `publication` | `publicationFormat` | `string` | Hình thức xuất bản ("Kỷ yếu ISBN", "Sách Springer LNNS", "Tạp chí liên kết"). |
+| 19 | `indexing` | `indexing` | `string` | Chỉ mục học thuật ("Scopus", "Springer LNCS", "ISBN"...). |
+| 20 | `sourceUrl` | `sourceUrl` | `string` | Link thông báo chính thức của hội thảo. |
+| 21 | `submissionUrl` | `submissionUrl` | `string` | Link cổng nộp bài hoặc đăng ký trực tuyến. |
+| 22 | `content` | `content` | `string` | Tóm tắt mục tiêu, quy mô và ý nghĩa hội thảo. |
+| 23 | `suggestedTopics` | `directions`, `topicsDetailed` | `string \| string[]` | Gợi ý hướng nghiên cứu và viết bài cho Giảng viên MTCN. |
+| 24 | `status` | `statusText` | `string` | Trạng thái ("CÒN HẠN", "SẮP HẾT HẠN", "ĐÃ HẾT HẠN"...). |
+| 25 | `notes` | `notes` | `string` | Ghi chú từ Spark (IFA-RH tự động lọc bỏ cụm countdown khi tính diff). |
+| 26 | `keywords` | `tags` | `string \| string[]` | Từ khóa tìm kiếm và gắn nhãn phân loại. |
+| 27 | `detectedAt` | `discoveredAt` | `string` | Thời điểm Spark phát hiện hội thảo lần đầu. |
+| 28 | `lastUpdated` | `updatedAt` | `string` | Thời điểm Spark cập nhật bản ghi gần nhất. |
 
 ```typescript
 export interface JsonConferenceItem {
-  // --- Định danh & Phân loại ---
-  code: string;                 // Mã cố định: Regex ^(TN|QT)\d{4}$ (ví dụ: "TN0001", "QT0001")
-  category: "TN" | "QT";        // "TN": Tổ chức tại VN; "QT": Tổ chức ở nước ngoài
-  title: string;                // Tên đầy đủ của hội thảo (kèm tên viết tắt nếu có)
-  organizer: string;            // Đơn vị chủ trì / phối hợp tổ chức
-  country: string;              // Quốc gia tổ chức (ví dụ: "Việt Nam", "Ý", "Đức", "Nam Phi")
-  year: number;                 // Năm tổ chức (ví dụ: 2026, 2027)
-  type: string;                 // "Hội thảo" | "Hội nghị" | "Call for Papers" | ...
-  level: string;                // "Quốc tế" | "Quốc gia" | "Cấp Trường" | "Cấp Khoa"
-  topic: string;                // Chủ đề / Lĩnh vực học thuật tổng quát
-  field: string;                // Phù hợp ngành nào (MTCN, Đồ họa, Thời trang, CN, ...)
-  suitability?: string;         // Mức độ phù hợp: "Phù hợp", "Tham khảo", "Ưu tiên"
+  // Định danh & Phân loại
+  code: string;                 // "TN0001", "QT0001"
+  category: "TN" | "QT";        // "TN" hoặc "QT"
+  title: string;                // Tên hội thảo
+  organizer: string;            // Đơn vị tổ chức
+  country: string;              // Quốc gia
+  year: number;                 // 2026, 2027
+  type: string;                 // "Hội thảo", "Hội nghị"
+  level: string;                // "Quốc tế", "Quốc gia"
+  topic: string;                // Lĩnh vực học thuật
+  field: string;                // Ngành MTCN
+  relevance: string;            // Ánh xạ suitability ("Rất phù hợp", "Phù hợp")
 
-  // --- Mốc thời gian (Chuẩn ISO 8601) ---
-  abstractDeadline?: string;    // Hạn tóm tắt (ISO 8601 hoặc "")
-  fullPaperDeadline?: string;   // Hạn toàn văn (ISO 8601 hoặc "")
-  registrationDeadline?: string;// Hạn đăng ký tham dự (ISO 8601 hoặc "")
-  deadline?: string;            // Mốc hạn nộp chính dùng tính countdown (ISO 8601)
-  eventDate?: string;           // Thời gian diễn ra (dải ngày hoặc mô tả cụ thể)
-  location?: string;            // Địa điểm tổ chức cụ thể / Hình thức (Trực tiếp, Hybrid, Trực tuyến)
+  // Mốc thời gian
+  abstractDeadline?: string;    // Hạn tóm tắt
+  submissionDeadline?: string;  // Ánh xạ fullPaperDeadline & deadline
+  registrationDeadline?: string;// Hạn đăng ký
+  conferenceDate?: string;      // Ánh xạ eventDate
+  location?: string;            // Địa điểm
 
-  // --- Lệ phí & Minh bạch tài chính ---
-  fee?: string;                 // Tóm tắt lệ phí (ví dụ: "Miễn phí", "250 USD", "Có phí")
-  publicationFee?: string;      // Phí đăng bài / phản biện / xuất bản kỷ yếu
-  registrationFee?: string;     // Phí tham dự / đăng ký đại biểu
-  feeStatus?: "SPECIFIED" | "UNKNOWN" | "FREE"; // Trạng thái xác minh phí
-  feeSourceUrl?: string;        // Link trực tiếp đến bảng phí trên trang web BTC
+  // Lệ phí & Xuất bản
+  fee?: string;                 // Lệ phí
+  publication?: string;         // Ánh xạ publicationFormat
+  indexing?: string;            // Chỉ mục (Scopus, ISBN...)
 
-  // --- Định dạng xuất bản & Chỉ mục ---
-  publicationFormat?: string;   // Kỷ yếu ISBN, Book Chapter, Tạp chí liên kết
-  indexing?: string;            // Scopus, Web of Science, ISBN, Không có
+  // Nội dung & Hướng nghiên cứu
+  content: string;              // Tóm tắt nội dung
+  suggestedTopics?: string[] | string; // Ánh xạ directions & topicsDetailed
 
-  // --- Nội dung học thuật & Định hướng nghiên cứu cho Giảng viên ---
-  content: string;              // Tóm tắt ngắn gọn mục tiêu, chủ đề chính
-  detailedContent?: string;     // Phân tích chi tiết bối cảnh, cơ hội học thuật
-  topicsDetailed?: string[];    // Danh sách các phân ban (tracks) / chủ đề chi tiết
-  directions?: string;          // Gợi ý hướng nghiên cứu cụ thể cho ngành Thiết kế / Mỹ thuật
+  // Đường dẫn
+  sourceUrl?: string;           // Link chính thức
+  submissionUrl?: string;       // Link nộp bài
 
-  // --- Đường dẫn & Nguồn thông tin ---
-  sourceUrl?: string;           // Trang thông tin chính thức của hội thảo
-  submissionUrl?: string;       // Trang nộp bài trực tuyến (EasyChair, EDAS, Google Form, Portal...)
-
-  // --- Trạng thái & Ghi chú quản trị ---
-  status?: string;              // "MỚI", "CÒN HẠN", "HẾT HẠN", "CẬP NHẬT"
-  notes?: string;               // Ghi chú quan trọng từ Spark (countdown, lưu ý BTC, kỷ yếu)
-  tags?: string[] | string;     // Từ khóa tìm kiếm
-  discoveredAt?: string;        // Thời điểm Spark phát hiện (ISO 8601)
+  // Quản trị & Tìm kiếm
+  status?: string;              // Trạng thái hạn
+  notes?: string;               // Ghi chú
+  keywords?: string[] | string; // Ánh xạ tags
+  detectedAt?: string;          // Ánh xạ discoveredAt
+  lastUpdated?: string;         // Ánh xạ updatedAt
 }
 ```
 
