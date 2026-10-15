@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getCandidatePrimaryCategory } from "../pages/AdminCandidatesPage";
+import { getCandidatePrimaryCategory, isAutoClosedProposal } from "../pages/AdminCandidatesPage";
 import type { OpportunityCandidate, Opportunity } from "../types";
 
 describe("Dữ liệu AI tìm - Bộ lọc và phân loại trạng thái không trùng lặp", () => {
@@ -101,6 +101,43 @@ describe("Dữ liệu AI tìm - Bộ lọc và phân loại trạng thái không
     expect(cat2).toBe("updates");
   });
 
+  it("ưu tiên phân loại đề xuất cập nhật vào 'updates' ngay cả khi hạn nộp đã quá hạn (sheetStatus HẾT HẠN hoặc deadline quá hạn)", () => {
+    // Đề xuất cập nhật cho hồ sơ có hạn nộp trong quá khứ
+    const cat = getCandidatePrimaryCategory({
+      ...baseCandidate,
+      status: "pending",
+      changeType: "update",
+      publishedOpportunityId: "opp_ietbhec_2027",
+      deadline: "2024-01-01",
+      sheetStatus: "HẾT HẠN",
+    });
+    expect(cat).toBe("updates");
+    expect(cat).not.toBe("expired");
+  });
+
+  it("phân loại 'closed' cho đề xuất cập nhật tự động đóng do trùng khớp, tách biệt hoàn toàn với 'rejected' của Admin", () => {
+    // Đề xuất tự đóng do SPARK_SYNC
+    const autoClosedCand: OpportunityCandidate = {
+      ...baseCandidate,
+      status: "rejected",
+      publishedOpportunityId: "opp_icisn_2027",
+      rejectionReason: "Đồng bộ chuẩn hóa: Dữ liệu Google Sheets và hội thảo đã công bố đã hoàn toàn trùng khớp, không có thay đổi thực tế.",
+      updatedBy: "SPARK_SYNC",
+    };
+    expect(isAutoClosedProposal(autoClosedCand)).toBe(true);
+    expect(getCandidatePrimaryCategory(autoClosedCand)).toBe("closed");
+
+    // Đề xuất bị Admin từ chối thực sự
+    const adminRejectedCand: OpportunityCandidate = {
+      ...baseCandidate,
+      status: "rejected",
+      rejectionReason: "Hồ sơ không đạt chuẩn hội thảo khoa học cấp khoa.",
+      reviewedBy: "admin@tdtu.edu.vn",
+    };
+    expect(isAutoClosedProposal(adminRejectedCand)).toBe(false);
+    expect(getCandidatePrimaryCategory(adminRejectedCand)).toBe("rejected");
+  });
+
   it("phân loại 'pending' khi candidate được đồng bộ hôm nay nhưng ngày phát hiện gốc (discoveredAt) là ngày cũ", () => {
     const todayStr = new Date().toISOString();
     const cat = getCandidatePrimaryCategory({
@@ -129,6 +166,14 @@ describe("Dữ liệu AI tìm - Bộ lọc và phân loại trạng thái không
         publishedOpportunityId: "opp-123",
         createdAt: new Date().toISOString(),
       },
+      {
+        ...baseCandidate,
+        id: "c9",
+        status: "rejected",
+        publishedOpportunityId: "opp-123",
+        rejectionReason: "Đồng bộ chuẩn hóa: Dữ liệu Google Sheets và hội thảo đã công bố đã hoàn toàn trùng khớp, không có thay đổi thực tế.",
+        updatedBy: "SPARK_SYNC",
+      },
     ];
 
     const counts = {
@@ -139,6 +184,7 @@ describe("Dữ liệu AI tìm - Bộ lọc và phân loại trạng thái không
       approved: 0,
       expired: 0,
       rejected: 0,
+      closed: 0,
       out_of_scope: 0,
     };
 
@@ -152,6 +198,7 @@ describe("Dữ liệu AI tìm - Bộ lọc và phân loại trạng thái không
     expect(counts.expired).toBe(1); // c3
     expect(counts.approved).toBe(1);// c4
     expect(counts.rejected).toBe(1);// c5
+    expect(counts.closed).toBe(1);  // c9
     expect(counts.needs_review).toBe(1); // c6
 
     const sum = Object.values(counts).reduce((a, b) => a + b, 0);

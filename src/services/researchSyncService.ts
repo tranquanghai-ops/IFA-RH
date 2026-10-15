@@ -431,20 +431,29 @@ export async function executeResearchSync({
                 ["pending", "needs_review"].includes(c.status)
             );
             if (staleProposal && !isDryRun) {
+              const docRef = sdk.doc(db, "opportunityCandidates", staleProposal.id);
               try {
-                const docRef = sdk.doc(db, "opportunityCandidates", staleProposal.id);
                 await sdk.updateDoc(
                   docRef,
                   cleanUndefined({
                     status: "rejected",
-                    rejectReason: "Đồng bộ chuẩn hóa: Dữ liệu Google Sheets và hội thảo đã công bố đã hoàn toàn trùng khớp, không có thay đổi thực tế.",
+                    rejectionReason: "Đồng bộ chuẩn hóa: Dữ liệu Google Sheets và hội thảo đã công bố đã hoàn toàn trùng khớp, không có thay đổi thực tế.",
                     updatedAt: new Date().toISOString(),
                     updatedBy: "SPARK_SYNC",
                   })
                 );
                 stats.successWrites++;
-              } catch (cleanErr) {
-                console.warn("Lỗi cập nhật staleProposal:", cleanErr);
+              } catch (cleanErr: any) {
+                throw new ResearchSyncStageError({
+                  stage: "UPDATE_CANDIDATE",
+                  collectionName: "opportunityCandidates",
+                  documentId: staleProposal.id,
+                  operationType: "update",
+                  originalError: cleanErr,
+                  userSummary: `Không đủ quyền tự động đóng đề xuất cập nhật cho hội thảo "${row.title}" (ID: ${staleProposal.id})`,
+                  actorUid: user.uid,
+                  actorRole: user.role,
+                });
               }
             }
 

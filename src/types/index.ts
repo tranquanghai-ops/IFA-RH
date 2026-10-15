@@ -151,6 +151,8 @@ export interface OpportunityCandidate {
   confidenceLevel?: string;
   recalledAt?: string;
   recalledBy?: string;
+  createdBy?: string;
+  updatedBy?: string;
   normalizedTitle: string;
   createdAt: string;
   updatedAt: string;

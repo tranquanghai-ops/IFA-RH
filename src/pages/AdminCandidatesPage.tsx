@@ -37,6 +37,7 @@ export type CandidateFilterTab =
   | "approved"
   | "expired"
   | "rejected"
+  | "closed"
   | "out_of_scope"
   | "all";
 
@@ -52,27 +53,62 @@ const isTodayDate = (dateStr?: string | null): boolean => {
   );
 };
 
+export const isAutoClosedProposal = (c: OpportunityCandidate): boolean => {
+  if (c.status !== "rejected" && (c.status as string) !== "closed") return false;
+  if (!c.publishedOpportunityId) return false;
+  return (
+    c.updatedBy === "SPARK_SYNC" ||
+    c.reviewedBy === "SPARK_SYNC" ||
+    Boolean(c.rejectionReason?.includes("Đồng bộ chuẩn hóa")) ||
+    Boolean(c.rejectionReason?.includes("Tự động đóng")) ||
+    Boolean(c.rejectionReason?.includes("trùng khớp"))
+  );
+};
+
 export const getCandidatePrimaryCategory = (
   c: OpportunityCandidate
-): "today" | "updates" | "pending" | "needs_review" | "approved" | "expired" | "rejected" | "out_of_scope" => {
+): "today" | "updates" | "pending" | "needs_review" | "approved" | "expired" | "rejected" | "closed" | "out_of_scope" => {
+  // 1. Ngoài phạm vi / JOISA
   if (c.isOutOfScope === true || classifyOutOfScopeRecord(c).isOutOfScope) {
     return "out_of_scope";
   }
-  if (c.status === "rejected") return "rejected";
-  if (c.status === "approved") return "approved";
-  if (c.sheetStatus === "HẾT HẠN" || getOpportunityDeadlineInfo(c).isExpired) {
-    return "expired";
+
+  // 2. Hồ sơ đã duyệt
+  if (c.status === "approved") {
+    return "approved";
   }
-  // Dedicated category for update proposals for published opportunities
+
+  // 3. Phân biệt: Tự đóng vì trùng khớp vs Admin từ chối (tránh làm sai thống kê "Từ chối")
+  if (isAutoClosedProposal(c)) {
+    return "closed";
+  }
+  if (c.status === "rejected") {
+    return "rejected";
+  }
+
+  // 4. Đề xuất cập nhật CÒN CHỜ XỬ LÝ (pending / needs_review)
+  // Ưu tiên cao hơn hết hạn: kể cả khi hội thảo gốc đã hết hạn, đề xuất cập nhật vẫn phải vào "Cập nhật chờ duyệt"
   if (c.changeType === "update" || Boolean(c.publishedOpportunityId)) {
     return "updates";
   }
-  if (c.status === "needs_review") return "needs_review";
-  // Only truly new opportunities discovered today (prefer discoveredAt over createdAt)
+
+  // 5. Hồ sơ hết hạn (chỉ dành cho hồ sơ mới chưa duyệt mà quá hạn)
+  if (c.sheetStatus === "HẾT HẠN" || getOpportunityDeadlineInfo(c).isExpired) {
+    return "expired";
+  }
+
+  // 6. Cần hiệu chỉnh
+  if (c.status === "needs_review") {
+    return "needs_review";
+  }
+
+  // 7. Mới hôm nay (chỉ hội thảo mới thật sự phát hiện hôm nay)
   const discoveryDate = c.discoveredAt || c.createdAt;
   if (isTodayDate(discoveryDate)) {
     return "today";
   }
+
+  // 8. Chờ duyệt
   return "pending";
 };
 
@@ -84,6 +120,7 @@ export const FILTER_TABS: Array<{ id: CandidateFilterTab; label: string }> = [
   { id: "approved", label: "Đã duyệt" },
   { id: "expired", label: "Hết hạn" },
   { id: "rejected", label: "Từ chối" },
+  { id: "closed", label: "Tự đóng (Trùng khớp)" },
   { id: "out_of_scope", label: "Ngoài phạm vi / JOISA" },
   { id: "all", label: "Tất cả" },
 ];
@@ -158,6 +195,7 @@ export const AdminCandidatesPage: React.FC = () => {
       approved: 0,
       expired: 0,
       rejected: 0,
+      closed: 0,
       out_of_scope: 0,
       all: candidates.length,
     };
@@ -808,6 +846,20 @@ export const AdminCandidatesPage: React.FC = () => {
                           </span>
                         ) : primaryCat === "approved" ? (
                           <span className="badge badge-success">ĐÃ DUYỆT</span>
+                        ) : primaryCat === "closed" ? (
+                          <span
+                            className="badge"
+                            style={{
+                              background: "#f1f5f9",
+                              color: "#475569",
+                              border: "1px solid #cbd5e1",
+                              fontSize: "0.72rem",
+                              fontWeight: 700,
+                            }}
+                            title={cand.rejectionReason}
+                          >
+                            TỰ ĐỘNG ĐÓNG
+                          </span>
                         ) : primaryCat === "rejected" ? (
                           <span className="badge badge-warning">TỪ CHỐI</span>
                         ) : primaryCat === "updates" || cand.changeType === "update" ? (
@@ -971,6 +1023,20 @@ export const AdminCandidatesPage: React.FC = () => {
                       </span>
                     ) : primaryCat === "approved" ? (
                       <span className="badge badge-success">ĐÃ DUYỆT</span>
+                    ) : primaryCat === "closed" ? (
+                      <span
+                        className="badge"
+                        style={{
+                          background: "#f1f5f9",
+                          color: "#475569",
+                          border: "1px solid #cbd5e1",
+                          fontSize: "0.72rem",
+                          fontWeight: 700,
+                        }}
+                        title={cand.rejectionReason}
+                      >
+                        TỰ ĐỘNG ĐÓNG
+                      </span>
                     ) : primaryCat === "rejected" ? (
                       <span className="badge badge-warning">TỪ CHỐI</span>
                     ) : primaryCat === "updates" || cand.changeType === "update" ? (

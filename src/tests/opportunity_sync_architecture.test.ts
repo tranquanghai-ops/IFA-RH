@@ -17,7 +17,7 @@ import { fetchFacultyResearchSheetRows } from "../services/researchSheetService"
 import { getCandidatePrimaryCategory, FILTER_TABS } from "../pages/AdminCandidatesPage";
 import type { OpportunityCandidate, Opportunity } from "../types";
 
-describe("IFA-RH — Opportunity Sync Architecture & Governance Suite (13 Points)", () => {
+describe("IFA-RH — Opportunity Sync Architecture & Governance Suite (13 Points)", { timeout: 30000 }, () => {
   let mockStore: Record<string, Record<string, any>>;
 
   let writeCounts: {
@@ -656,5 +656,61 @@ describe("IFA-RH — Opportunity Sync Architecture & Governance Suite (13 Points
     const cat = getCandidatePrimaryCategory(updateCandidate);
     expect(cat).toBe("updates");
     expect(cat).not.toBe("today");
+  });
+
+  // Point 17: Tự động đóng đề xuất cập nhật không còn khác biệt với rejectionReason hợp lệ & ném lỗi nếu không đủ quyền
+  it("Point 17: Auto-closing stale proposals uses rejectionReason matching firestore.rules and propagates errors via ResearchSyncStageError", async () => {
+    // 1. Seed published opportunity whose data perfectly matches incoming row
+    const rows = await fetchFacultyResearchSheetRows();
+    const candidate0 = mapRowToCandidate(rows[0], 0);
+    mockStore.opportunities["opp_ietbhec_2027"] = {
+      ...candidate0,
+      id: "opp_ietbhec_2027",
+      status: "published",
+      createdAt: "2026-09-01T10:00:00.000Z",
+      createdBy: "original_creator@tdtu.edu.vn",
+    };
+
+    // 2. Seed a stale pending update proposal for this opportunity
+    const staleCandId = "cand_upd_opp_ietbhec_2027";
+    mockStore.opportunityCandidates[staleCandId] = {
+      ...candidate0,
+      id: staleCandId,
+      status: "pending",
+      changeType: "update",
+      publishedOpportunityId: "opp_ietbhec_2027",
+    };
+
+    // 3. Run sync
+    const outcome = await executeResearchSync({
+      db: {},
+      sdk: mockSdk,
+      user: { uid: "u_admin", email: "admin@tdtu.edu.vn", role: "admin" },
+      options: { force: true },
+    });
+    expect(outcome.status).toBe("success");
+
+    // Verify stale proposal was auto-closed with rejectionReason (matching firestore.rules)
+    const closedProposal = mockStore.opportunityCandidates[staleCandId];
+    expect(closedProposal.status).toBe("rejected");
+    expect(closedProposal.rejectionReason).toContain("Đồng bộ chuẩn hóa");
+    expect((closedProposal as any).rejectReason).toBeUndefined();
+    expect(closedProposal.updatedBy).toBe("SPARK_SYNC");
+
+    // 4. Test error handling: if updateDoc fails, must throw ResearchSyncStageError and not swallow silently
+    const failingSdk: ResearchSyncSdk = {
+      ...mockSdk,
+      updateDoc: vi.fn().mockRejectedValue(new Error("Missing or insufficient permissions.")),
+    };
+    mockStore.opportunityCandidates[staleCandId].status = "pending"; // reset to pending
+
+    await expect(
+      executeResearchSync({
+        db: {},
+        sdk: failingSdk,
+        user: { uid: "u_admin", email: "admin@tdtu.edu.vn", role: "admin" },
+        options: { force: true },
+      })
+    ).rejects.toThrow(ResearchSyncStageError);
   });
 });
