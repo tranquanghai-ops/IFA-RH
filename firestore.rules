@@ -324,6 +324,16 @@ service cloud.firestore {
       return val is list && val.size() <= maxLen;
     }
 
+    // Validate optional string field max length when present
+    function validOptString(data, key, maxLen) {
+      return !(key in data) || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    // Validate optional date field (timestamp or string up to 50 chars) when present
+    function validOptDate(data, key) {
+      return !(key in data) || data[key] is timestamp || (data[key] is string && data[key].size() <= 50);
+    }
+
     // Validate standard email format
     function validEmail(email) {
       return email is string &&
@@ -386,55 +396,55 @@ service cloud.firestore {
         ]) &&
         validString(data.title, 1, 300) &&
         validString(data.organizer, 1, 200) &&
-        (!('country' in data) || validString(data.country, 0, 100)) &&
+        validOptString(data, 'country', 100) &&
         data.type in [
           'Hội thảo', 'Hội nghị', 'Call for Papers', 'Special Issue',
           'Book Chapter', 'Seminar', 'Hợp tác nghiên cứu', 'Đổi mới sáng tạo', 'Khác',
           'Hội thảo khoa học quốc tế', 'Hội thảo quốc tế', 'Hội thảo quốc gia'
         ] &&
         data.level in ['Quốc tế', 'Quốc gia', 'Cấp Trường', 'Cấp Khoa', 'Khác'] &&
-        validString(data.topic, 0, 300) &&
-        validString(data.field, 0, 200) &&
+        validOptString(data, 'topic', 300) &&
+        validOptString(data, 'field', 200) &&
         validList(data.tags, 30) &&
-        validString(data.deadline, 0, 200) &&
+        (data.deadline is timestamp || validString(data.deadline, 0, 200)) &&
         validString(data.content, 0, 50000) &&
         data.sourceType in ['SPARK', 'ADMIN'] &&
         data.status in ['published', 'archived', 'hidden', 'recalled'] &&
         validString(data.createdBy, 1, 100) &&
         (validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
         (validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
-        (!('abstractDeadline' in data) || validString(data.abstractDeadline, 0, 50)) &&
-        (!('fullPaperDeadline' in data) || validString(data.fullPaperDeadline, 0, 50)) &&
-        (!('registrationDeadline' in data) || validString(data.registrationDeadline, 0, 50)) &&
-        (!('eventDate' in data) || validString(data.eventDate, 0, 50)) &&
-        (!('location' in data) || validString(data.location, 0, 200)) &&
-        (!('fee' in data) || validString(data.fee, 0, 100)) &&
-        (!('publicationFee' in data) || validString(data.publicationFee, 0, 500)) &&
-        (!('registrationFee' in data) || validString(data.registrationFee, 0, 500)) &&
+        validOptDate(data, 'abstractDeadline') &&
+        validOptDate(data, 'fullPaperDeadline') &&
+        validOptDate(data, 'registrationDeadline') &&
+        validOptDate(data, 'eventDate') &&
+        validOptDate(data, 'discoveredAt') &&
+        validOptDate(data, 'recalledAt') &&
+        validOptDate(data, 'hiddenAt') &&
+        validOptString(data, 'location', 200) &&
+        validOptString(data, 'fee', 100) &&
+        validOptString(data, 'publicationFee', 500) &&
+        validOptString(data, 'registrationFee', 500) &&
         (!('feeStatus' in data) || data.feeStatus in ['SPECIFIED', 'UNKNOWN', 'FREE']) &&
-        (!('feeSourceUrl' in data) || validString(data.feeSourceUrl, 0, 1000)) &&
-        (!('detailedContent' in data) || validString(data.detailedContent, 0, 50000)) &&
+        validOptString(data, 'feeSourceUrl', 1000) &&
+        validOptString(data, 'detailedContent', 50000) &&
         (!('topicsDetailed' in data) || validList(data.topicsDetailed, 50)) &&
-        (!('publicationFormat' in data) || validString(data.publicationFormat, 0, 100)) &&
-        (!('indexing' in data) || validString(data.indexing, 0, 100)) &&
-        (!('submissionUrl' in data) || validString(data.submissionUrl, 0, 500)) &&
-        (!('sourceUrl' in data) || validString(data.sourceUrl, 0, 500)) &&
-        (!('directions' in data) || validString(data.directions, 0, 2000)) &&
-        (!('suitability' in data) || validString(data.suitability, 0, 100)) &&
-        (!('notes' in data) || validString(data.notes, 0, 2000)) &&
-        (!('runId' in data) || validString(data.runId, 0, 100)) &&
-        (!('discoveredAt' in data) || validString(data.discoveredAt, 0, 50)) &&
-        (!('sheetStatus' in data) || validString(data.sheetStatus, 0, 100)) &&
-        (!('candidateId' in data) || validString(data.candidateId, 0, 100)) &&
-        (!('recalledAt' in data) || validString(data.recalledAt, 0, 50) || data.recalledAt is timestamp) &&
-        (!('recalledBy' in data) || validString(data.recalledBy, 0, 100)) &&
-        (!('hiddenAt' in data) || validString(data.hiddenAt, 0, 50) || data.hiddenAt is timestamp) &&
-        (!('hiddenBy' in data) || validString(data.hiddenBy, 0, 100)) &&
-        (!('updatedBy' in data) || validString(data.updatedBy, 0, 100)) &&
-        (!('normalizedTitle' in data) || validString(data.normalizedTitle, 0, 500)) &&
+        validOptString(data, 'publicationFormat', 100) &&
+        validOptString(data, 'indexing', 100) &&
+        validOptString(data, 'submissionUrl', 500) &&
+        validOptString(data, 'sourceUrl', 500) &&
+        validOptString(data, 'directions', 2000) &&
+        validOptString(data, 'suitability', 100) &&
+        validOptString(data, 'notes', 2000) &&
+        validOptString(data, 'runId', 100) &&
+        validOptString(data, 'sheetStatus', 100) &&
+        validOptString(data, 'candidateId', 100) &&
+        validOptString(data, 'recalledBy', 100) &&
+        validOptString(data, 'hiddenBy', 100) &&
+        validOptString(data, 'updatedBy', 100) &&
+        validOptString(data, 'normalizedTitle', 500) &&
         (!('editedByAdmin' in data) || data.editedByAdmin is bool) &&
         (!('manualOverrides' in data) || (data.manualOverrides is list && data.manualOverrides.size() <= 50)) &&
-        (!('id' in data) || validString(data.id, 0, 100));
+        validOptString(data, 'id', 100);
     }
 
     // Validates opportunityCandidates/{candidateId} schema and constraints

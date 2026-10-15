@@ -547,6 +547,7 @@ export async function recallOpportunityToCandidateQueue(
       recalledAt: now,
       recalledBy: actor.email,
       updatedAt: now,
+      updatedBy: actor.email,
     });
   } else {
     const norm = normalizeText(opp.title);
@@ -565,6 +566,7 @@ export async function recallOpportunityToCandidateQueue(
         recalledAt: now,
         recalledBy: actor.email,
         updatedAt: now,
+        updatedBy: actor.email,
       });
       batch.update(oppRef, { candidateId: candRef.id });
     } else {
@@ -588,6 +590,7 @@ export async function recallOpportunityToCandidateQueue(
         normalizedTitle: norm,
         createdAt: opp.createdAt || now,
         updatedAt: now,
+        updatedBy: actor.email,
       };
       if (opp.abstractDeadline) candData.abstractDeadline = opp.abstractDeadline;
       if (opp.fullPaperDeadline) candData.fullPaperDeadline = opp.fullPaperDeadline;
@@ -615,6 +618,34 @@ export async function recallOpportunityToCandidateQueue(
       batch.set(candRef, candData);
       batch.update(oppRef, { candidateId: candRef.id });
     }
+  }
+
+  // 3. Auto-close any pending update proposals associated with this opportunity
+  try {
+    const stalePropsSnap = await getDocs(
+      query(
+        collection(firestore, "opportunityCandidates"),
+        where("publishedOpportunityId", "==", opp.id)
+      )
+    );
+    stalePropsSnap.docs.forEach((pDoc) => {
+      if (pDoc.id !== candRef.id) {
+        const pData = pDoc.data();
+        if (["pending", "needs_review"].includes(pData.status)) {
+          batch.update(pDoc.ref, {
+            status: "rejected",
+            resolutionType: "AUTO_CLOSED",
+            rejectionReason: "Hội thảo gốc đã được Admin thu hồi về hàng chờ duyệt ban đầu.",
+            reviewedBy: actor.email,
+            reviewedAt: now,
+            updatedAt: now,
+            updatedBy: actor.email,
+          });
+        }
+      }
+    });
+  } catch (err) {
+    console.warn("Could not query stale update proposals during recall:", err);
   }
 
   await batch.commit();
@@ -663,6 +694,7 @@ export async function recallOpportunityCandidate(
     recalledAt: now,
     recalledBy: actor.email,
     updatedAt: now,
+    updatedBy: actor.email,
   };
 
   if (matchedOppId) {
@@ -676,6 +708,34 @@ export async function recallOpportunityCandidate(
       updatedBy: actor.email,
       candidateId: cand.id,
     });
+
+    // Auto-close any other pending update proposals for this opportunity
+    try {
+      const stalePropsSnap = await getDocs(
+        query(
+          collection(firestore, "opportunityCandidates"),
+          where("publishedOpportunityId", "==", matchedOppId)
+        )
+      );
+      stalePropsSnap.docs.forEach((pDoc) => {
+        if (pDoc.id !== candRef.id) {
+          const pData = pDoc.data();
+          if (["pending", "needs_review"].includes(pData.status)) {
+            batch.update(pDoc.ref, {
+              status: "rejected",
+              resolutionType: "AUTO_CLOSED",
+              rejectionReason: "Hội thảo gốc đã được Admin thu hồi về hàng chờ duyệt ban đầu.",
+              reviewedBy: actor.email,
+              reviewedAt: now,
+              updatedAt: now,
+              updatedBy: actor.email,
+            });
+          }
+        }
+      });
+    } catch (err) {
+      console.warn("Could not query stale update proposals during candidate recall:", err);
+    }
   }
 
   batch.update(candRef, candUpdate);

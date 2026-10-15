@@ -39,6 +39,7 @@ export interface ResearchSyncDiagnosticItem {
     | "matched"
     | "updated"
     | "update_proposal"
+    | "proposal_unchanged"
     | "preserved_admin"
     | "preserved_rejection"
     | "out_of_scope"
@@ -481,46 +482,75 @@ export async function executeResearchSync({
             );
 
             if (existingProposal) {
-              // Idempotency: Update existing candidate proposal
-              if (!isDryRun) {
-                const docRef = sdk.doc(db, "opportunityCandidates", existingProposal.id);
-                try {
-                  const safeUpdates: Record<string, any> = {
-                    ...diff.updates,
-                    diffSummary: diff.diffSummary,
-                    changeType: "update",
-                    resolutionType: "PENDING_UPDATE",
-                    publishedOpportunityId: target.id,
-                    discoveredAt: target.discoveredAt || existingProposal.discoveredAt || row.discoveredAt,
-                    updatedAt: new Date().toISOString(),
-                    updatedBy: "SPARK_SYNC",
-                  };
-                  await sdk.updateDoc(docRef, cleanUndefined(safeUpdates));
-                  stats.successWrites++;
-                } catch (updateCandErr: any) {
-                  throw new ResearchSyncStageError({
-                    stage: "UPDATE_CANDIDATE",
-                    collectionName: "opportunityCandidates",
-                    documentId: existingProposal.id,
-                    operationType: "update",
-                    originalError: updateCandErr,
-                    userSummary: `Không đủ quyền cập nhật đề xuất thay đổi cho hội thảo "${row.title}" (ID: ${existingProposal.id})`,
-                    actorUid: user.uid,
-                    actorRole: user.role,
-                  });
+              // 3-way check: Compare incoming Sheet row with existingProposal
+              const proposalDiff = computeOpportunityDiff(existingProposal, row);
+              const isDiffSummaryIdentical = (() => {
+                if (!existingProposal.diffSummary || !Array.isArray(existingProposal.diffSummary)) return false;
+                if (existingProposal.diffSummary.length !== diff.diffSummary.length) return false;
+                return diff.diffSummary.every((d) =>
+                  existingProposal.diffSummary!.some(
+                    (ed) => ed.field === d.field && String(ed.newValue ?? "") === String(d.newValue ?? "")
+                  )
+                );
+              })();
+
+              const isProposalUnchanged = !proposalDiff.hasChanges || isDiffSummaryIdentical;
+
+              if (isProposalUnchanged) {
+                // Proposal already reflects the incoming changes from Google Sheet: 0 Firestore writes, do not bump stats.updated!
+                stats.matched++;
+                stats.unchanged++;
+                diagnostics.push({
+                  row: rowNum,
+                  stt: sttVal,
+                  title: row.title,
+                  status: "proposal_unchanged",
+                  action: "Khớp đề xuất (Không đổi)",
+                  reason: `Dữ liệu Google Sheets hoàn toàn trùng khớp với đề xuất cập nhật đang chờ duyệt (${diff.changedKeys.join(", ")}), giữ nguyên không ghi đè Firestore`,
+                  targetId: existingProposal.id,
+                });
+              } else {
+                // Sheet row has genuinely new changes beyond what is pending in existingProposal -> Update proposal
+                if (!isDryRun) {
+                  const docRef = sdk.doc(db, "opportunityCandidates", existingProposal.id);
+                  try {
+                    const safeUpdates: Record<string, any> = {
+                      ...diff.updates,
+                      diffSummary: diff.diffSummary,
+                      changeType: "update",
+                      resolutionType: "PENDING_UPDATE",
+                      publishedOpportunityId: target.id,
+                      discoveredAt: target.discoveredAt || existingProposal.discoveredAt || row.discoveredAt,
+                      updatedAt: new Date().toISOString(),
+                      updatedBy: "SPARK_SYNC",
+                    };
+                    await sdk.updateDoc(docRef, cleanUndefined(safeUpdates));
+                    stats.successWrites++;
+                  } catch (updateCandErr: any) {
+                    throw new ResearchSyncStageError({
+                      stage: "UPDATE_CANDIDATE",
+                      collectionName: "opportunityCandidates",
+                      documentId: existingProposal.id,
+                      operationType: "update",
+                      originalError: updateCandErr,
+                      userSummary: `Không đủ quyền cập nhật đề xuất thay đổi cho hội thảo "${row.title}" (ID: ${existingProposal.id})`,
+                      actorUid: user.uid,
+                      actorRole: user.role,
+                    });
+                  }
                 }
+                stats.matched++;
+                stats.updated++;
+                diagnostics.push({
+                  row: rowNum,
+                  stt: sttVal,
+                  title: row.title,
+                  status: "update_proposal",
+                  action: "Cập nhật đề xuất",
+                  reason: `Phát hiện thay đổi mới so với đề xuất trước đó (${proposalDiff.changedKeys.join(", ")})`,
+                  targetId: existingProposal.id,
+                });
               }
-              stats.matched++;
-              stats.updated++;
-              diagnostics.push({
-                row: rowNum,
-                stt: sttVal,
-                title: row.title,
-                status: "update_proposal",
-                action: "Cập nhật đề xuất",
-                reason: `Cập nhật thông tin đề xuất thay đổi cho hội thảo đã công bố (${diff.changedKeys.join(", ")})`,
-                targetId: existingProposal.id,
-              });
             } else {
               // Check if there is an existing proposal for this opportunity that was already REJECTED by Admin
               const rejectedProposal = candidates.find(

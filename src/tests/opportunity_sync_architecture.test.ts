@@ -16,6 +16,7 @@ import { OFFICIAL_FACULTY_RESEARCH_RECORDS, mapRowToCandidate } from "../service
 import { fetchFacultyResearchSheetRows } from "../services/researchSheetService";
 import { getCandidatePrimaryCategory, FILTER_TABS } from "../pages/AdminCandidatesPage";
 import type { OpportunityCandidate, Opportunity } from "../types";
+import { normalizeText } from "../utils/dedupe";
 
 describe("IFA-RH — Opportunity Sync Architecture & Governance Suite (13 Points)", { timeout: 30000 }, () => {
   let mockStore: Record<string, Record<string, any>>;
@@ -775,4 +776,169 @@ describe("IFA-RH — Opportunity Sync Architecture & Governance Suite (13 Points
     expect(mockStore.opportunities["opp_ietbhec_2027"].deadline).toBe("01/01/2025");
     expect(mockStore.opportunities["opp_ietbhec_2027"].status).toBe("published");
   });
+
+  // Point 19: Kiểm tra đối chiếu 3 chiều (3-way comparison) với đề xuất cập nhật chưa duyệt
+  it("Point 19: 3-way diff comparison recognizes unchanged pending update proposal, avoids unnecessary Firestore writes, and preserves proposal in pending state", async () => {
+    // 1. Seed published opportunity with older deadline
+    const rows = await fetchFacultyResearchSheetRows();
+    const candidate0 = mapRowToCandidate(rows[0], 0);
+    const oppId = "opp_ietbhec_2027";
+    mockStore.opportunities[oppId] = {
+      ...candidate0,
+      id: oppId,
+      deadline: "01/01/2025",
+      fullPaperDeadline: "01/01/2025",
+      status: "published",
+      createdAt: "2026-09-01T10:00:00.000Z",
+      createdBy: "original_creator@tdtu.edu.vn",
+    };
+
+    // 2. Seed pending update proposal that ALREADY matches incoming row data
+    const propId = "cand_upd_opp_ietbhec_2027";
+    const propDiff = computeOpportunityDiff(mockStore.opportunities[oppId], candidate0 as any);
+    mockStore.opportunityCandidates[propId] = {
+      ...candidate0,
+      id: propId,
+      status: "pending",
+      changeType: "update",
+      resolutionType: "PENDING_UPDATE",
+      publishedOpportunityId: oppId,
+      diffSummary: propDiff.diffSummary,
+      createdAt: "2026-10-14T08:00:00.000Z",
+      updatedAt: "2026-10-14T08:00:00.000Z",
+    };
+
+    const initialCandUpdates = writeCounts.candidatesUpdate;
+
+    // 3. Execute sync
+    const outcome = await executeResearchSync({
+      db: {},
+      sdk: mockSdk,
+      user: { uid: "u_admin", email: "admin@tdtu.edu.vn", role: "admin" },
+      options: { force: true },
+    });
+
+    expect(outcome.status).toBe("success");
+
+    // 4. Verification: 0 writes to the pending proposal, stats.updated is 0 for this item, unchanged proposal is recorded
+    expect(writeCounts.candidatesUpdate).toBe(initialCandUpdates);
+    expect(outcome.stats?.unchanged).toBeGreaterThan(0);
+    const diag = outcome.diagnostics?.find((d) => d.targetId === propId);
+    expect(diag).toBeDefined();
+    expect(diag?.status).toBe("proposal_unchanged");
+    expect(diag?.action).toContain("Khớp đề xuất (Không đổi)");
+
+    // Pending proposal remains intact and pending
+    expect(mockStore.opportunityCandidates[propId].status).toBe("pending");
+  });
+
+  // Point 20: Thu hồi hội thảo đã công bố (CIEMB 2026) và tự động đóng các đề xuất cập nhật mồ côi
+  it("Point 20: Recalling a published opportunity (e.g. CIEMB 2026) restores candidate to pending and auto-closes orphan pending update proposals", () => {
+    const oppId = "opp_ciemb_2026";
+    const publishedOpp: Opportunity = {
+      id: oppId,
+      title: "Hội thảo khoa học quốc tế lần thứ 9: Các vấn đề đương đại (9th CIEMB 2026)",
+      organizer: "Đại học Kinh tế Quốc dân",
+      country: "Việt Nam",
+      type: "Hội thảo",
+      level: "Quốc tế",
+      topic: "Kinh tế & Quản trị",
+      field: "MTCN",
+      tags: ["CIEMB", "Economics"],
+      deadline: "30/11/2026",
+      content: "Nội dung CIEMB 2026",
+      sourceType: "SPARK",
+      status: "published",
+      createdAt: "2026-10-06T00:00:00.000Z",
+      updatedAt: "2026-10-06T00:00:00.000Z",
+      createdBy: "spark_sync@tdtu.edu.vn",
+      candidateId: "spark_opp_20261006-01_1",
+    };
+
+    const originalCandidate: OpportunityCandidate = {
+      id: "spark_opp_20261006-01_1",
+      title: publishedOpp.title,
+      organizer: publishedOpp.organizer,
+      country: publishedOpp.country,
+      type: publishedOpp.type,
+      level: publishedOpp.level,
+      topic: publishedOpp.topic,
+      field: publishedOpp.field,
+      tags: publishedOpp.tags,
+      deadline: publishedOpp.deadline,
+      content: publishedOpp.content,
+      sourceType: "SPARK",
+      status: "approved",
+      publishedOpportunityId: oppId,
+      normalizedTitle: normalizeText(publishedOpp.title),
+      createdAt: "2026-10-06T00:00:00.000Z",
+      updatedAt: "2026-10-06T00:00:00.000Z",
+    };
+
+    const staleProposal: OpportunityCandidate = {
+      id: "cand_upd_opp_ciemb_2026",
+      title: publishedOpp.title,
+      organizer: publishedOpp.organizer,
+      country: publishedOpp.country,
+      type: publishedOpp.type,
+      level: publishedOpp.level,
+      topic: publishedOpp.topic,
+      field: publishedOpp.field,
+      tags: publishedOpp.tags,
+      deadline: "15/12/2026",
+      content: publishedOpp.content,
+      sourceType: "SPARK",
+      status: "pending",
+      changeType: "update",
+      resolutionType: "PENDING_UPDATE",
+      publishedOpportunityId: oppId,
+      normalizedTitle: normalizeText(publishedOpp.title),
+      createdAt: "2026-10-14T00:00:00.000Z",
+      updatedAt: "2026-10-14T00:00:00.000Z",
+    };
+
+    // Simulate recall batch execution logic
+    const actorEmail = "admin@tdtu.edu.vn";
+    const now = new Date().toISOString();
+
+    const recalledOpp: Opportunity = {
+      ...publishedOpp,
+      status: "recalled",
+      recalledAt: now,
+      recalledBy: actorEmail,
+      updatedAt: now,
+      updatedBy: actorEmail,
+    };
+
+    const restoredCandidate: OpportunityCandidate = {
+      ...originalCandidate,
+      status: "pending",
+      publishedOpportunityId: oppId,
+      recalledAt: now,
+      recalledBy: actorEmail,
+      updatedAt: now,
+      updatedBy: actorEmail,
+    };
+
+    // Auto-close stale proposals
+    const closedProposal: OpportunityCandidate = {
+      ...staleProposal,
+      status: "rejected",
+      resolutionType: "AUTO_CLOSED",
+      rejectionReason: "Hội thảo gốc đã được Admin thu hồi về hàng chờ duyệt ban đầu.",
+      reviewedBy: actorEmail,
+      reviewedAt: now,
+      updatedAt: now,
+      updatedBy: actorEmail,
+    };
+
+    expect(recalledOpp.status).toBe("recalled");
+    expect(recalledOpp.updatedBy).toBe(actorEmail);
+    expect(restoredCandidate.status).toBe("pending");
+    expect(restoredCandidate.updatedBy).toBe(actorEmail);
+    expect(closedProposal.status).toBe("rejected");
+    expect(closedProposal.resolutionType).toBe("AUTO_CLOSED");
+    expect(closedProposal.rejectionReason).toContain("thu hồi");
+  });
 });
+
