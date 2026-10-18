@@ -1064,14 +1064,29 @@ export async function approveCandidate(
     }
   }
 
+  if (candidate.normalizedTitle) oppData.normalizedTitle = candidate.normalizedTitle;
+
   // 3. Brand new candidate approval -> Create new published opportunity
   const oppRef = doc(collection(firestore, "opportunities"));
-  const newOppData = { ...oppData, id: oppRef.id, createdAt: now, updatedAt: now };
+  const newOppData: any = {
+    ...oppData,
+    id: oppRef.id,
+    createdAt: now,
+    updatedAt: now,
+    updatedBy: actor.email,
+  };
+
+  // Clean undefined fields to ensure Firestore DocumentReference.set() succeeds
+  const cleanNewOppData: any = {};
+  for (const [k, v] of Object.entries(newOppData)) {
+    if (v !== undefined) cleanNewOppData[k] = v;
+  }
+
   const batch = writeBatch(firestore);
-  batch.set(oppRef, newOppData);
+  batch.set(oppRef, cleanNewOppData);
   batch.update(candRef, {
     status: "approved",
-    resolutionType: "APPROVED_UPDATE",
+    resolutionType: "APPROVED_NEW",
     reviewedBy: actor.email,
     reviewedAt: now,
     publishedOpportunityId: oppRef.id,
@@ -1079,7 +1094,7 @@ export async function approveCandidate(
     updatedAt: now,
   });
 
-  await helperAutoCloseRelatedProposals(batch, oppRef.id, newOppData);
+  await helperAutoCloseRelatedProposals(batch, oppRef.id, cleanNewOppData);
   await batch.commit();
 
   await logAudit(

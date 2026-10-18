@@ -97,6 +97,7 @@ export interface Opportunity {
 export type CandidateResolutionType =
   | "PENDING_UPDATE"
   | "APPROVED_UPDATE"
+  | "APPROVED_NEW"
   | "ADMIN_REJECTED"
   | "AUTO_CLOSED";
 

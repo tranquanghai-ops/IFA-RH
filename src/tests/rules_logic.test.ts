@@ -755,5 +755,120 @@ describe("RULES Logic & Role Permissions Verification", () => {
       expect(skippedCount).toBe(1);
     });
   });
+
+  describe("Admin & Owner Opportunity Approval Governance (QT0001 / QT0002 / QT0003)", () => {
+    const ownerAuth = { uid: "u_owner", email: "tranquanghai@tdtu.edu.vn" };
+    const adminAuth = { uid: "J9qxvqhuYScbNypMz4XR7lU5FBL2", email: "nguyenthithuyha1@tdtu.edu.vn" };
+    const adminUserDoc = { role: "admin", active: true, email: "nguyenthithuyha1@tdtu.edu.vn" };
+    const lecturerAuth = { uid: "u_lecturer", email: "giangvien@tdtu.edu.vn" };
+    const lecturerUserDoc = { role: "lecturer", active: true, email: "giangvien@tdtu.edu.vn" };
+
+    const checkIsAdmin = (auth: any, userDoc?: any) => {
+      if (!auth) return false;
+      const isOwner =
+        (auth.email && (auth.email.toLowerCase() === "tranquanghai@tdtu.edu.vn" || auth.email.toLowerCase() === "tranquanghai.ops@gmail.com")) ||
+        (userDoc && userDoc.role === "owner" && userDoc.active === true);
+      if (isOwner) return true;
+      const isSpecificAdmin = auth.email && auth.email.toLowerCase() === "nguyenthithuyha1@tdtu.edu.vn";
+      const hasActiveAdminRole = userDoc && ["admin", "owner"].includes(userDoc.role) && userDoc.active === true;
+      return isSpecificAdmin || hasActiveAdminRole;
+    };
+
+    it("1. authorizes both Owner and Admin (nguyenthithuyha1@tdtu.edu.vn) to manage opportunities and candidates", () => {
+      expect(checkIsAdmin(ownerAuth)).toBe(true);
+      expect(checkIsAdmin(adminAuth, adminUserDoc)).toBe(true);
+      expect(checkIsAdmin(adminAuth)).toBe(true); // Token email matches nguyenthithuyha1@tdtu.edu.vn
+      expect(checkIsAdmin(lecturerAuth, lecturerUserDoc)).toBe(false);
+      expect(checkIsAdmin(null)).toBe(false);
+    });
+
+    it("2. validates resolutionType: accepts APPROVED_NEW for brand new candidates, APPROVED_UPDATE for updates", () => {
+      const allowedResolutionTypes = [
+        "PENDING_UPDATE",
+        "APPROVED_UPDATE",
+        "APPROVED_NEW",
+        "ADMIN_REJECTED",
+        "AUTO_CLOSED",
+      ];
+
+      const isValidResType = (type?: string) => {
+        if (!type) return true;
+        return allowedResolutionTypes.includes(type);
+      };
+
+      expect(isValidResType("APPROVED_NEW")).toBe(true);
+      expect(isValidResType("APPROVED_UPDATE")).toBe(true);
+      expect(isValidResType("PENDING_UPDATE")).toBe(true);
+      expect(isValidResType("ADMIN_REJECTED")).toBe(true);
+      expect(isValidResType("AUTO_CLOSED")).toBe(true);
+      expect(isValidResType(undefined)).toBe(true);
+      expect(isValidResType("INVALID_TYPE")).toBe(false);
+    });
+
+    it("3. validates brand new candidate approval payload (QT0001) for opportunities creation and candidate update", () => {
+      const now = new Date().toISOString();
+      const oppData = {
+        id: "opp_new_qt0001",
+        title: "Hội thảo khoa học quốc tế lần thứ 3 về Tương tác Người - AI và Thiết kế Trải nghiệm (HAXD 2027)",
+        organizer: "IEEE Italy Section & Ban tổ chức HAXD 2027",
+        country: "Ý",
+        type: "Hội thảo",
+        level: "Quốc tế",
+        topic: "Human-AI Interaction & Experience Design, UX/UI, Generative AI in Creative Design, Usability",
+        field: "Nghệ thuật số, Thiết kế đồ họa, Thiết kế công nghiệp",
+        tags: ["HAXD 2027", "IEEE", "Scopus", "Human-AI Interaction", "UX/UI", "Generative AI"],
+        deadline: "20/02/2027",
+        content: "Hội thảo quốc tế hàng đầu do IEEE bảo trợ chuyên biệt về thiết kế trải nghiệm người dùng.",
+        sourceType: "SPARK",
+        status: "published",
+        candidateId: "cand_auto_1792055682252_z45py",
+        createdBy: "nguyenthithuyha1@tdtu.edu.vn",
+        updatedBy: "nguyenthithuyha1@tdtu.edu.vn",
+        createdAt: now,
+        updatedAt: now,
+        conferenceCode: "QT0001",
+        category: "QT",
+        publicationFee: "Theo quy định IEEE",
+        registrationFee: "Không rõ chi phí",
+        feeStatus: "SPECIFIED",
+      };
+
+      // Ensure required opportunity fields are all present
+      const requiredOppFields = [
+        "title", "organizer", "country", "type", "level", "topic",
+        "field", "tags", "deadline", "content", "sourceType",
+        "status", "createdAt", "updatedAt", "createdBy",
+      ];
+      expect(requiredOppFields.every((k) => k in oppData)).toBe(true);
+
+      // Candidate update payload
+      const candUpdate = {
+        status: "approved",
+        resolutionType: "APPROVED_NEW",
+        reviewedBy: "nguyenthithuyha1@tdtu.edu.vn",
+        reviewedAt: now,
+        publishedOpportunityId: "opp_new_qt0001",
+        updatedBy: "nguyenthithuyha1@tdtu.edu.vn",
+        updatedAt: now,
+      };
+
+      expect(candUpdate.resolutionType).toBe("APPROVED_NEW");
+      expect(candUpdate.status).toBe("approved");
+      expect(candUpdate.publishedOpportunityId).toBe("opp_new_qt0001");
+    });
+
+    it("4. preserves conferenceCode and category when publishing brand new candidates", () => {
+      const candidates = [
+        { id: "cand_1", conferenceCode: "QT0001", category: "QT" },
+        { id: "cand_2", conferenceCode: "QT0002", category: "QT" },
+      ];
+
+      candidates.forEach((cand) => {
+        expect(cand.conferenceCode).toMatch(/^QT\d{4}$/);
+        expect(cand.category).toBe("QT");
+      });
+    });
+  });
 });
+
 

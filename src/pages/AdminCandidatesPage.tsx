@@ -387,7 +387,14 @@ export const AdminCandidatesPage: React.FC = () => {
       showSuccess(`Đã duyệt hội thảo "${cand.title}".`);
       await loadData();
     } catch (err: any) {
-      console.error("Failed to quick approve candidate:", err);
+      console.error("[AdminCandidatesPage] Quick Approve Error:", {
+        candidateId: cand?.id,
+        conferenceCode: cand?.conferenceCode,
+        title: cand?.title,
+        errorCode: err?.code,
+        errorMessage: err?.message,
+        originalError: err,
+      });
       showError("Không thể duyệt hội thảo. Hệ thống chưa thể lưu thay đổi. Vui lòng thử lại.", err);
     } finally {
       setApprovingId(null);

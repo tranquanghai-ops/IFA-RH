@@ -95,7 +95,14 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
       await onApprove(candidate);
       onClose();
     } catch (err: any) {
-      console.error("[CandidateReviewModal] Approve Error:", err);
+      console.error("[CandidateReviewModal] Approve Error:", {
+        candidateId: candidate?.id,
+        conferenceCode: candidate?.conferenceCode,
+        title: candidate?.title,
+        errorCode: err?.code,
+        errorMessage: err?.message,
+        originalError: err,
+      });
       setError("Không thể duyệt hội thảo. Hệ thống chưa thể lưu thay đổi. Vui lòng thử lại.");
     } finally {
       setLoading(false);

@@ -80,6 +80,7 @@ rules_version = '2';
 // Fields:
 //   - Similar to opportunities, with status in ['pending', 'approved', 'rejected', 'needs_review', 'closed'],
 //     sourceType == 'SPARK', normalizedTitle: string (required, 1-500 chars),
+//     resolutionType: string (optional, 'PENDING_UPDATE' | 'APPROVED_UPDATE' | 'APPROVED_NEW' | 'ADMIN_REJECTED' | 'AUTO_CLOSED'),
 //     rejectionReason: string (optional, max 1000 chars), reviewedBy: string (optional),
 //     updatedBy: string (optional, max 100 chars),
 //     publishedOpportunityId: string (optional, max 100 chars),
@@ -494,7 +495,7 @@ service cloud.firestore {
           'pending', 'approved', 'rejected', 'needs_review', 'closed',
           'MỚI', 'moi', 'new'
         ] &&
-        (!('resolutionType' in data) || data.resolutionType in ['PENDING_UPDATE', 'APPROVED_UPDATE', 'ADMIN_REJECTED', 'AUTO_CLOSED']) &&
+        (!('resolutionType' in data) || data.resolutionType in ['PENDING_UPDATE', 'APPROVED_UPDATE', 'APPROVED_NEW', 'ADMIN_REJECTED', 'AUTO_CLOSED']) &&
         (validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
         (validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
         (!('tags' in data) || validList(data.tags, 50)) &&
