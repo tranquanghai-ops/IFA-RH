@@ -36,6 +36,7 @@ import type {
 } from "../types";
 import { normalizeText } from "../utils/dedupe";
 import { normalizeCanonicalUrl, extractConferenceYear, computeOpportunityDiff } from "../utils/researchDedupe";
+import { validateOpportunityForm, validateAndNormalizeDate } from "../utils/opportunityValidation";
 
 // ======================== AUDIT LOGS ========================
 export async function logAudit(
@@ -418,24 +419,69 @@ export async function fetchAllOpportunities(): Promise<Opportunity[]> {
   return list.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
 }
 
+async function getNextConferenceCode(category: "TN" | "QT"): Promise<string> {
+  try {
+    const oppsSnap = await getDocs(collection(firestore, "opportunities"));
+    let maxNum = 0;
+    oppsSnap.docs.forEach((d) => {
+      const code = d.data().conferenceCode;
+      if (code && typeof code === "string" && code.startsWith(category)) {
+        const num = parseInt(code.slice(2), 10);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      }
+    });
+    return `${category}${String(maxNum + 1).padStart(4, "0")}`;
+  } catch {
+    return `${category}0001`;
+  }
+}
+
 export async function createOpportunity(
   data: Omit<Opportunity, "id" | "createdAt" | "updatedAt">,
   actor: { uid: string; email: string; role: UserRole }
 ): Promise<string> {
   const now = new Date().toISOString();
-  const ref = await addDoc(collection(firestore, "opportunities"), {
-    ...data,
+
+  // Validate and sanitize data
+  const valResult = validateOpportunityForm(data);
+  if (!valResult.isValid) {
+    const firstErr = Object.values(valResult.errors)[0];
+    throw new Error(firstErr || "Dữ liệu cơ hội không hợp lệ.");
+  }
+
+  const sanitized = valResult.sanitized!;
+  const category = sanitized.category || (sanitized.level === "Quốc tế" ? "QT" : "TN");
+
+  let conferenceCode = sanitized.conferenceCode;
+  if (!conferenceCode) {
+    conferenceCode = await getNextConferenceCode(category);
+  }
+
+  const payload: any = {
+    ...sanitized,
     createdAt: now,
     updatedAt: now,
     createdBy: actor.email,
-  });
+    updatedBy: actor.email,
+  };
+  if (conferenceCode) payload.conferenceCode = conferenceCode;
+
+  // Clean any remaining undefined
+  const cleanPayload: any = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if (v !== undefined) cleanPayload[k] = v;
+  }
+
+  const ref = await addDoc(collection(firestore, "opportunities"), cleanPayload);
 
   await logAudit(
     actor,
     "CREATE_OPPORTUNITY",
     "opportunity",
     ref.id,
-    `Đăng mới cơ hội NCKH: "${data.title}"`
+    `Đăng mới cơ hội NCKH: "${sanitized.title}" (${conferenceCode || "Chưa có mã"})`
   );
   return ref.id;
 }
@@ -446,11 +492,53 @@ export async function updateOpportunity(
   actor: { uid: string; email: string; role: UserRole }
 ) {
   const docRef = doc(firestore, "opportunities", id);
-  await updateDoc(docRef, {
-    ...data,
-    updatedAt: new Date().toISOString(),
+  const now = new Date().toISOString();
+
+  const updatePayload: Record<string, any> = {
+    updatedAt: now,
     updatedBy: actor.email,
-  });
+  };
+
+  const mutableFields = [
+    "title", "organizer", "country", "type", "level", "topic",
+    "field", "tags", "deadline", "abstractDeadline", "fullPaperDeadline",
+    "registrationDeadline", "eventDate", "location", "fee", "publicationFormat",
+    "indexing", "content", "submissionUrl", "sourceUrl", "directions",
+    "suitability", "notes", "runId", "discoveredAt", "sheetStatus",
+    "status", "publicationFee", "registrationFee", "feeStatus", "feeSourceUrl",
+    "detailedContent", "topicsDetailed", "recalledAt", "recalledBy", "hiddenAt", "hiddenBy",
+    "normalizedTitle", "editedByAdmin", "manualOverrides", "conferenceCode", "category", "lastUpdated"
+  ] as const;
+
+  for (const f of mutableFields) {
+    if (f in data) {
+      const val = (data as any)[f];
+      if (val !== undefined) {
+        if (f === "category" && val !== "TN" && val !== "QT") continue;
+        if (f === "feeStatus" && !["SPECIFIED", "UNKNOWN", "FREE"].includes(val)) continue;
+        updatePayload[f] = val;
+      }
+    }
+  }
+
+  // Date normalization if dates were passed
+  if (updatePayload.deadline) {
+    const check = validateAndNormalizeDate(updatePayload.deadline);
+    if (check.normalized) updatePayload.deadline = check.normalized;
+  }
+  for (const df of ["abstractDeadline", "fullPaperDeadline", "registrationDeadline", "eventDate"] as const) {
+    if (updatePayload[df]) {
+      const check = validateAndNormalizeDate(updatePayload[df]);
+      if (check.normalized) updatePayload[df] = check.normalized;
+    }
+  }
+
+  // CRITICAL: Ensure immutable fields are never present in update payload
+  delete updatePayload.createdAt;
+  delete updatePayload.createdBy;
+  delete updatePayload.id;
+
+  await updateDoc(docRef, updatePayload);
 
   await logAudit(
     actor,
