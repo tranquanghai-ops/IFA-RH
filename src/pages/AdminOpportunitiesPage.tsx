@@ -32,7 +32,9 @@ import {
   Download,
   FileSpreadsheet,
   AlertTriangle,
+  Link2,
 } from "lucide-react";
+import { buildOpportunityShareUrl, copyTextToClipboard } from "../utils/share";
 
 export const AdminOpportunitiesPage: React.FC = () => {
   const { profile } = useAuth();
@@ -160,6 +162,16 @@ export const AdminOpportunitiesPage: React.FC = () => {
       showError("Không thể thu hồi tin. Vui lòng thử lại.", err);
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  const handleCopyShareLink = async (opp: Opportunity) => {
+    const url = buildOpportunityShareUrl(opp.id);
+    const success = await copyTextToClipboard(url);
+    if (success) {
+      showSuccess("Đã sao chép liên kết hội thảo.");
+    } else {
+      showError("Không thể sao chép liên kết vào clipboard.");
     }
   };
 
@@ -440,6 +452,15 @@ export const AdminOpportunitiesPage: React.FC = () => {
                         </button>
                       )}
 
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm btn-icon"
+                        onClick={() => handleCopyShareLink(opp)}
+                        title="Lấy link chia sẻ"
+                        style={{ width: 26, height: 26, padding: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#2563eb" }}
+                      >
+                        <Link2 size={13} />
+                      </button>
                       <button
                         type="button"
                         className="btn btn-secondary btn-sm btn-icon"

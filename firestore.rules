@@ -516,6 +516,67 @@ service cloud.firestore {
         (!('id' in data) || validString(data.id, 0, 100));
     }
 
+    // Validates opportunityPreviews/{previewId} schema and constraints
+    function isValidOpportunityPreview(data) {
+      return data.keys().hasAll([
+          'candidateId', 'title', 'organizer', 'type', 'level',
+          'content', 'status', 'createdAt', 'updatedAt', 'createdBy'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'candidateId', 'conferenceCode', 'category', 'title',
+          'organizer', 'country', 'type', 'level', 'topic', 'field',
+          'tags', 'deadline', 'abstractDeadline', 'fullPaperDeadline',
+          'registrationDeadline', 'eventDate', 'location', 'fee',
+          'publicationFee', 'registrationFee', 'feeStatus', 'feeSourceUrl',
+          'publicationFormat', 'indexing', 'content', 'detailedContent',
+          'topicsDetailed', 'submissionUrl', 'sourceUrl', 'directions',
+          'suitability', 'notes', 'status', 'createdAt', 'updatedAt',
+          'createdBy', 'revokedBy'
+        ]) &&
+        validString(data.candidateId, 1, 100) &&
+        validString(data.title, 1, 300) &&
+        validString(data.organizer, 1, 200) &&
+        validOptString(data, 'country', 100) &&
+        data.type in [
+          'Hội thảo', 'Hội nghị', 'Call for Papers', 'Special Issue',
+          'Book Chapter', 'Seminar', 'Hợp tác nghiên cứu', 'Đổi mới sáng tạo', 'Khác',
+          'Hội thảo khoa học quốc tế', 'Hội thảo quốc tế', 'Hội thảo quốc gia'
+        ] &&
+        data.level in ['Quốc tế', 'Quốc gia', 'Cấp Trường', 'Cấp Khoa', 'Khác'] &&
+        validOptString(data, 'topic', 300) &&
+        validOptString(data, 'field', 200) &&
+        (!('tags' in data) || validList(data.tags, 30)) &&
+        (!('deadline' in data) || data.deadline is timestamp || validString(data.deadline, 0, 200)) &&
+        validString(data.content, 0, 50000) &&
+        data.status in ['active', 'revoked'] &&
+        validString(data.createdBy, 1, 100) &&
+        validOptString(data, 'revokedBy', 100) &&
+        (validString(data.createdAt, 1, 50) || data.createdAt is timestamp) &&
+        (validString(data.updatedAt, 1, 50) || data.updatedAt is timestamp) &&
+        validOptDate(data, 'abstractDeadline') &&
+        validOptDate(data, 'fullPaperDeadline') &&
+        validOptDate(data, 'registrationDeadline') &&
+        validOptDate(data, 'eventDate') &&
+        validOptString(data, 'location', 200) &&
+        validOptString(data, 'fee', 100) &&
+        validOptString(data, 'publicationFee', 500) &&
+        validOptString(data, 'registrationFee', 500) &&
+        (!('feeStatus' in data) || data.feeStatus in ['SPECIFIED', 'UNKNOWN', 'FREE']) &&
+        validOptString(data, 'feeSourceUrl', 1000) &&
+        validOptString(data, 'detailedContent', 50000) &&
+        (!('topicsDetailed' in data) || validList(data.topicsDetailed, 50)) &&
+        validOptString(data, 'publicationFormat', 100) &&
+        validOptString(data, 'indexing', 100) &&
+        validOptString(data, 'submissionUrl', 500) &&
+        validOptString(data, 'sourceUrl', 500) &&
+        validOptString(data, 'directions', 2000) &&
+        validOptString(data, 'suitability', 100) &&
+        validOptString(data, 'notes', 2000) &&
+        validOptString(data, 'conferenceCode', 20) &&
+        (!('category' in data) || data.category in ['TN', 'QT']) &&
+        (!('id' in data) || validString(data.id, 0, 100));
+    }
+
     // Validates researchWorks/{workId} schema and constraints
     function isValidResearchWork(data) {
       return data.keys().hasAll([
@@ -956,6 +1017,17 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow create: if isAdmin() && isValidOpportunityCandidate(request.resource.data);
       allow update: if isAdmin() && isValidOpportunityCandidate(request.resource.data) && areImmutableFieldsUnchanged(['createdAt']);
+      allow delete: if isAdmin();
+    }
+
+    // 3.1. Opportunity Previews (Sanitized read-only preview of unapproved candidate)
+    // - Public: get single active document by ID only (no listing/querying collection)
+    // - Admin & Owner: Full CRUD
+    match /opportunityPreviews/{previewId} {
+      allow get: if resource.data.status == 'active' || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isAdmin() && isValidOpportunityPreview(request.resource.data);
+      allow update: if isAdmin() && isValidOpportunityPreview(request.resource.data) && areImmutableFieldsUnchanged(['candidateId', 'createdAt', 'createdBy']);
       allow delete: if isAdmin();
     }
 

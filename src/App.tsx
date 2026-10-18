@@ -21,18 +21,34 @@ import { AdminImportPage } from "./pages/AdminImportPage";
 import { OwnerPage } from "./pages/OwnerPage";
 import { LoginPage } from "./pages/LoginPage";
 import { JournalDirectoryPage } from "./pages/JournalDirectoryPage";
+import { SingleOpportunityPage } from "./pages/SingleOpportunityPage";
 
 export const App: React.FC = () => {
   const { profile, loading, user } = useAuth();
   const [currentTab, setCurrentTab] = useState<string>("public");
+  const [sharedOpportunityId, setSharedOpportunityId] = useState<string | null>(null);
+  const [sharedPreviewId, setSharedPreviewId] = useState<string | null>(null);
   const [isMobileOpen, setIsMobileOpen] = useState<boolean>(false);
   const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
 
-  // Sync tab with URL pathname, query or hash (/own, /?tab=journals, #research_progress, etc.)
+  // Sync tab with URL pathname, query or hash (/own, /?tab=journals, ?opportunity=..., #research_progress, etc.)
   useEffect(() => {
     const parseUrlRoute = () => {
       const pathname = window.location.pathname;
       const cleanHash = window.location.hash.replace(/^#\/?/, "").trim();
+      const params = new URLSearchParams(window.location.search);
+      const oppId = params.get("opportunity") || params.get("opp");
+      const prevId = params.get("preview");
+
+      // Check if direct single opportunity or preview link is opened
+      if (oppId || prevId) {
+        setSharedOpportunityId(oppId ? oppId.trim() : null);
+        setSharedPreviewId(prevId ? prevId.trim() : null);
+        return;
+      } else {
+        setSharedOpportunityId(null);
+        setSharedPreviewId(null);
+      }
 
       if (pathname === "/own" || cleanHash === "own") {
         setCurrentTab("owner");
@@ -69,6 +85,9 @@ export const App: React.FC = () => {
   }, [loading, profile]);
 
   const handleSelectTab = (tab: string) => {
+    setSharedOpportunityId(null);
+    setSharedPreviewId(null);
+
     if (tab === "public_journals") {
       setCurrentTab("public");
       window.history.pushState({ tab: "public", homeTab: "journals" }, "", "/?tab=journals");
@@ -161,6 +180,31 @@ export const App: React.FC = () => {
       <div style={{ textAlign: "center", padding: "120px 20px", color: "var(--muted)" }}>
         <div style={{ fontSize: "1.1rem", fontWeight: 600 }}>Đang khởi tạo hệ thống IFA-RH...</div>
         <p style={{ fontSize: "0.85rem", marginTop: 8 }}>Hệ thống Nghiên cứu Khoa học Giảng viên · Khoa Mỹ thuật Công nghiệp</p>
+      </div>
+    );
+  }
+
+  // 0. SINGLE OPPORTUNITY / PREVIEW VIEW (Accessible directly via link)
+  if (sharedOpportunityId || sharedPreviewId) {
+    return (
+      <div className="public-portal-layout">
+        <PublicHeader onSelectTab={handleSelectTab} />
+        <main className="public-main-content">
+          <SingleOpportunityPage
+            opportunityId={sharedOpportunityId}
+            previewId={sharedPreviewId}
+            onBackToPublic={() => {
+              setSharedOpportunityId(null);
+              setSharedPreviewId(null);
+              window.history.pushState({ tab: "public", homeTab: "conferences" }, "", "/");
+              setCurrentTab("public");
+              window.dispatchEvent(new Event("popstate"));
+              window.dispatchEvent(new Event("ifa-home-tab-change"));
+            }}
+          />
+        </main>
+        <Footer />
+        <UserGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />
       </div>
     );
   }

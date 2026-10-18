@@ -21,7 +21,20 @@ import {
   ChevronDown,
   ChevronUp,
   AlertTriangle,
+  Link2,
 } from "lucide-react";
+import { useAuth } from "../firebase/auth";
+import { useToast } from "../context/ToastContext";
+import {
+  getOrCreateCandidatePreview,
+  revokeCandidatePreview,
+  fetchOpportunityPreview,
+} from "../firebase/firestore";
+import {
+  buildOpportunityShareUrl,
+  buildCandidatePreviewUrl,
+  copyTextToClipboard,
+} from "../utils/share";
 
 interface CandidateReviewModalProps {
   candidate: OpportunityCandidate | null;
@@ -50,6 +63,10 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const { profile } = useAuth();
+  const { showSuccess, showError } = useToast();
+  const [hasActivePreview, setHasActivePreview] = useState(false);
+  const [copyingLink, setCopyingLink] = useState(false);
 
   // Track expanded state for long diff fields
   const [expandedDiffs, setExpandedDiffs] = useState<Record<number, boolean>>({});
@@ -71,6 +88,20 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
     setShowFullContent(false);
     setShowFullDirections(false);
     setShowAdditionalInfo(false);
+
+    if (candidate) {
+      let isMounted = true;
+      fetchOpportunityPreview(`prev_${candidate.id}`)
+        .then((prev) => {
+          if (isMounted) setHasActivePreview(Boolean(prev && prev.status === "active"));
+        })
+        .catch(() => {
+          if (isMounted) setHasActivePreview(false);
+        });
+      return () => {
+        isMounted = false;
+      };
+    }
   }, [candidate?.id]);
 
   if (!candidate) return null;
@@ -170,6 +201,53 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
     } catch (err: any) {
       console.error("[CandidateReviewModal] Delete Error:", err);
       setError("Không thể xóa hồ sơ. Vui lòng thử lại.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCopyLink = async () => {
+    if (!candidate || !profile) return;
+    try {
+      setCopyingLink(true);
+      if (candidate.publishedOpportunityId) {
+        const url = buildOpportunityShareUrl(candidate.publishedOpportunityId);
+        await copyTextToClipboard(url);
+        showSuccess("Đã sao chép liên kết hội thảo.");
+        return;
+      }
+
+      const preview = await getOrCreateCandidatePreview(candidate, {
+        uid: profile.uid,
+        email: profile.email,
+        role: profile.role,
+      });
+      setHasActivePreview(true);
+      const url = buildCandidatePreviewUrl(preview.id);
+      await copyTextToClipboard(url);
+      showSuccess("Đã sao chép liên kết xem trước.");
+    } catch (err: any) {
+      console.error("[CandidateReviewModal] Copy link error:", err);
+      showError("Không thể tạo liên kết xem trước.", err);
+    } finally {
+      setCopyingLink(false);
+    }
+  };
+
+  const handleRevokePreview = async () => {
+    if (!candidate || !profile) return;
+    try {
+      setLoading(true);
+      await revokeCandidatePreview(candidate.id, {
+        uid: profile.uid,
+        email: profile.email,
+        role: profile.role,
+      });
+      setHasActivePreview(false);
+      showSuccess("Đã thu hồi liên kết xem trước.");
+    } catch (err: any) {
+      console.error("[CandidateReviewModal] Revoke preview error:", err);
+      showError("Không thể thu hồi liên kết xem trước.", err);
     } finally {
       setLoading(false);
     }
@@ -302,7 +380,7 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
                 gap: 8,
               }}
             >
-              <div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 {candidate.status !== "approved" && (
                   <button
                     type="button"
@@ -313,6 +391,43 @@ export const CandidateReviewModal: React.FC<CandidateReviewModalProps> = ({
                   >
                     <Trash2 size={14} />
                     Xóa
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleCopyLink}
+                  disabled={loading || copyingLink}
+                  title={candidate.publishedOpportunityId ? "Sao chép liên kết hội thảo" : "Lấy liên kết xem trước"}
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+                >
+                  <Link2 size={14} />
+                  {copyingLink
+                    ? "Đang tạo..."
+                    : candidate.publishedOpportunityId
+                    ? "Sao chép liên kết"
+                    : "Lấy link xem trước"}
+                </button>
+
+                {!candidate.publishedOpportunityId && hasActivePreview && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    onClick={handleRevokePreview}
+                    disabled={loading}
+                    title="Thu hồi liên kết xem trước công khai"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      background: "#fff1f2",
+                      color: "#e11d48",
+                      border: "1px solid #fecdd3",
+                      fontSize: "0.8rem",
+                    }}
+                  >
+                    Thu hồi link xem trước
                   </button>
                 )}
               </div>

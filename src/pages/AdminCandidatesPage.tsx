@@ -29,7 +29,16 @@ import {
   Calendar,
   Clock,
   RotateCcw,
+  Link2,
 } from "lucide-react";
+import {
+  getOrCreateCandidatePreview,
+} from "../firebase/firestore";
+import {
+  buildOpportunityShareUrl,
+  buildCandidatePreviewUrl,
+  copyTextToClipboard,
+} from "../utils/share";
 
 export type CandidateFilterTab =
   | "pending"
@@ -209,6 +218,7 @@ export const AdminCandidatesPage: React.FC = () => {
   const [isRecallLoading, setIsRecallLoading] = useState(false);
   const [confirmBulkApprove, setConfirmBulkApprove] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [sharingCandId, setSharingCandId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<{
     type: "success" | "error";
     text: string;
@@ -427,6 +437,45 @@ export const AdminCandidatesPage: React.FC = () => {
   const handleRecallCandidate = async (cand: OpportunityCandidate) => {
     // If called from CandidateReviewModal (which already has its own confirmation), execute directly
     await executeRecallCandidate(cand);
+  };
+
+  const handleCopyCandidateLink = async (cand: OpportunityCandidate) => {
+    if (!profile) return;
+    try {
+      setSharingCandId(cand.id);
+
+      // A. Candidate already approved & published: use published opportunity URL
+      if (cand.publishedOpportunityId) {
+        const url = buildOpportunityShareUrl(cand.publishedOpportunityId);
+        const ok = await copyTextToClipboard(url);
+        if (ok) {
+          showSuccess("Đã sao chép liên kết hội thảo.");
+        } else {
+          showError("Không thể sao chép liên kết vào clipboard.");
+        }
+        return;
+      }
+
+      // B. Candidate newly discovered by AI, pending approval: use read-only preview URL
+      const preview = await getOrCreateCandidatePreview(cand, {
+        uid: profile.uid,
+        email: profile.email,
+        role: profile.role,
+      });
+
+      const url = buildCandidatePreviewUrl(preview.id);
+      const ok = await copyTextToClipboard(url);
+      if (ok) {
+        showSuccess("Đã sao chép liên kết xem trước.");
+      } else {
+        showError("Không thể sao chép liên kết vào clipboard.");
+      }
+    } catch (err: any) {
+      console.error("[AdminCandidatesPage] Copy Link Error:", err);
+      showError("Không thể tạo liên kết xem trước. Vui lòng thử lại.", err);
+    } finally {
+      setSharingCandId(null);
+    }
   };
 
   const executeApproveSelected = async () => {
@@ -1200,6 +1249,25 @@ export const AdminCandidatesPage: React.FC = () => {
                         )}
                         <button
                           type="button"
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => handleCopyCandidateLink(cand)}
+                          disabled={sharingCandId === cand.id}
+                          title={cand.publishedOpportunityId ? "Lấy link hội thảo đã công bố" : "Lấy link xem trước (chỉ đọc)"}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                            color: cand.publishedOpportunityId ? "#2563eb" : "#d97706",
+                            fontWeight: 500,
+                            padding: "4px 8px",
+                            fontSize: "0.78rem",
+                          }}
+                        >
+                          <Link2 size={13} />
+                          <span>{sharingCandId === cand.id ? "Đang lấy..." : cand.publishedOpportunityId ? "Lấy link" : "Link xem trước"}</span>
+                        </button>
+                        <button
+                          type="button"
                           className="btn btn-primary btn-sm"
                           onClick={() => setSelectedCandidate(cand)}
                         >
@@ -1542,6 +1610,25 @@ export const AdminCandidatesPage: React.FC = () => {
                         {recallingId === cand.id ? "Đang thu hồi..." : "Thu hồi"}
                       </button>
                     )}
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => handleCopyCandidateLink(cand)}
+                      disabled={sharingCandId === cand.id}
+                      title={cand.publishedOpportunityId ? "Lấy link hội thảo đã công bố" : "Lấy link xem trước (chỉ đọc)"}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 4,
+                        color: cand.publishedOpportunityId ? "#2563eb" : "#d97706",
+                        fontWeight: 500,
+                        padding: "4px 8px",
+                        fontSize: "0.78rem",
+                      }}
+                    >
+                      <Link2 size={13} />
+                      <span>{sharingCandId === cand.id ? "Đang lấy..." : cand.publishedOpportunityId ? "Lấy link" : "Link xem trước"}</span>
+                    </button>
                     <button
                       type="button"
                       className="btn btn-secondary btn-sm"

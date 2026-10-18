@@ -24,6 +24,7 @@ import type {
   UserRole,
   Opportunity,
   OpportunityCandidate,
+  OpportunityPreview,
   ResearchWork,
   ResearchProgress,
   Publication,
@@ -417,6 +418,110 @@ export async function fetchAllOpportunities(): Promise<Opportunity[]> {
   const snap = await getDocs(collection(firestore, "opportunities"));
   const list = snap.docs.map((d) => ({ ...d.data(), id: d.id } as Opportunity));
   return list.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+}
+
+export async function fetchOpportunityById(id: string): Promise<Opportunity | null> {
+  if (!id || typeof id !== "string") return null;
+  try {
+    const docRef = doc(firestore, "opportunities", id.trim());
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return null;
+    return { ...snap.data(), id: snap.id } as Opportunity;
+  } catch (err) {
+    console.error("[fetchOpportunityById] Error:", err);
+    return null;
+  }
+}
+
+export async function getOrCreateCandidatePreview(
+  candidate: OpportunityCandidate,
+  actor: { uid: string; email: string; role: UserRole }
+): Promise<OpportunityPreview> {
+  const previewId = `prev_${candidate.id}`;
+  const previewRef = doc(firestore, "opportunityPreviews", previewId);
+  const now = new Date().toISOString();
+
+  const previewPayload: Record<string, any> = {
+    id: previewId,
+    candidateId: candidate.id,
+    title: candidate.title,
+    organizer: candidate.organizer,
+    type: candidate.type,
+    level: candidate.level,
+    content: candidate.content,
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+    createdBy: actor.email || actor.uid,
+  };
+
+  if (candidate.conferenceCode) previewPayload.conferenceCode = candidate.conferenceCode;
+  if (candidate.category) previewPayload.category = candidate.category;
+  if (candidate.country) previewPayload.country = candidate.country;
+  if (candidate.topic) previewPayload.topic = candidate.topic;
+  if (candidate.field) previewPayload.field = candidate.field;
+  if (candidate.tags && candidate.tags.length > 0) previewPayload.tags = candidate.tags;
+  if (candidate.deadline) previewPayload.deadline = candidate.deadline;
+  if (candidate.abstractDeadline) previewPayload.abstractDeadline = candidate.abstractDeadline;
+  if (candidate.fullPaperDeadline) previewPayload.fullPaperDeadline = candidate.fullPaperDeadline;
+  if (candidate.registrationDeadline) previewPayload.registrationDeadline = candidate.registrationDeadline;
+  if (candidate.eventDate) previewPayload.eventDate = candidate.eventDate;
+  if (candidate.location) previewPayload.location = candidate.location;
+  if (candidate.fee) previewPayload.fee = candidate.fee;
+  if (candidate.publicationFee) previewPayload.publicationFee = candidate.publicationFee;
+  if (candidate.registrationFee) previewPayload.registrationFee = candidate.registrationFee;
+  if (candidate.feeStatus) previewPayload.feeStatus = candidate.feeStatus;
+  if (candidate.feeSourceUrl) previewPayload.feeSourceUrl = candidate.feeSourceUrl;
+  if (candidate.publicationFormat) previewPayload.publicationFormat = candidate.publicationFormat;
+  if (candidate.indexing) previewPayload.indexing = candidate.indexing;
+  if (candidate.detailedContent) previewPayload.detailedContent = candidate.detailedContent;
+  if (candidate.topicsDetailed && candidate.topicsDetailed.length > 0) previewPayload.topicsDetailed = candidate.topicsDetailed;
+  if (candidate.submissionUrl) previewPayload.submissionUrl = candidate.submissionUrl;
+  if (candidate.sourceUrl) previewPayload.sourceUrl = candidate.sourceUrl;
+  if (candidate.directions) previewPayload.directions = candidate.directions;
+  if (candidate.suitability) previewPayload.suitability = candidate.suitability;
+  if (candidate.notes) previewPayload.notes = candidate.notes;
+
+  try {
+    const existingSnap = await getDoc(previewRef);
+    if (existingSnap.exists()) {
+      previewPayload.createdAt = existingSnap.data().createdAt || now;
+    }
+  } catch {
+    // ignore
+  }
+
+  await setDoc(previewRef, previewPayload);
+  return previewPayload as OpportunityPreview;
+}
+
+export async function revokeCandidatePreview(
+  candidateId: string,
+  actor: { uid: string; email: string; role: UserRole }
+): Promise<void> {
+  const previewId = `prev_${candidateId}`;
+  const previewRef = doc(firestore, "opportunityPreviews", previewId);
+  const now = new Date().toISOString();
+  await updateDoc(previewRef, {
+    status: "revoked",
+    updatedAt: now,
+    revokedBy: actor.email || actor.uid,
+  });
+}
+
+export async function fetchOpportunityPreview(previewId: string): Promise<OpportunityPreview | null> {
+  if (!previewId || typeof previewId !== "string") return null;
+  try {
+    const previewRef = doc(firestore, "opportunityPreviews", previewId.trim());
+    const snap = await getDoc(previewRef);
+    if (!snap.exists()) return null;
+    const data = snap.data() as OpportunityPreview;
+    if (data.status !== "active") return null;
+    return { ...data, id: snap.id };
+  } catch (err) {
+    console.error("[fetchOpportunityPreview] Error:", err);
+    return null;
+  }
 }
 
 async function getNextConferenceCode(category: "TN" | "QT"): Promise<string> {

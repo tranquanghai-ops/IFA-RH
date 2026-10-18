@@ -171,6 +171,47 @@ export interface OpportunityCandidate {
   updatedAt: string;
 }
 
+export interface OpportunityPreview {
+  id: string; // e.g. "prev_" + candidateId
+  candidateId: string;
+  conferenceCode?: string;
+  category?: "TN" | "QT";
+  title: string;
+  organizer: string;
+  country?: string;
+  type: OpportunityType;
+  level: OpportunityLevel;
+  topic?: string;
+  field?: string;
+  tags?: string[];
+  deadline?: string;
+  abstractDeadline?: string;
+  fullPaperDeadline?: string;
+  registrationDeadline?: string;
+  eventDate?: string;
+  location?: string;
+  fee?: string;
+  publicationFee?: string;
+  registrationFee?: string;
+  feeStatus?: OpportunityFeeStatus;
+  feeSourceUrl?: string;
+  publicationFormat?: string;
+  indexing?: string;
+  content: string;
+  detailedContent?: string;
+  topicsDetailed?: string[];
+  submissionUrl?: string;
+  sourceUrl?: string;
+  directions?: string;
+  suitability?: string;
+  notes?: string;
+  status: "active" | "revoked";
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  revokedBy?: string;
+}
+
 export type ResearchStatus =
   | "Ý tưởng"
   | "Đang chuẩn bị"
