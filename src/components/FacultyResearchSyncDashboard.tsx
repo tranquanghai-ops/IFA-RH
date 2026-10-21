@@ -78,7 +78,7 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
         const stats = outcome.stats;
         setMessage({
           type: "success",
-          text: `Đồng bộ hoàn tất thành công từ Google Sheets! Mới: ${stats?.created || 0}, Đề xuất cập nhật: ${stats?.updateProposals || 0}, Cập nhật: ${stats?.updated || 0}, Khớp: ${stats?.matched || 0}, Giữ sửa Admin: ${stats?.preservedAdmin || 0}.`,
+          text: `Đồng bộ hoàn tất thành công từ Google Sheets trung gian! Mới: ${stats?.created || 0}, Đề xuất cập nhật: ${stats?.updateProposals || 0}, Cập nhật: ${stats?.updated || 0}, Khớp: ${stats?.matched || 0}, Giữ sửa Admin: ${stats?.preservedAdmin || 0}.`,
         });
         if (onSyncComplete) {
           onSyncComplete();
@@ -193,7 +193,7 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
                   color: "#1e40af",
                 }}
               >
-                Nguồn: Google Sheets — Spark
+                Nguồn: Google Sheets trung gian (IFA Faculty Research)
               </span>
               <span
                 style={{
@@ -222,7 +222,7 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
             </div>
             <p style={{ margin: "3px 0 0", fontSize: "0.82rem", color: "#64748b" }}>
               Bảng tính: <strong>{sheetMeta?.sheetTitle || DEFAULT_RESEARCH_SPREADSHEET_TITLE}</strong> · Tabs:{" "}
-              <code>{DEFAULT_RESEARCH_SHEET_NAME_TN}</code> (Trong nước) & <code>{DEFAULT_RESEARCH_SHEET_NAME_QT}</code> (Quốc tế) · Lịch định kỳ: <strong>03:00 Thứ Hai hằng tuần</strong>
+              <code>{DEFAULT_RESEARCH_SHEET_NAME_TN}</code> (Trong nước) & <code>{DEFAULT_RESEARCH_SHEET_NAME_QT}</code> (Quốc tế) · Lịch định kỳ: <strong>04:00 Thứ Hai & Thứ Năm hằng tuần</strong>
             </p>
           </div>
         </div>
@@ -235,7 +235,7 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
             rel="noopener noreferrer"
             className="btn btn-secondary btn-sm"
             style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
-            title="Mở bảng tính Google Sheets của Spark trên tab mới"
+            title="Mở bảng tính Google Sheets trung gian (IFA Faculty Research) trên tab mới"
           >
             <FileSpreadsheet size={14} color="#059669" />
             <span>Mở Google Sheets</span>

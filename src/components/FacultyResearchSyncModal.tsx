@@ -40,7 +40,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
   onSuccess,
 }) => {
   const { profile } = useAuth();
-  const [sourceName, setSourceName] = useState("Đang tải dữ liệu từ Google Sheets (Spark)...");
+  const [sourceName, setSourceName] = useState("Đang tải dữ liệu từ Google Sheets trung gian (IFA Faculty Research)...");
   const [dryRunOutcome, setDryRunOutcome] = useState<ResearchSyncOutcome | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -88,7 +88,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
       console.error("Lỗi khi tải dữ liệu xem trước Google Sheets:", err);
       // Untrusted source rule: NEVER fall back to old dataset, report error clearly
       setErrorMsg(
-        `Không thể đọc dữ liệu trực tiếp từ Google Sheets của Spark: ${err.message || String(err)}. Tính năng đồng bộ đã bị khóa để bảo vệ an toàn dữ liệu.`
+        `Không thể đọc dữ liệu trực tiếp từ Google Sheets trung gian (IFA Faculty Research): ${err.message || String(err)}. Tính năng đồng bộ đã bị khóa để bảo vệ an toàn dữ liệu.`
       );
       setDryRunOutcome(null);
       setSourceName("Không thể kết nối Google Sheets");
@@ -155,7 +155,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Đồng bộ cơ hội NCKH từ Google Sheets (Spark)"
+      title="Đồng bộ cơ hội NCKH từ Google Sheets trung gian (IFA Faculty Research)"
       maxWidth="large"
       footer={
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", flexWrap: "wrap", gap: 8 }}>

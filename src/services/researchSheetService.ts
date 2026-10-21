@@ -2,12 +2,18 @@ import type { RawFacultyResearchRow } from "./facultyResearchData";
 import type { OpportunityFeeStatus, OpportunityType, OpportunityLevel } from "../types";
 import { formatFeeValue, UNKNOWN_FEE_TEXT, FREE_FEE_TEXT } from "../utils/fee";
 
-export const DEFAULT_RESEARCH_SPREADSHEET_TITLE = "IFA Faculty Research Opportunities";
-export const DEFAULT_RESEARCH_SHEET_ID = "1eLiEZNC-vidouurOJ-usM1wImJT0unaVceslm2cg-Do";
-export const DEFAULT_RESEARCH_SHEET_NAME_TN = "HOI THAO";
+// FILE 2: Google Sheets trung gian chính thức mà IFA-RH đọc (nhận dữ liệu từ Spark qua IMPORTRANGE)
+export const DEFAULT_RESEARCH_SPREADSHEET_TITLE = "IFA Faculty Research";
+export const DEFAULT_RESEARCH_SHEET_ID = "1ug0b4Holu6nGp6NwO-JViqe7XexeDLlwirqRELGwh4U";
+export const DEFAULT_RESEARCH_SHEET_NAME_TN = "HỘI THẢO";
 export const DEFAULT_RESEARCH_SHEET_NAME_QT = "HOI THAO QT";
 export const DEFAULT_RESEARCH_SHEET_NAME = DEFAULT_RESEARCH_SHEET_NAME_TN;
-export const OFFICIAL_RESEARCH_SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1eLiEZNC-vidouurOJ-usM1wImJT0unaVceslm2cg-Do/edit";
+export const OFFICIAL_RESEARCH_SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1ug0b4Holu6nGp6NwO-JViqe7XexeDLlwirqRELGwh4U/edit";
+
+// FILE 1: Google Sheets riêng của Spark (Spark tự động tìm kiếm và ghi dữ liệu vào đây)
+export const SPARK_ORIGIN_SPREADSHEET_TITLE = "IFA Faculty Research Opportunities";
+export const SPARK_ORIGIN_SPREADSHEET_ID = "1eLiEZNC-vidouurOJ-usM1wImJT0unaVceslm2cg-Do";
+export const SPARK_ORIGIN_SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1eLiEZNC-vidouurOJ-usM1wImJT0unaVceslm2cg-Do/edit";
 
 export interface ParsedResearchSheetUrl {
   sheetId: string;

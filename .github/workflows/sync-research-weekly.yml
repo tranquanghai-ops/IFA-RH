@@ -1,9 +1,10 @@
-name: Weekly Research Data Sync (Google Sheets Spark -> IFA-RH)
+name: Weekly Research Data Sync (Google Sheets Intermediate -> IFA-RH)
 
 on:
   schedule:
-    # 03:00 AM VN Time (UTC+7) every Monday = 20:00 UTC Sunday
-    - cron: '0 20 * * 0'
+    # 04:00 AM VN Time (UTC+7) every Monday & Thursday = 21:00 UTC Sunday & Wednesday
+    # Spark updates at 03:00 AM VN; IFA-RH syncs at 04:00 AM VN to pick up new revisions cleanly
+    - cron: '0 21 * * 0,3'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -50,5 +51,5 @@ jobs:
             TRIGGER_SOURCE="github_dispatch"
           fi
 
-          echo "Bắt đầu chạy đồng bộ NCKH từ Google Sheets (Spark) với cờ: $EXTRA_FLAGS, nguồn: $TRIGGER_SOURCE"
+          echo "Bắt đầu chạy đồng bộ NCKH từ Google Sheets trung gian (IFA Faculty Research) với cờ: $EXTRA_FLAGS, nguồn: $TRIGGER_SOURCE"
           npx tsx scripts/sync-research.mjs $TRIGGER_SOURCE $EXTRA_FLAGS

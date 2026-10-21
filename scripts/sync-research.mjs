@@ -3,16 +3,16 @@
 /**
  * sync-research.mjs
  * 
- * Tự động đồng bộ dữ liệu hội thảo nghiên cứu khoa học từ Google Sheets (Spark) vào IFA-RH.
- * Nguồn dữ liệu: Google Sheets "IFA Faculty Research Opportunities" (Tabs: HOI THAO & HOI THAO QT).
+ * Tự động đồng bộ dữ liệu hội thảo nghiên cứu khoa học từ Google Sheets trung gian (IFA Faculty Research) vào IFA-RH.
+ * Nguồn dữ liệu: Google Sheets trung gian "IFA Faculty Research" (Tabs: HỘI THẢO & HOI THAO QT) nhận từ Spark qua IMPORTRANGE.
  * 
- * Được chạy định kỳ bởi GitHub Actions vào mỗi thứ Hai lúc 03:00 AM (giờ Việt Nam, UTC+7),
+ * Được chạy định kỳ bởi GitHub Actions vào mỗi thứ Hai & thứ Năm lúc 04:00 AM (giờ Việt Nam, UTC+7),
  * hoặc chạy thủ công qua workflow_dispatch / CLI.
  * 
  * Tham số dòng lệnh:
  *   --dry-run          : Chạy thử nghiệm, phân tích đối chiếu dữ liệu nhưng không ghi vào Firestore
- *   --sheet-id <id>    : Spreadsheet ID tùy chọn (mặc định: 1eLiEZNC-vidouurOJ-usM1wImJT0unaVceslm2cg-Do)
- *   --tab-tn <name>    : Tên tab Trong nước (mặc định: HOI THAO)
+ *   --sheet-id <id>    : Spreadsheet ID tùy chọn (mặc định: 1ug0b4Holu6nGp6NwO-JViqe7XexeDLlwirqRELGwh4U)
+ *   --tab-tn <name>    : Tên tab Trong nước (mặc định: HỘI THẢO)
  *   --tab-qt <name>    : Tên tab Quốc tế (mặc định: HOI THAO QT)
  *   github_schedule | github_dispatch | manual_cli (nguồn kích hoạt)
  */
@@ -412,7 +412,7 @@ async function main() {
   const { db, sdk: adminSdk, authMode } = getFirestoreSdkAndDb();
 
   console.log('=================================================================');
-  console.log('IFA-RH — ĐỒNG BỘ CƠ HỘI NCKH TỪ GOOGLE SHEETS (SPARK)');
+  console.log('IFA-RH — ĐỒNG BỘ CƠ HỘI NCKH TỪ GOOGLE SHEETS TRUNG GIAN (IFA Faculty Research)');
   console.log(`Nguồn kích hoạt: ${runSource}`);
   console.log(`Chế độ Dry-Run : ${isDryRun ? 'BẬT (Chỉ phân tích, không ghi Firestore)' : 'TẮT (Ghi dữ liệu thật)'}`);
   console.log(`Spreadsheet ID : ${customSheetId}`);
