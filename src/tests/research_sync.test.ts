@@ -283,10 +283,15 @@ describe("Research Data Sync Suite", () => {
     ];
 
     beforeEach(() => {
-      globalThis.fetch = vi.fn().mockImplementation(async () => {
+      globalThis.fetch = vi.fn().mockImplementation(async (url: any) => {
+        const urlStr = String(url || "");
+        const isQT = urlStr.includes("QT");
+        const cells = isQT
+          ? mockRowCells.map((c, i) => (i === 3 ? { v: "Hội thảo quốc tế HAXD 2027 (QT)", f: "Hội thảo quốc tế HAXD 2027 (QT)" } : c))
+          : mockRowCells;
         const table = {
           cols: Array(27).fill(0).map((_, i) => ({ id: `col_${i}`, label: `Col ${i}` })),
-          rows: [{ c: mockRowCells }],
+          rows: [{ c: cells }],
         };
         const gvizText = `google.visualization.Query.setResponse(${JSON.stringify({ status: "ok", table })});`;
         return new Response(gvizText, { status: 200 });

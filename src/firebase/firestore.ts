@@ -2126,6 +2126,7 @@ export interface FacultyResearchSyncState {
     created: number;
     matched: number;
     updated: number;
+    updateProposals?: number;
     preservedAdmin: number;
     duplicates: number;
     errorCount: number;
@@ -2135,13 +2136,23 @@ export interface FacultyResearchSyncState {
     row: number;
     stt: number | string;
     title: string;
-    status: "created" | "matched" | "updated" | "preserved_admin" | "skipped" | "invalid";
+    status: "created" | "matched" | "updated" | "update_proposal" | "proposal_unchanged" | "preserved_admin" | "skipped" | "invalid";
     action: string;
     reason: string;
     targetId?: string;
   }>;
   lastError?: string;
   updatedAt?: string;
+  dataSource?: "sheets" | "drive_json";
+  sheetMeta?: {
+    sheetId: string;
+    sheetTitle: string;
+    tabs: string[];
+    url: string;
+    tnCount: number;
+    qtCount: number;
+  };
+  driveMeta?: any;
 }
 
 export async function fetchFacultyResearchSyncState(): Promise<FacultyResearchSyncState | null> {
@@ -2209,7 +2220,7 @@ export async function runFacultyResearchSyncClient(
       dryRun: options?.dryRun,
       expectedRevision: options?.expectedRevision,
       sheetConfig: options?.sheetConfig,
-      dataSource: options?.dataSource || "drive_json",
+      dataSource: options?.dataSource || "sheets",
       driveConfig: options?.driveConfig,
     },
   });

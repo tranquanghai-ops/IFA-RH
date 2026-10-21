@@ -5,6 +5,12 @@ import {
   runFacultyResearchSyncClient,
   type FacultyResearchSyncState,
 } from "../firebase/firestore";
+import {
+  OFFICIAL_RESEARCH_SPREADSHEET_URL,
+  DEFAULT_RESEARCH_SPREADSHEET_TITLE,
+  DEFAULT_RESEARCH_SHEET_NAME_TN,
+  DEFAULT_RESEARCH_SHEET_NAME_QT,
+} from "../services/researchSheetService";
 import { useAuth } from "../firebase/auth";
 import { ConfirmDialog } from "./ConfirmDialog";
 import {
@@ -19,6 +25,8 @@ import {
   ShieldCheck,
   Check,
   AlertCircle,
+  ExternalLink,
+  FileSpreadsheet,
 } from "lucide-react";
 
 interface FacultyResearchSyncDashboardProps {
@@ -58,6 +66,7 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
     try {
       const outcome = await runFacultyResearchSyncClient(profile, {
         force: true,
+        dataSource: "sheets",
       });
 
       if (outcome.skipped) {
@@ -69,7 +78,7 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
         const stats = outcome.stats;
         setMessage({
           type: "success",
-          text: `Đồng bộ hoàn tất thành công! Mới: ${stats?.created || 0}, Cập nhật: ${stats?.updated || 0}, Khớp: ${stats?.matched || 0}, Giữ sửa Admin: ${stats?.preservedAdmin || 0}.`,
+          text: `Đồng bộ hoàn tất thành công từ Google Sheets! Mới: ${stats?.created || 0}, Đề xuất cập nhật: ${stats?.updateProposals || 0}, Cập nhật: ${stats?.updated || 0}, Khớp: ${stats?.matched || 0}, Giữ sửa Admin: ${stats?.preservedAdmin || 0}.`,
         });
         if (onSyncComplete) {
           onSyncComplete();
@@ -115,7 +124,7 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
   const getSourceLabel = (src?: string) => {
     switch (src) {
       case "github_schedule":
-        return "Tự động (GitHub Actions)";
+        return "Tự động (GitHub Actions hằng tuần)";
       case "github_dispatch":
         return "GitHub Actions kích hoạt";
       case "manual_admin":
@@ -128,6 +137,7 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
   };
 
   const stats = syncState?.lastSyncStats;
+  const sheetMeta = syncState?.sheetMeta;
   const isRunning = Boolean(syncState?.syncInProgress || syncing);
 
   return (
@@ -169,10 +179,22 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
             <Sparkles size={20} />
           </div>
           <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <h3 style={{ margin: 0, fontSize: "1.05rem", fontWeight: 700, color: "#1e293b" }}>
                 Đồng bộ NCKH tự động (SPAK → IFA-RH)
               </h3>
+              <span
+                style={{
+                  fontSize: "0.72rem",
+                  padding: "2px 8px",
+                  borderRadius: 12,
+                  fontWeight: 600,
+                  background: "#dbeafe",
+                  color: "#1e40af",
+                }}
+              >
+                Nguồn: Google Sheets — Spark
+              </span>
               <span
                 style={{
                   fontSize: "0.75rem",
@@ -198,15 +220,28 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
                   : "Hoạt động"}
               </span>
             </div>
-            <p style={{ margin: "2px 0 0", fontSize: "0.82rem", color: "#64748b" }}>
-              Lịch định kỳ: <strong>03:00 Thứ Hai hằng tuần</strong> (Google Sheets{" "}
-              <code>IFA Faculty Research / HỘI THẢO</code>)
+            <p style={{ margin: "3px 0 0", fontSize: "0.82rem", color: "#64748b" }}>
+              Bảng tính: <strong>{sheetMeta?.sheetTitle || DEFAULT_RESEARCH_SPREADSHEET_TITLE}</strong> · Tabs:{" "}
+              <code>{DEFAULT_RESEARCH_SHEET_NAME_TN}</code> (Trong nước) & <code>{DEFAULT_RESEARCH_SHEET_NAME_QT}</code> (Quốc tế) · Lịch định kỳ: <strong>03:00 Thứ Hai hằng tuần</strong>
             </p>
           </div>
         </div>
 
         {/* Action buttons */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <a
+            href={OFFICIAL_RESEARCH_SPREADSHEET_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-secondary btn-sm"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+            title="Mở bảng tính Google Sheets của Spark trên tab mới"
+          >
+            <FileSpreadsheet size={14} color="#059669" />
+            <span>Mở Google Sheets</span>
+            <ExternalLink size={12} color="#64748b" />
+          </a>
+
           {onOpenSyncModal && (
             <button
               type="button"
@@ -214,9 +249,9 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
               onClick={onOpenSyncModal}
               disabled={isRunning}
               style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-              title="Tùy chọn tải lên tệp hoặc cấu hình bảng tính"
+              title="Xem trước đối chiếu chi tiết hoặc cấu hình đồng bộ"
             >
-              <Sliders size={14} /> Tùy chọn...
+              <Sliders size={14} /> Xem trước / Chi tiết...
             </button>
           )}
 
@@ -363,9 +398,26 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
             }}
           >
             <div style={{ fontSize: "0.72rem", color: "#0284c7", textTransform: "uppercase" }}>
-              Khớp dữ liệu
+              Đề xuất cập nhật
             </div>
             <div style={{ fontSize: "1.15rem", fontWeight: 700, color: "#0284c7" }}>
+              {stats?.updateProposals ?? 0}
+            </div>
+          </div>
+
+          <div
+            style={{
+              background: "#ffffff",
+              padding: "8px 12px",
+              borderRadius: 8,
+              border: "1px solid #e2e8f0",
+              textAlign: "center",
+            }}
+          >
+            <div style={{ fontSize: "0.72rem", color: "#475569", textTransform: "uppercase" }}>
+              Khớp dữ liệu
+            </div>
+            <div style={{ fontSize: "1.15rem", fontWeight: 700, color: "#475569" }}>
               {stats?.matched ?? 0}
             </div>
           </div>
@@ -380,7 +432,7 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
             }}
           >
             <div style={{ fontSize: "0.72rem", color: "#d97706", textTransform: "uppercase" }}>
-              Cập nhật
+              Cập nhật trực tiếp
             </div>
             <div style={{ fontSize: "1.15rem", fontWeight: 700, color: "#d97706" }}>
               {stats?.updated ?? 0}
@@ -493,7 +545,7 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
                   <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
                     <th style={{ padding: "8px 12px", textAlign: "left", width: 50 }}>STT</th>
                     <th style={{ padding: "8px 12px", textAlign: "left" }}>Tên hội thảo / cơ hội</th>
-                    <th style={{ padding: "8px 12px", textAlign: "left", width: 120 }}>Trạng thái</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", width: 130 }}>Trạng thái</th>
                     <th style={{ padding: "8px 12px", textAlign: "left" }}>Kết quả xử lý</th>
                   </tr>
                 </thead>
@@ -504,6 +556,12 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
                     if (d.status === "created") {
                       badgeBg = "#dcfce7";
                       badgeColor = "#15803d";
+                    } else if (d.status === "update_proposal") {
+                      badgeBg = "#e0f2fe";
+                      badgeColor = "#0284c7";
+                    } else if (d.status === "proposal_unchanged") {
+                      badgeBg = "#f0f9ff";
+                      badgeColor = "#0369a1";
                     } else if (d.status === "updated") {
                       badgeBg = "#fef3c7";
                       badgeColor = "#b45309";
@@ -511,8 +569,8 @@ export const FacultyResearchSyncDashboard: React.FC<FacultyResearchSyncDashboard
                       badgeBg = "#ede9fe";
                       badgeColor = "#6d28d9";
                     } else if (d.status === "matched") {
-                      badgeBg = "#e0f2fe";
-                      badgeColor = "#0369a1";
+                      badgeBg = "#f1f5f9";
+                      badgeColor = "#475569";
                     } else if (d.status === "invalid") {
                       badgeBg = "#fee2e2";
                       badgeColor = "#b91c1c";

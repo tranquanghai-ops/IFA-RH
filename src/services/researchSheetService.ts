@@ -2,8 +2,12 @@ import type { RawFacultyResearchRow } from "./facultyResearchData";
 import type { OpportunityFeeStatus, OpportunityType, OpportunityLevel } from "../types";
 import { formatFeeValue, UNKNOWN_FEE_TEXT, FREE_FEE_TEXT } from "../utils/fee";
 
-export const DEFAULT_RESEARCH_SHEET_ID = "1ug0b4Holu6nGp6NwO-JViqe7XexeDLlwirqRELGwh4U";
-export const DEFAULT_RESEARCH_SHEET_NAME = "HỘI THẢO";
+export const DEFAULT_RESEARCH_SPREADSHEET_TITLE = "IFA Faculty Research Opportunities";
+export const DEFAULT_RESEARCH_SHEET_ID = "1eLiEZNC-vidouurOJ-usM1wImJT0unaVceslm2cg-Do";
+export const DEFAULT_RESEARCH_SHEET_NAME_TN = "HOI THAO";
+export const DEFAULT_RESEARCH_SHEET_NAME_QT = "HOI THAO QT";
+export const DEFAULT_RESEARCH_SHEET_NAME = DEFAULT_RESEARCH_SHEET_NAME_TN;
+export const OFFICIAL_RESEARCH_SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1eLiEZNC-vidouurOJ-usM1wImJT0unaVceslm2cg-Do/edit";
 
 export interface ParsedResearchSheetUrl {
   sheetId: string;
@@ -147,7 +151,11 @@ export function normalizeOpportunityLevel(raw?: string | null): OpportunityLevel
 /**
  * Parses raw 27-column row from Google Sheets into RawFacultyResearchRow
  */
-export function parseFacultyResearchGvizRow(cells: any[], index: number): RawFacultyResearchRow {
+export function parseFacultyResearchGvizRow(
+  cells: any[],
+  index: number,
+  overrideCategory?: "TN" | "QT"
+): RawFacultyResearchRow {
   const getCellVal = (idx: number): string => {
     const c = cells[idx];
     if (!c) return "";
@@ -198,6 +206,20 @@ export function parseFacultyResearchGvizRow(cells: any[], index: number): RawFac
   const publicationFee = feeStatus === "FREE" ? FREE_FEE_TEXT : fee ? formatFeeValue(fee) : UNKNOWN_FEE_TEXT;
   const registrationFee = feeStatus === "FREE" ? FREE_FEE_TEXT : UNKNOWN_FEE_TEXT;
 
+  // Split topic tracks if present into topicsDetailed
+  const topicsDetailed: string[] = [];
+  if (topic) {
+    const rawTracks = topic.split(/\r?\n|;\s*(?=Track|Chủ đề|\d+\.)/);
+    for (const t of rawTracks) {
+      const cleanT = t.trim();
+      if (cleanT && cleanT.length > 5) topicsDetailed.push(cleanT);
+    }
+  }
+
+  const category: "TN" | "QT" =
+    overrideCategory ||
+    (level.toLowerCase().includes("quốc gia") || country.toLowerCase().includes("việt nam") ? "TN" : "QT");
+
   return {
     stt,
     discoveredAt: discovered.text || undefined,
@@ -221,40 +243,43 @@ export function parseFacultyResearchGvizRow(cells: any[], index: number): RawFac
     publicationFee,
     registrationFee,
     feeStatus,
+    feeSourceUrl: sourceUrl || undefined,
     publicationFormat: publicationFormat || undefined,
     indexing: indexing || undefined,
     content,
+    detailedContent: content || undefined,
+    topicsDetailed: topicsDetailed.length > 0 ? topicsDetailed : undefined,
     directions: directions || undefined,
     tags: tags || undefined,
     statusText,
     updatedAt: updatedParsed.text || undefined,
     notes: notes || undefined,
+    category,
   };
 }
 
 /**
- * Fetches and parses rows from the official Google Sheet
+ * Fetches and parses a single tab from Google Sheets
  */
-export async function fetchFacultyResearchSheetRows(
-  sheetConfig?: { sheetId?: string; sheetName?: string },
+export async function fetchSingleFacultyResearchTab(
+  sheetId: string,
+  tabName: string,
+  category: "TN" | "QT",
   { fetchImpl = fetch }: { fetchImpl?: typeof fetch } = {}
 ): Promise<RawFacultyResearchRow[]> {
-  const sheetId = sheetConfig?.sheetId || DEFAULT_RESEARCH_SHEET_ID;
-  const sheetName = sheetConfig?.sheetName || DEFAULT_RESEARCH_SHEET_NAME;
-
   const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?sheet=${encodeURIComponent(
-    sheetName
+    tabName
   )}&tqx=out:json&headers=1&_t=${Date.now()}`;
 
   const response = await fetchImpl(url, { signal: AbortSignal.timeout(25000) });
   if (!response.ok) {
-    throw new Error(`Google Sheets HTTP ${response.status}: ${response.statusText}`);
+    throw new Error(`Google Sheets HTTP ${response.status}: ${response.statusText} (Tab: ${tabName})`);
   }
 
   const text = await response.text();
   const start = text.indexOf("google.visualization.Query.setResponse(");
   if (start < 0) {
-    throw new Error("Google Sheets không trả về cấu trúc bảng dữ liệu hợp lệ.");
+    throw new Error(`Google Sheets không trả về cấu trúc bảng dữ liệu hợp lệ cho tab "${tabName}".`);
   }
 
   const jsonStr = text.slice(start + "google.visualization.Query.setResponse(".length).trim().replace(/\);?\s*$/, "");
@@ -262,7 +287,7 @@ export async function fetchFacultyResearchSheetRows(
 
   if (resObj.status !== "ok" || !resObj.table) {
     throw new Error(
-      `Lỗi đọc Google Sheet: ${resObj.errors?.[0]?.message || resObj.status || "Không có dữ liệu bảng"}`
+      `Lỗi đọc tab "${tabName}": ${resObj.errors?.[0]?.message || resObj.status || "Không có dữ liệu bảng"}`
     );
   }
 
@@ -272,13 +297,106 @@ export async function fetchFacultyResearchSheetRows(
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     if (!row || !Array.isArray(row.c)) continue;
-    
+
     // Check if row has a title
     const title = row.c[3]?.f || row.c[3]?.v;
     if (!title || !String(title).trim()) continue;
 
-    parsedRows.push(parseFacultyResearchGvizRow(row.c, i));
+    parsedRows.push(parseFacultyResearchGvizRow(row.c, i, category));
   }
 
   return parsedRows;
+}
+
+export interface FacultyResearchSheetsConfig {
+  sheetId?: string;
+  sheetNameTN?: string;
+  sheetNameQT?: string;
+}
+
+export interface FetchAllSheetsResult {
+  rows: RawFacultyResearchRow[];
+  tnRows: RawFacultyResearchRow[];
+  qtRows: RawFacultyResearchRow[];
+  sheetId: string;
+  sheetTitle: string;
+  tabsRead: string[];
+  sheetMeta: {
+    sheetId: string;
+    sheetTitle: string;
+    tabs: string[];
+    url: string;
+    tnCount: number;
+    qtCount: number;
+  };
+}
+
+/**
+ * Fetches both HOI THAO (TN) and HOI THAO QT (QT) tabs from official Google Sheet.
+ * Fails safely if either tab cannot be read or is empty.
+ */
+export async function fetchAllFacultyResearchSheets(
+  sheetConfig?: FacultyResearchSheetsConfig,
+  { fetchImpl = fetch }: { fetchImpl?: typeof fetch } = {}
+): Promise<FetchAllSheetsResult> {
+  const sheetId = sheetConfig?.sheetId || DEFAULT_RESEARCH_SHEET_ID;
+  const sheetNameTN = sheetConfig?.sheetNameTN || DEFAULT_RESEARCH_SHEET_NAME_TN;
+  const sheetNameQT = sheetConfig?.sheetNameQT || DEFAULT_RESEARCH_SHEET_NAME_QT;
+
+  // 1. Fetch Tab TN (HOI THAO)
+  const tnRows = await fetchSingleFacultyResearchTab(sheetId, sheetNameTN, "TN", { fetchImpl });
+  if (!Array.isArray(tnRows) || tnRows.length === 0) {
+    throw new Error(
+      `Không đọc được dữ liệu từ tab Trong nước ("${sheetNameTN}") trên Google Sheets ${sheetId}. Quá trình đồng bộ đã bị dừng an toàn để bảo vệ Firestore.`
+    );
+  }
+
+  // 2. Fetch Tab QT (HOI THAO QT)
+  const qtRows = await fetchSingleFacultyResearchTab(sheetId, sheetNameQT, "QT", { fetchImpl });
+  if (!Array.isArray(qtRows) || qtRows.length === 0) {
+    throw new Error(
+      `Không đọc được dữ liệu từ tab Quốc tế ("${sheetNameQT}") trên Google Sheets ${sheetId}. Quá trình đồng bộ đã bị dừng an toàn để bảo vệ Firestore.`
+    );
+  }
+
+  // Safeguard: detect if GViz silently fell back to the first tab because a tab name did not exist
+  if (sheetNameTN !== sheetNameQT && tnRows.length > 0 && qtRows.length > 0 && tnRows[0].title === qtRows[0].title) {
+    throw new Error(
+      `Phát hiện Google Sheets trả về trùng dữ liệu cho hai tab khác nhau ("${sheetNameTN}" và "${sheetNameQT}"). Có thể một trong hai tab không tồn tại trên Google Sheets.`
+    );
+  }
+
+  const combinedRows = [...tnRows, ...qtRows];
+
+  const sheetMeta = {
+    sheetId,
+    sheetTitle: DEFAULT_RESEARCH_SPREADSHEET_TITLE,
+    tabs: [sheetNameTN, sheetNameQT],
+    url: OFFICIAL_RESEARCH_SPREADSHEET_URL,
+    tnCount: tnRows.length,
+    qtCount: qtRows.length,
+  };
+
+  return {
+    rows: combinedRows,
+    tnRows,
+    qtRows,
+    sheetId,
+    sheetTitle: DEFAULT_RESEARCH_SPREADSHEET_TITLE,
+    tabsRead: [sheetNameTN, sheetNameQT],
+    sheetMeta,
+  };
+}
+
+/**
+ * Fetches and parses rows from a single Google Sheet tab (backwards compatibility)
+ */
+export async function fetchFacultyResearchSheetRows(
+  sheetConfig?: { sheetId?: string; sheetName?: string },
+  { fetchImpl = fetch }: { fetchImpl?: typeof fetch } = {}
+): Promise<RawFacultyResearchRow[]> {
+  const sheetId = sheetConfig?.sheetId || DEFAULT_RESEARCH_SHEET_ID;
+  const sheetName = sheetConfig?.sheetName || DEFAULT_RESEARCH_SHEET_NAME_TN;
+  const category: "TN" | "QT" = sheetName.toUpperCase().includes("QT") ? "QT" : "TN";
+  return fetchSingleFacultyResearchTab(sheetId, sheetName, category, { fetchImpl });
 }

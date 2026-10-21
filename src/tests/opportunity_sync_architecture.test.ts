@@ -445,7 +445,7 @@ describe("IFA-RH — Opportunity Sync Architecture & Governance Suite (13 Points
     });
     expect(outcome1.stats?.updateProposals).toBe(1);
     const countAfterFirstSync = Object.keys(mockStore.opportunityCandidates).length;
-    expect(countAfterFirstSync).toBe(7);
+    expect(countAfterFirstSync).toBe(10);
 
     // Second sync: Repeated execution must NOT create another proposal for IETBHEC'27
     const outcome2 = await executeResearchSync({
@@ -456,7 +456,7 @@ describe("IFA-RH — Opportunity Sync Architecture & Governance Suite (13 Points
     });
     expect(outcome2.stats?.updateProposals).toBe(0); // Updated existing proposal instead of creating duplicate!
     const countAfterSecondSync = Object.keys(mockStore.opportunityCandidates).length;
-    expect(countAfterSecondSync).toBe(countAfterFirstSync); // Exactly 7 candidates, no duplicate documents!
+    expect(countAfterSecondSync).toBe(countAfterFirstSync); // Exactly 10 candidates, no duplicate documents!
   });
 
   // Point 10: Xử lý dữ liệu ngoài phạm vi

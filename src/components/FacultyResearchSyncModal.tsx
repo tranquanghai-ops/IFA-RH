@@ -1,7 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { Modal } from "./Modal";
 import type { OpportunityCandidate, Opportunity } from "../types";
-import { DEFAULT_DRIVE_FOLDER_ID } from "../services/researchDriveJsonService";
+import {
+  DEFAULT_RESEARCH_SHEET_ID,
+  DEFAULT_RESEARCH_SHEET_NAME_TN,
+  DEFAULT_RESEARCH_SHEET_NAME_QT,
+  DEFAULT_RESEARCH_SPREADSHEET_TITLE,
+  OFFICIAL_RESEARCH_SPREADSHEET_URL,
+} from "../services/researchSheetService";
 import type { ResearchSyncOutcome } from "../services/researchSyncService";
 import { formatDateVN } from "../utils/date";
 import { runFacultyResearchSyncClient } from "../firebase/firestore";
@@ -16,6 +22,8 @@ import {
   Award,
   ShieldCheck,
   RotateCw,
+  ExternalLink,
+  FileSpreadsheet,
 } from "lucide-react";
 
 interface FacultyResearchSyncModalProps {
@@ -32,7 +40,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
   onSuccess,
 }) => {
   const { profile } = useAuth();
-  const [sourceName, setSourceName] = useState("Đang tải dữ liệu từ Google Drive JSON...");
+  const [sourceName, setSourceName] = useState("Đang tải dữ liệu từ Google Sheets (Spark)...");
   const [dryRunOutcome, setDryRunOutcome] = useState<ResearchSyncOutcome | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -46,8 +54,8 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
   } | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
 
-  // Load preview data directly from the unified executeResearchSync engine (dryRun: true)
-  const loadDrivePreview = async () => {
+  // Load preview data directly from the unified executeResearchSync engine (dryRun: true, dataSource: "sheets")
+  const loadSheetsPreview = async () => {
     if (!profile) return;
     setLoading(true);
     setErrorMsg("");
@@ -56,7 +64,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
     try {
       const outcome = await runFacultyResearchSyncClient(profile, {
         dryRun: true,
-        dataSource: "drive_json",
+        dataSource: "sheets",
       });
 
       if (outcome.skipped) {
@@ -68,22 +76,22 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
 
       setDryRunOutcome(outcome);
 
-      const meta = outcome.driveMeta;
-      if (meta) {
-        const tnCount = (outcome.items || []).filter((item) => item.category === "TN").length;
-        const qtCount = (outcome.items || []).filter((item) => item.category === "QT").length;
-        setSourceName(
-          `Google Drive JSON — ${meta.fileName} (Rev ${meta.revision}: ${tnCount} TN, ${qtCount} QT)`
-        );
-      }
+      const tnCount = (outcome.items || []).filter((item) => item.category === "TN").length;
+      const qtCount = (outcome.items || []).filter((item) => item.category === "QT").length;
+      const sheetMeta = outcome.sheetMeta;
+      const title = sheetMeta?.sheetTitle || DEFAULT_RESEARCH_SPREADSHEET_TITLE;
+
+      setSourceName(
+        `Google Sheets — ${title} (${tnCount} Trong nước, ${qtCount} Quốc tế)`
+      );
     } catch (err: any) {
-      console.error("Lỗi khi tải dữ liệu xem trước Google Drive:", err);
+      console.error("Lỗi khi tải dữ liệu xem trước Google Sheets:", err);
       // Untrusted source rule: NEVER fall back to old dataset, report error clearly
       setErrorMsg(
-        `Không thể đọc file JSON chính thức từ Google Drive: ${err.message || String(err)}. Tính năng đồng bộ đã bị khóa để bảo vệ an toàn dữ liệu.`
+        `Không thể đọc dữ liệu trực tiếp từ Google Sheets của Spark: ${err.message || String(err)}. Tính năng đồng bộ đã bị khóa để bảo vệ an toàn dữ liệu.`
       );
       setDryRunOutcome(null);
-      setSourceName("Không thể kết nối Google Drive");
+      setSourceName("Không thể kết nối Google Sheets");
     } finally {
       setLoading(false);
     }
@@ -91,12 +99,12 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
 
   useEffect(() => {
     if (isOpen) {
-      loadDrivePreview();
+      loadSheetsPreview();
     }
   }, [isOpen]);
 
   const stats = dryRunOutcome?.stats;
-  const driveMeta = dryRunOutcome?.driveMeta;
+  const sheetMeta = dryRunOutcome?.sheetMeta;
   const items = dryRunOutcome?.items || [];
 
   const newCount = stats?.created || 0;
@@ -106,28 +114,19 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
   const unchangedCount = stats?.unchanged || 0;
   const matchedCount = stats?.matched || 0;
 
-  const isCachedSource = Boolean(driveMeta?.isCached);
-  const canCommit = !loading && !saving && Boolean(dryRunOutcome) && !isCachedSource && items.length > 0;
+  const canCommit = !loading && !saving && Boolean(dryRunOutcome) && items.length > 0;
 
   const handleSyncCommit = async () => {
     if (!profile || !dryRunOutcome) return;
-
-    if (isCachedSource) {
-      setErrorMsg(
-        "Nguồn dữ liệu hiện đang là bản nhớ đệm (cache fallback). Tuyệt đối không cho phép ghi vào Firestore khi nguồn JSON chưa được xác thực trực tiếp từ Google Drive."
-      );
-      return;
-    }
 
     setSaving(true);
     setErrorMsg("");
 
     try {
-      // Execute live sync using identical engine with expectedRevision verification
+      // Execute live sync using identical engine with sheets source
       const outcome = await runFacultyResearchSyncClient(profile, {
         dryRun: false,
-        dataSource: "drive_json",
-        expectedRevision: driveMeta?.revision,
+        dataSource: "sheets",
       });
 
       if (outcome.skipped) {
@@ -156,7 +155,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Đồng bộ cơ hội NCKH từ Google Drive JSON (Spark)"
+      title="Đồng bộ cơ hội NCKH từ Google Sheets (Spark)"
       maxWidth="large"
       footer={
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", flexWrap: "wrap", gap: 8 }}>
@@ -176,7 +175,6 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
               className="btn btn-primary btn-sm"
               onClick={handleSyncCommit}
               disabled={!canCommit}
-              title={isCachedSource ? "Không thể đồng bộ khi dùng bản nhớ đệm" : undefined}
               style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
             >
               {saving ? (
@@ -200,8 +198,8 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
         {/* Source info block */}
         <div
           style={{
-            background: isCachedSource ? "#fffbeb" : "#f0fdf4",
-            border: `1px solid ${isCachedSource ? "#fde68a" : "#bbf7d0"}`,
+            background: "#f0fdf4",
+            border: "1px solid #bbf7d0",
             padding: "12px 16px",
             borderRadius: 8,
             display: "flex",
@@ -215,7 +213,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
             <div
               style={{
                 fontWeight: 700,
-                color: isCachedSource ? "#92400e" : "#166534",
+                color: "#166534",
                 fontSize: "0.9rem",
                 display: "flex",
                 alignItems: "center",
@@ -223,56 +221,39 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
                 flexWrap: "wrap",
               }}
             >
+              <FileSpreadsheet size={16} color="#166534" />
               <span>{sourceName}</span>
-              {isCachedSource && (
-                <span style={{ fontSize: "0.75rem", background: "#fef3c7", color: "#92400e", padding: "1px 6px", borderRadius: 4, fontWeight: 700 }}>
-                  Bản nhớ đệm (Chỉ xem)
-                </span>
-              )}
             </div>
-            <div style={{ color: isCachedSource ? "#b45309" : "#15803d", fontSize: "0.8125rem", marginTop: 4, display: "flex", flexWrap: "wrap", gap: "6px 14px" }}>
-              <span>Thư mục: <code>IFA_RH_DATA</code> (<code>{DEFAULT_DRIVE_FOLDER_ID}</code>)</span>
-              {driveMeta?.fileId && <span>File ID: <code>{driveMeta.fileId}</code></span>}
-              {driveMeta?.revision && <span>Revision: <strong>{driveMeta.revision}</strong></span>}
-              {driveMeta?.generatedAt && <span>Tạo lúc: {formatDateVN(driveMeta.generatedAt)}</span>}
+            <div style={{ color: "#15803d", fontSize: "0.8125rem", marginTop: 4, display: "flex", flexWrap: "wrap", gap: "6px 14px" }}>
+              <span>Bảng tính: <strong>{DEFAULT_RESEARCH_SPREADSHEET_TITLE}</strong></span>
+              <span>Tabs: <code>{DEFAULT_RESEARCH_SHEET_NAME_TN}</code> (TN) & <code>{DEFAULT_RESEARCH_SHEET_NAME_QT}</code> (QT)</span>
+              <span>ID: <code>{DEFAULT_RESEARCH_SHEET_ID}</code></span>
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <a
+              href={OFFICIAL_RESEARCH_SPREADSHEET_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-secondary btn-sm"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+              title="Mở Google Sheets trên tab mới"
+            >
+              <ExternalLink size={14} /> Mở Sheets
+            </a>
             <button
               type="button"
               className="btn btn-secondary btn-sm"
-              onClick={loadDrivePreview}
+              onClick={loadSheetsPreview}
               disabled={loading}
               style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
             >
               <RotateCw size={14} className={loading ? "spin" : ""} />
-              {loading ? "Đang tải..." : "Tải lại Drive"}
+              {loading ? "Đang tải..." : "Tải lại Sheets"}
             </button>
           </div>
         </div>
-
-        {/* Cached Source Warning Banner */}
-        {isCachedSource && (
-          <div
-            style={{
-              background: "#fffbeb",
-              border: "1px solid #fde68a",
-              color: "#92400e",
-              padding: 12,
-              borderRadius: 6,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              fontSize: "0.875rem",
-            }}
-          >
-            <AlertTriangle size={20} color="#d97706" style={{ flexShrink: 0 }} />
-            <span>
-              <strong>Cảnh báo nguồn dữ liệu:</strong> Dữ liệu hội thảo đang được lấy từ bộ nhớ đệm (cache fallback) do không kết nối trực tiếp được với Google Drive API. Hệ thống chỉ cho phép xem trước đối chiếu (dry-run); tính năng ghi đồng bộ vào Firestore đã bị khóa để bảo đảm an toàn dữ liệu.
-            </span>
-          </div>
-        )}
 
         {/* Success notification */}
         {saveResult && (
@@ -319,7 +300,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
           <div style={{ fontSize: "0.875rem", fontWeight: 700, color: "var(--primary)", marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span>Xem trước kết quả đối chiếu ({items.length} hội thảo):</span>
             <span style={{ fontSize: "0.78rem", color: "var(--muted)", fontWeight: "normal" }}>
-              Được tính toán trực tiếp bởi công cụ đồng bộ chuẩn hóa (Dry-Run)
+              Được tính toán trực tiếp bởi công cụ đồng bộ chuẩn hóa (Dry-Run từ Google Sheets)
             </span>
           </div>
 
@@ -339,7 +320,7 @@ export const FacultyResearchSyncModal: React.FC<FacultyResearchSyncModalProps> =
                 {items.length === 0 ? (
                   <tr>
                     <td colSpan={6} style={{ textAlign: "center", padding: 24, color: "var(--muted)" }}>
-                      {loading ? "Đang tải dữ liệu hội thảo từ Google Drive..." : "Không có dữ liệu hội thảo nào để hiển thị."}
+                      {loading ? "Đang tải dữ liệu hội thảo từ Google Sheets..." : "Không có dữ liệu hội thảo nào để hiển thị."}
                     </td>
                   </tr>
                 ) : (

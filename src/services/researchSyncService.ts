@@ -1,7 +1,10 @@
 import {
   fetchFacultyResearchSheetRows,
+  fetchAllFacultyResearchSheets,
   DEFAULT_RESEARCH_SHEET_ID,
   DEFAULT_RESEARCH_SHEET_NAME,
+  DEFAULT_RESEARCH_SPREADSHEET_TITLE,
+  OFFICIAL_RESEARCH_SPREADSHEET_URL,
 } from "./researchSheetService";
 import {
   fetchLatestConferencesFromDrive,
@@ -121,6 +124,15 @@ export interface ResearchSyncOutcome {
   stats?: ResearchSyncStats;
   diagnostics?: ResearchSyncDiagnosticItem[];
   durationMs?: number;
+  dataSource?: "sheets" | "drive_json";
+  sheetMeta?: {
+    sheetId: string;
+    sheetTitle: string;
+    tabs: string[];
+    url: string;
+    tnCount: number;
+    qtCount: number;
+  };
   driveMeta?: {
     fileId: string;
     fileName: string;
@@ -193,7 +205,7 @@ export async function executeResearchSync({
     dryRun?: boolean;
     expectedRevision?: number;
     runSource?: "github_schedule" | "github_dispatch" | "manual_admin" | "manual_cli";
-    sheetConfig?: { sheetId?: string; sheetName?: string };
+    sheetConfig?: { sheetId?: string; sheetName?: string; sheetNameTN?: string; sheetNameQT?: string };
     dataSource?: "drive_json" | "sheets";
     driveConfig?: { folderId?: string; fileName?: string; accessToken?: string };
   };
@@ -287,10 +299,11 @@ export async function executeResearchSync({
       }
     }
 
-    // 2. Fetch rows: Google Drive JSON (default when dataSource === 'drive_json' or driveConfig provided) or Google Sheets
+    // 2. Fetch rows: Google Sheets (PRODUCTION DEFAULT) or Google Drive JSON (legacy/fallback if explicitly requested)
     let rows: any[] = [];
     let driveMeta: any = null;
-    const isDriveSource = options.dataSource === "drive_json" || Boolean(options.driveConfig);
+    let sheetMeta: any = null;
+    const isDriveSource = options.dataSource === "drive_json";
     const sourceLabel = isDriveSource ? "Google Drive JSON" : "Google Sheets";
 
     if (isDriveSource) {
@@ -346,9 +359,33 @@ export async function executeResearchSync({
       }
     } else {
       try {
-        rows = await fetchFacultyResearchSheetRows(options.sheetConfig);
+        // If caller explicitly passed a single tab sheetName (e.g. in single-tab unit tests), fetch that tab
+        if (options.sheetConfig?.sheetName && !options.sheetConfig.sheetNameTN && !options.sheetConfig.sheetNameQT) {
+          rows = await fetchFacultyResearchSheetRows(options.sheetConfig);
+          sheetMeta = {
+            sheetId: options.sheetConfig.sheetId || DEFAULT_RESEARCH_SHEET_ID,
+            sheetTitle: DEFAULT_RESEARCH_SPREADSHEET_TITLE,
+            tabs: [options.sheetConfig.sheetName],
+            url: OFFICIAL_RESEARCH_SPREADSHEET_URL,
+            tnCount: rows.filter((r) => r.category === "TN").length,
+            qtCount: rows.filter((r) => r.category === "QT").length,
+          };
+        } else {
+          // Default production path: Fetch BOTH tabs (HOI THAO & HOI THAO QT)
+          const sheetsResult = await fetchAllFacultyResearchSheets(options.sheetConfig);
+          rows = sheetsResult.rows;
+          sheetMeta = {
+            sheetId: sheetsResult.sheetId,
+            sheetTitle: sheetsResult.sheetTitle,
+            tabs: sheetsResult.tabsRead,
+            url: OFFICIAL_RESEARCH_SPREADSHEET_URL,
+            tnCount: sheetsResult.tnRows.length,
+            qtCount: sheetsResult.qtRows.length,
+          };
+        }
+
         if (!Array.isArray(rows) || rows.length === 0) {
-          throw new Error("Không có dữ liệu trả về từ Google Sheets IFA Faculty Research.");
+          throw new Error("Không có dữ liệu hội thảo nào được đọc từ Google Sheets IFA Faculty Research.");
         }
       } catch (sheetErr: any) {
         throw new ResearchSyncStageError({
@@ -356,7 +393,7 @@ export async function executeResearchSync({
           collectionName: "google_sheets",
           operationType: "get",
           originalError: sheetErr,
-          userSummary: "Lỗi kết nối hoặc đọc Google Sheets IFA Faculty Research",
+          userSummary: `Lỗi kết nối hoặc đọc Google Sheets IFA Faculty Research: ${sheetErr.message}`,
           actorUid: user.uid,
           actorRole: user.role,
         });
@@ -1109,8 +1146,12 @@ export async function executeResearchSync({
           syncInProgress: false,
           lockId: "",
           updatedAt: new Date().toISOString(),
+          dataSource: isDriveSource ? "drive_json" : "sheets",
         };
-        if (driveMeta) {
+        if (sheetMeta) {
+          statePayload.sheetMeta = sheetMeta;
+          statePayload.driveMeta = null;
+        } else if (driveMeta) {
           statePayload.driveMeta = driveMeta;
         }
 
@@ -1132,9 +1173,9 @@ export async function executeResearchSync({
       // Record in imports collection for audit history
       try {
         const importRef = sdk.doc(db, "imports", `imp_spark_${Date.now()}`);
-        const importFileName = driveMeta
+        const importFileName = isDriveSource && driveMeta
           ? `Google Drive JSON (${driveMeta.fileName} Rev ${driveMeta.revision})`
-          : `IFA Faculty Research (${options.sheetConfig?.sheetName || DEFAULT_RESEARCH_SHEET_NAME})`;
+          : `Google Sheets — ${sheetMeta?.sheetTitle || DEFAULT_RESEARCH_SPREADSHEET_TITLE} (${sheetMeta?.tabs?.join(" & ") || "HOI THAO & HOI THAO QT"})`;
 
         await sdk.setDoc(importRef, {
           id: importRef.id,
@@ -1165,6 +1206,8 @@ export async function executeResearchSync({
       diagnostics,
       items: syncItems,
       durationMs,
+      dataSource: isDriveSource ? "drive_json" : "sheets",
+      sheetMeta: sheetMeta || undefined,
       driveMeta: driveMeta || undefined,
     };
   } catch (error: any) {
